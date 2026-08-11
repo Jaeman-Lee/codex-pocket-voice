@@ -117,7 +117,6 @@ export class CodexAppServerClient {
         approvalPolicy: "never",
         sandbox: "workspace-write",
         model: options.model ?? null,
-        excludeTurns: true,
       });
     } else {
       threadResponse = await this.request<ThreadStartResponse>("thread/start", {

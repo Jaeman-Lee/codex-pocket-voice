@@ -4,3 +4,7 @@ dist/
 *.log
 .DS_Store
 coverage/
+client/dist/
+.gradle/
+android/.gradle/
+android/local.properties

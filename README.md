@@ -2,26 +2,28 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-스마트폰에서 한국어로 말하고, PC의 Codex CLI가 실제 프로젝트를 수정하게 만드는 모바일 우선 인터페이스입니다. Android 브라우저의 음성 인식과 TTS를 사용하므로 별도의 Whisper·Realtime API 비용이 들지 않습니다.
+스마트폰에서 한국어로 말하고, PC의 Codex CLI가 실제 프로젝트를 수정하게 만드는 React 기반 모바일 인터페이스입니다. Android 앱과 설치형 PWA를 지원하며 별도의 Whisper·Realtime API 비용이 들지 않습니다.
 
 > Codex 모델 사용량은 사용자의 Codex 계정과 플랜 정책을 따릅니다. 이 프로젝트는 OpenAI의 공식 제품이 아닙니다.
 
 ## 핵심 기능
 
-- `ko-KR`로 고정된 앱 내 한국어 음성 입력
+- Android 네이티브 `ko-KR` 받아쓰기와 웹 한국어 음성 입력
 - PC의 여러 Git 프로젝트와 기존 Codex 대화 선택
 - 답변, 명령 실행, 파일 변경 상태를 SSE로 실시간 표시
 - 실행 중인 Codex 턴 중단과 최종 diff·명령 요약
 - Android 한국어 TTS로 답변 읽기
-- 설치 가능한 모바일 PWA
+- React + Capacitor Android 앱과 설치 가능한 PWA
+- 앱 실행 시 Termux SSH 터널 자동 시작
 - Termux 터미널을 닫아도 유지되는 백그라운드 SSH 터널
 - 선택적으로 사용할 수 있는 안전 범위 MCP 서버
 
 ## 구조
 
 ```text
-Android browser / PWA
-  ├─ Korean speech recognition (ko-KR)
+Android APK / browser PWA
+  ├─ React mobile UI
+  ├─ Android native / Web speech recognition (ko-KR)
   ├─ Android TTS
   └─ http://127.0.0.1:8788
              │
@@ -59,7 +61,7 @@ export CODEX_BIN=/path/to/codex
 ./scripts/start-web.sh
 ```
 
-## Android 설치
+## Android PWA 설치
 
 Termux에서 저장소를 clone하거나 `scripts/pc-codex-web.sh`만 복사한 뒤 실행 경로에 연결합니다.
 
@@ -110,6 +112,27 @@ pc-codex-web stop
 
 휴대폰 재부팅 후 자동 연결은 Termux:Boot로 구성할 수 있습니다. Termux:Boot가 없다면 재부팅 후 `pc-codex-web open`을 한 번 실행하면 됩니다.
 
+## Android APK
+
+APK는 React 화면을 앱 안에 포함하고, 실행될 때 Termux에 SSH 터널 시작을 자동 요청합니다. 먼저 Termux에서 한 번 설정합니다.
+
+```sh
+./scripts/setup-android-app.sh
+```
+
+Android Studio가 설치된 PC에서 APK 프로젝트를 동기화하고 빌드합니다.
+
+```sh
+npm ci
+npm run android:sync
+# android/ 폴더를 Android Studio에서 열거나
+npm run android:debug
+```
+
+설치 후 Android의 앱 정보 → 권한(또는 추가 권한)에서 **Termux 명령 실행**을 허용합니다. 이후에는 `pc-codex-web`을 사용자가 따로 열 필요 없이 Codex Pocket Voice 앱이 연결을 요청합니다. Termux가 강제로 종료되거나 배터리 최적화로 중지되면 Android 설정에서 Termux의 배터리 제한을 해제해야 할 수 있습니다.
+
+현재 APK는 SSH 키를 앱에 복제하지 않고 기존 Termux SSH 설정을 사용합니다. Termux 없이 동작하는 네이티브 SSH 단계와 보안 설계는 [Android 앱 구조](docs/android-architecture.md)에 정리했습니다.
+
 ## 보안 모델
 
 - 웹 서버는 `127.0.0.1` 이외의 주소에 바인딩되지 않습니다.
@@ -149,6 +172,7 @@ npm ci
 npm run check
 npm run build
 npm test
+npm run android:sync
 ```
 
 실제 로컬 Codex app-server가 설치된 환경에서는 다음 통합 테스트도 실행할 수 있습니다. 이 테스트들은 모델 턴을 시작하지 않습니다.
@@ -159,11 +183,13 @@ npm run test:integration
 
 ## 기술 스택
 
-- TypeScript / Node.js
+- React 19 / Vite / TypeScript
+- Capacitor Android와 Java 네이티브 플러그인
+- Node.js PC gateway
 - Codex app-server JSON-RPC over stdio
 - MCP SDK
 - Server-Sent Events
-- Web Speech API / Speech Synthesis API
+- Android RecognizerIntent / Web Speech API / Speech Synthesis API
 - PWA Service Worker
 - OpenSSH ControlMaster
 

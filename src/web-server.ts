@@ -18,6 +18,7 @@ import { compactThread, presentThread, summarizeTurn } from "./result.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_EVENT_TEXT = 80_000;
+const NATIVE_APP_ORIGINS = new Set(["http://localhost", "https://localhost", "capacitor://localhost"]);
 const STATIC_FILES = new Map([
   ["/", "index.html"],
   ["/index.html", "index.html"],
@@ -149,6 +150,12 @@ async function handleRequest(
 
   if (url.pathname.startsWith("/api/")) {
     response.setHeader("Cache-Control", "no-store");
+    applyApiCors(request, response);
+    if (request.method === "OPTIONS") {
+      response.statusCode = 204;
+      response.end();
+      return;
+    }
     await handleApi(request, response, url, options, operations, activeThreads, sseClients);
     return;
   }
@@ -425,10 +432,30 @@ function assertSameOrigin(request: IncomingMessage): void {
   const host = request.headers.host;
   try {
     const parsed = new URL(origin);
-    if (!host || parsed.host !== host || !isLoopbackName(parsed.hostname)) throw new Error("mismatch");
+    const sameLoopbackOrigin = Boolean(host && parsed.host === host && isLoopbackName(parsed.hostname));
+    if (!sameLoopbackOrigin && !NATIVE_APP_ORIGINS.has(origin) && !NATIVE_APP_ORIGINS.has(parsed.origin)) {
+      throw new Error("mismatch");
+    }
   } catch {
     throw new HttpError(403, "Cross-origin write request blocked");
   }
+}
+
+function applyApiCors(request: IncomingMessage, response: ServerResponse): void {
+  const origin = request.headers.origin;
+  if (!origin) return;
+  let allowedOrigin = NATIVE_APP_ORIGINS.has(origin) ? origin : "";
+  try {
+    const parsedOrigin = new URL(origin).origin;
+    if (!allowedOrigin && NATIVE_APP_ORIGINS.has(parsedOrigin)) allowedOrigin = parsedOrigin;
+  } catch {
+    return;
+  }
+  if (!allowedOrigin) return;
+  response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  response.setHeader("Vary", "Origin");
 }
 
 async function readJson(request: IncomingMessage, allowEmpty = false): Promise<unknown> {

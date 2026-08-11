@@ -18,7 +18,7 @@
 
 * { box-sizing: border-box; }
 
-html, body { min-height: 100%; margin: 0; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 
 body {
   background:
@@ -32,10 +32,12 @@ button { color: inherit; }
 
 .app-shell {
   width: min(100%, 860px);
-  min-height: 100dvh;
+  height: 100dvh;
+  min-height: 0;
   margin: 0 auto;
   display: grid;
-  grid-template-rows: auto auto minmax(15rem, 1fr) auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  overflow: hidden;
   border-inline: 1px solid var(--line);
   background: rgba(11, 17, 23, 0.76);
   backdrop-filter: blur(18px);
@@ -115,10 +117,15 @@ select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shad
 .icon-button:active { transform: scale(0.96); }
 
 .transcript {
-  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 1.2rem 1rem 2rem;
   scroll-behavior: smooth;
   overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 
 .empty-state { max-width: 30rem; margin: 12vh auto 0; text-align: center; }
@@ -191,8 +198,8 @@ select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shad
 .activity-panel pre:empty { display: none; }
 
 .composer-wrap {
-  position: sticky;
-  bottom: 0;
+  position: relative;
+  z-index: 1;
   padding: 0.65rem 0.9rem max(0.65rem, env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
   background: rgba(11, 17, 23, 0.92);

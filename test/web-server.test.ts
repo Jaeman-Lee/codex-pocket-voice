@@ -15,7 +15,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const running = await startWebServer({
     client: fake,
     paths,
-    staticDir: resolve(cwd, "web"),
+    staticDir: resolve(cwd, "client/dist"),
     port: 0,
   });
   t.after(() => running.close());
@@ -43,6 +43,13 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   });
   assert.equal(blocked.status, 403);
 
+  const nativePreflight = await fetch(`${base}/api/runs`, {
+    method: "OPTIONS",
+    headers: { Origin: "http://localhost", "Access-Control-Request-Method": "POST" },
+  });
+  assert.equal(nativePreflight.status, 204);
+  assert.equal(nativePreflight.headers.get("access-control-allow-origin"), "http://localhost");
+
   const streamAbort = new AbortController();
   const stream = await fetch(`${base}/api/events`, { signal: streamAbort.signal });
   assert.equal(stream.status, 200);
@@ -53,12 +60,16 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
 
   const started = await jsonFetch(`${base}/api/runs`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Origin: base },
+    headers: { "Content-Type": "application/json", Origin: "http://localhost" },
     body: JSON.stringify({ prompt: "change a file", cwd }),
   });
   assert.equal(started.operation.status, "running");
   assert.equal(fake.lastRun?.cwd, cwd);
   assert.equal(fake.lastRun?.networkAccess, false);
+
+  const nativeHealth = await fetch(`${base}/api/health`, { headers: { Origin: "http://localhost" } });
+  assert.equal(nativeHealth.status, 200);
+  assert.equal(nativeHealth.headers.get("access-control-allow-origin"), "http://localhost");
 
   const operationId = started.operation.id;
   const interrupted = await jsonFetch(`${base}/api/runs/${operationId}/interrupt`, {

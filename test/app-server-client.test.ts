@@ -27,4 +27,13 @@ test("client initializes, lists threads, runs a sandboxed turn, and declines app
   assert.equal(result.turn.status, "completed");
   assert.equal(result.turn.items[0]?.type, "agentMessage");
   assert.ok(notifications.includes("item/agentMessage/delta"));
+
+  const resumed = await client.runTurn({
+    threadId: result.thread.id,
+    cwd: process.cwd(),
+    prompt: "continue safely",
+    timeoutMs: 2_000,
+  });
+  assert.equal(resumed.thread.id, "thread-1");
+  assert.equal(resumed.turn.status, "completed");
 });

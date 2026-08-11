@@ -1,0 +1,64 @@
+export type ConnectionStatus = "pending" | "online" | "error";
+export type OperationStatus = "running" | "completed" | "interrupted" | "failed";
+
+export interface Workspace {
+  path: string;
+  name: string;
+}
+
+export interface ThreadSummary {
+  id: string;
+  cwd: string;
+  name?: string | null;
+  preview?: string | null;
+}
+
+export interface HistoryItem {
+  type: string;
+  text?: string;
+  command?: string;
+  output?: string;
+  status?: string;
+  changes?: Array<{ kind: string; path: string }>;
+}
+
+export interface ThreadDetail {
+  id: string;
+  cwd: string;
+  turns: Array<{ items: HistoryItem[] }>;
+}
+
+export interface RunResult {
+  threadId?: string;
+  finalResponse?: string;
+  commands?: Array<{ command: string; status: string; exitCode?: number | null }>;
+  fileChanges?: Array<{ changes?: Array<{ kind: string; path: string }> }>;
+}
+
+export interface Operation {
+  id: string;
+  threadId: string;
+  turnId: string;
+  cwd: string;
+  prompt: string;
+  status: OperationStatus;
+  error?: string;
+  result?: RunResult;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  pending?: boolean;
+  error?: boolean;
+  details?: string;
+}
+
+export interface CodexEvent {
+  type: string;
+  action?: string;
+  operation?: Operation;
+  method?: string;
+  params?: Record<string, unknown>;
+}

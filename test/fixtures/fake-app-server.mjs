@@ -65,8 +65,8 @@ rl.on("line", (line) => {
       write({ id: message.id, result: { thread, model: "test", modelProvider: "openai", serviceTier: null, cwd, runtimeWorkspaceRoots: [cwd], instructionSources: [], approvalPolicy: "never", approvalsReviewer: "user", sandbox: { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, activePermissionProfile: null, reasoningEffort: null, multiAgentMode: "explicitRequestOnly" } });
       break;
     case "thread/resume":
-      if (message.params.runtimeWorkspaceRoots !== undefined) {
-        write({ id: message.id, error: { code: -1, message: "thread/resume.runtimeWorkspaceRoots requires experimentalApi capability" } });
+      if (message.params.runtimeWorkspaceRoots !== undefined || message.params.excludeTurns !== undefined) {
+        write({ id: message.id, error: { code: -1, message: "thread/resume experimental fields require experimentalApi capability" } });
         break;
       }
       write({ id: message.id, result: { thread, model: "test", modelProvider: "openai", serviceTier: null, cwd, runtimeWorkspaceRoots: [cwd], instructionSources: [], approvalPolicy: "never", approvalsReviewer: "user", sandbox: { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, activePermissionProfile: null, reasoningEffort: null, multiAgentMode: "explicitRequestOnly", initialTurnsPage: null, turnsBackwardsCursor: null, itemsBackwardsCursor: null } });
