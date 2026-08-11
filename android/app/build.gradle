@@ -3,6 +3,7 @@ apply plugin: 'com.android.application'
 android {
     namespace = "io.github.jaemanlee.codexpocketvoice"
     compileSdk = rootProject.ext.compileSdkVersion
+    buildToolsVersion = "36.0.0"
     defaultConfig {
         applicationId "io.github.jaemanlee.codexpocketvoice"
         minSdkVersion rootProject.ext.minSdkVersion
