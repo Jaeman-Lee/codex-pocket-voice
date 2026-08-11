@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#101820">
+    <meta name="color-scheme" content="dark light">
+    <meta name="description" content="스마트폰에서 로컬 Codex 작업을 안전하게 제어합니다.">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles.css">
+    <title>Codex Pocket</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">C</span>
+          <div>
+            <h1>Codex Pocket</h1>
+            <p id="connectionText">PC에 연결 중…</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button id="installButton" class="icon-button hidden" type="button" aria-label="홈 화면에 설치">＋</button>
+          <span id="connectionDot" class="status-dot pending" aria-hidden="true"></span>
+        </div>
+      </header>
+
+      <section class="selectors" aria-label="작업 대상">
+        <label>
+          <span>프로젝트</span>
+          <select id="workspaceSelect" aria-label="프로젝트 선택"></select>
+        </label>
+        <label>
+          <span>대화</span>
+          <div class="select-row">
+            <select id="threadSelect" aria-label="Codex 대화 선택">
+              <option value="">새 대화</option>
+            </select>
+            <button id="refreshButton" class="icon-button" type="button" aria-label="대화 새로고침">↻</button>
+          </div>
+        </label>
+      </section>
+
+      <main id="transcript" class="transcript" aria-live="polite">
+        <section id="emptyState" class="empty-state">
+          <div class="empty-orbit" aria-hidden="true"><span></span></div>
+          <h2>말하고, 확인하고, 실행하세요.</h2>
+          <p>한국어 음성 버튼으로 말한 뒤 전송하면 PC의 Codex가 선택한 프로젝트에서 작업합니다.</p>
+          <div class="suggestions">
+            <button type="button" data-prompt="이 프로젝트의 현재 상태를 확인하고 다음 할 일을 알려주세요.">현재 상태 확인</button>
+            <button type="button" data-prompt="테스트를 실행하고 실패 원인을 고쳐주세요.">테스트 실행·수정</button>
+          </div>
+        </section>
+      </main>
+
+      <section id="activityPanel" class="activity-panel hidden" aria-live="polite">
+        <div class="activity-head">
+          <span class="spinner" aria-hidden="true"></span>
+          <strong id="activityText">Codex가 작업 중입니다</strong>
+          <button id="stopButton" class="stop-button" type="button">중단</button>
+        </div>
+        <pre id="activityDetail"></pre>
+      </section>
+
+      <footer class="composer-wrap">
+        <div class="composer">
+          <div class="composer-input-row">
+            <textarea id="promptInput" lang="ko-KR" inputmode="text" rows="2" maxlength="100000" placeholder="한국어로 말하거나 직접 입력하세요" aria-label="Codex에게 보낼 요청"></textarea>
+            <button id="voiceButton" class="voice-button" type="button" aria-label="한국어 음성 입력 시작" aria-pressed="false">
+              <span aria-hidden="true">🎙</span><small>한국어</small>
+            </button>
+          </div>
+          <div class="composer-bar">
+            <label class="toggle">
+              <input id="ttsToggle" type="checkbox">
+              <span aria-hidden="true"></span>
+              답변 읽기
+            </label>
+            <label class="toggle network-toggle" title="패키지 설치 등 꼭 필요한 경우에만 켜세요">
+              <input id="networkToggle" type="checkbox">
+              <span aria-hidden="true"></span>
+              네트워크
+            </label>
+            <button id="sendButton" class="send-button" type="button" aria-label="요청 전송">보내기 <span aria-hidden="true">↑</span></button>
+          </div>
+        </div>
+        <p class="safety-note">허용된 폴더만 수정 · 추가 권한은 자동 거절</p>
+      </footer>
+    </div>
+
+    <div id="toast" class="toast hidden" role="status"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
