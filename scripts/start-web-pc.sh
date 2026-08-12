@@ -23,4 +23,5 @@ fi
 
 export CODEX_BIN=${CODEX_BIN:-"$HOME/.local/bin/codex"}
 export CODEX_WEB_PORT=${CODEX_WEB_PORT:-8787}
+"$repo_dir/scripts/start-video-vlm.sh"
 exec "$repo_dir/scripts/start-web.sh"

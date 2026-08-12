@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { api, apiUrl } from "./api";
+import { api, apiUrl, uploadMedia } from "./api";
 import {
   isNativeApp,
   NativeSpeech,
@@ -15,6 +15,8 @@ import type {
   ConnectionStatus,
   HistoryItem,
   Operation,
+  MediaItem,
+  PendingAttachment,
   RunResult,
   ThreadDetail,
   ThreadSummary,
@@ -91,9 +93,12 @@ export function App() {
   const [speechSupported, setSpeechSupported] = useState(true);
   const [toast, setToast] = useState("");
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [mediaBusy, setMediaBusy] = useState(false);
 
   const transcriptRef = useRef<HTMLElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const operationRef = useRef<Operation | null>(null);
   const workspaceRef = useRef("");
   const threadRef = useRef("");
@@ -450,6 +455,12 @@ export function App() {
 
   function handleEvent(event: CodexEvent) {
     if (event.type === "connected") return;
+    if (event.type === "media" && event.media) {
+      setAttachments((current) => current.map((item) => item.id === event.media!.id
+        ? { ...item, ...event.media, previewUrl: item.previewUrl }
+        : item));
+      return;
+    }
     if (event.type === "operation" && event.operation) {
       handleOperationEvent(event.action ?? "", event.operation);
       return;
@@ -495,9 +506,86 @@ export function App() {
 
   handleEventRef.current = handleEvent;
 
+  async function addMedia(files: FileList | null) {
+    if (!files?.length) return;
+    const selected = [...files].slice(0, Math.max(0, 4 - attachments.length));
+    if (selected.length < files.length) showToast("첨부 파일은 한 번에 최대 4개까지 보낼 수 있습니다.");
+    setMediaBusy(true);
+    try {
+      for (const file of selected) {
+        const localId = newId("upload");
+        const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
+        const placeholder: PendingAttachment = {
+          id: localId,
+          name: file.name,
+          kind: file.type.startsWith("video/") ? "video" : "image",
+          mimeType: file.type,
+          size: file.size,
+          status: "uploading",
+          frameCount: 0,
+          progress: 0,
+          previewUrl,
+        };
+        setAttachments((current) => [...current, placeholder]);
+        try {
+          const uploaded = await uploadMedia<MediaItem>(file, (progress) => {
+            setAttachments((current) => current.map((item) => item.id === localId ? { ...item, progress } : item));
+          });
+          setAttachments((current) => current.map((item) => item.id === localId
+            ? { ...uploaded, previewUrl, progress: 100 }
+            : item));
+          if (uploaded.kind === "video") void analyzeMedia(uploaded.id);
+        } catch (error) {
+          setAttachments((current) => current.filter((item) => item.id !== localId));
+          if (previewUrl) URL.revokeObjectURL(previewUrl);
+          showToast(errorMessage(error));
+        }
+      }
+    } finally {
+      setMediaBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  async function analyzeMedia(id: string) {
+    try {
+      const queued = await api<{ media: MediaItem }>(`/api/media/${encodeURIComponent(id)}/analyze`, {
+        method: "POST",
+        body: {},
+      });
+      updateMedia(queued.media);
+      const deadline = Date.now() + 6 * 60_000;
+      while (Date.now() < deadline && queued.media.status !== "ready") {
+        await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+        const data = await api<{ media: MediaItem }>(`/api/media/${encodeURIComponent(id)}`);
+        updateMedia(data.media);
+        if (data.media.status === "ready") return;
+        if (data.media.status === "failed") throw new Error(data.media.error || "영상 분석에 실패했습니다.");
+      }
+      throw new Error("영상 분석 시간이 초과되었습니다. 다시 첨부해 주세요.");
+    } catch (error) {
+      showToast(errorMessage(error));
+    }
+  }
+
+  function updateMedia(media: MediaItem) {
+    setAttachments((current) => current.map((item) => item.id === media.id
+      ? { ...item, ...media, previewUrl: item.previewUrl }
+      : item));
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((current) => {
+      const removed = current.find((item) => item.id === id);
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+      return current.filter((item) => item.id !== id);
+    });
+  }
+
   async function submitPrompt() {
-    const text = prompt.trim();
-    if (!text || operationRef.current?.status === "running") return;
+    const text = prompt.trim() || (attachments.length ? "첨부한 매체를 분석하고 요청에 맞게 처리해 주세요." : "");
+    const attachmentsReady = attachments.every((item) => item.kind === "image" || item.status === "ready");
+    if (!text || !attachmentsReady || mediaBusy || operationRef.current?.status === "running") return;
     if (!workspaceRef.current) {
       showToast("프로젝트를 먼저 선택하세요.");
       return;
@@ -506,9 +594,12 @@ export function App() {
 
     const userId = newId("user");
     const assistantId = newId("assistant");
+    const attachmentLabel = attachments.length
+      ? `\n\n📎 ${attachments.map((item) => item.name).join(", ")}`
+      : "";
     setMessages((current) => [
       ...current,
-      { id: userId, role: "user", text },
+      { id: userId, role: "user", text: `${text}${attachmentLabel}` },
       { id: assistantId, role: "assistant", text: "", pending: true },
     ]);
     liveMessageIdRef.current = assistantId;
@@ -525,10 +616,13 @@ export function App() {
           cwd: workspaceRef.current,
           threadId: threadRef.current || undefined,
           networkAccess,
+          attachments: attachments.map((item) => item.id),
         },
       });
       operationRef.current = data.operation;
       setOperation(data.operation);
+      for (const item of attachments) if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      setAttachments([]);
       scheduleOperationPoll(data.operation.id);
       setRunning("Codex가 프로젝트를 살펴보고 있습니다…");
     } catch (error) {
@@ -751,6 +845,24 @@ export function App() {
 
       <footer className="composer-wrap">
         <div className={`composer${handsFree ? " hands-free" : ""}`}>
+          {attachments.length > 0 && (
+            <div className="attachment-tray" aria-label="첨부 파일">
+              {attachments.map((item) => (
+                <article className={`attachment-card ${item.status}`} key={item.id}>
+                  {item.previewUrl && <img src={item.previewUrl} alt="" />}
+                  {item.kind === "video" && item.status === "ready" && item.frameCount > 0 && (
+                    <img src={apiUrl(`/api/media/${encodeURIComponent(item.id)}/frames/0`)} alt="영상 첫 대표 프레임" />
+                  )}
+                  <div>
+                    <strong>{item.kind === "video" ? "🎬" : "🖼️"} {short(item.name, 28)}</strong>
+                    <span>{mediaStatusText(item)}</span>
+                    {item.analysis?.summary && <small>{short(item.analysis.summary, 72)}</small>}
+                  </div>
+                  <button type="button" aria-label={`${item.name} 첨부 제거`} onClick={() => removeAttachment(item.id)}>×</button>
+                </article>
+              ))}
+            </div>
+          )}
           <div className="composer-input-row">
             {handsFree ? (
               <div className="voice-preview" role="status" aria-live="polite">
@@ -800,6 +912,21 @@ export function App() {
             {handsFree ? "계속 듣는 중 · 마이크를 누르면 종료" : "짧게 누르기 · 길게 눌러 연속"}
           </p>
           <div className="composer-bar">
+            <input
+              ref={fileInputRef}
+              className="hidden"
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,video/x-matroska"
+              multiple
+              onChange={(event) => void addMedia(event.target.files)}
+            />
+            <button
+              className="attach-button"
+              type="button"
+              disabled={activity.running || mediaBusy || attachments.length >= 4}
+              aria-label="이미지 또는 영상 첨부"
+              onClick={() => fileInputRef.current?.click()}
+            >📎 <span>첨부</span></button>
             <label className="toggle">
               <input type="checkbox" checked={tts} onChange={(event) => setTts(event.target.checked)} />
               <span aria-hidden="true" />
@@ -810,7 +937,13 @@ export function App() {
               <span aria-hidden="true" />
               네트워크
             </label>
-            <button className="send-button" type="button" disabled={activity.running || dictating || !prompt.trim()} aria-label="요청 전송" onClick={() => void submitPrompt()}>
+            <button
+              className="send-button"
+              type="button"
+              disabled={activity.running || dictating || mediaBusy || (!prompt.trim() && attachments.length === 0) || attachments.some((item) => item.kind === "video" && item.status !== "ready")}
+              aria-label="요청 전송"
+              onClick={() => void submitPrompt()}
+            >
               보내기 <span aria-hidden="true">↑</span>
             </button>
           </div>
@@ -888,6 +1021,17 @@ function statusMessage(status: Operation["status"]): string {
   if (status === "interrupted") return "작업이 중단되었습니다.";
   if (status === "failed") return "작업이 실패했습니다.";
   return "작업이 완료되었습니다.";
+}
+
+function mediaStatusText(item: PendingAttachment): string {
+  if (item.status === "uploading") return `PC로 전송 중 · ${item.progress ?? 0}%`;
+  if (item.status === "queued") return "4B 영상 분석 대기 중";
+  if (item.status === "analyzing") return "4B가 대표 장면 분석 중 · 약 2~3분";
+  if (item.status === "failed") return item.error || "분석 실패";
+  if (item.kind === "video" && item.status === "ready") {
+    return `분석 완료 · ${item.frameCount}개 대표 장면`;
+  }
+  return `${Math.max(1, Math.round(item.size / 1024))}KB · 전송 완료`;
 }
 
 function errorMessage(error: unknown): string {

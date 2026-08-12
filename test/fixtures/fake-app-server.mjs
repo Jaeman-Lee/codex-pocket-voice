@@ -33,6 +33,7 @@ const thread = {
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 const write = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let pendingTurn = false;
+let imageChecked = false;
 
 rl.on("line", (line) => {
   const message = JSON.parse(line);
@@ -75,6 +76,13 @@ rl.on("line", (line) => {
       if (message.params.runtimeWorkspaceRoots !== undefined || message.params.approvalPolicy !== "never" || message.params.sandboxPolicy?.type !== "workspaceWrite") {
         write({ id: message.id, error: { code: -1, message: "unsafe turn policy" } });
         break;
+      }
+      if (process.env.FAKE_EXPECT_IMAGE === "1" && !imageChecked) {
+        imageChecked = true;
+        if (!message.params.input.some((item) => item.type === "localImage" && item.detail === "auto")) {
+          write({ id: message.id, error: { code: -1, message: "missing local image input" } });
+          break;
+        }
       }
       write({ id: message.id, result: { turn: turn("inProgress", []) } });
       pendingTurn = true;

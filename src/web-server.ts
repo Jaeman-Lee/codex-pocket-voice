@@ -15,6 +15,7 @@ import type {
 } from "./app-server-client.js";
 import { PathPolicy } from "./path-policy.js";
 import { compactThread, presentThread, summarizeTurn } from "./result.js";
+import { MediaError, MediaManager } from "./media-manager.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_EVENT_TEXT = 80_000;
@@ -44,6 +45,7 @@ export interface WebServerOptions {
   staticDir: string;
   host?: string;
   port?: number;
+  media?: MediaManager;
 }
 
 export interface RunningWebServer {
@@ -76,6 +78,7 @@ interface RunBody {
   model?: unknown;
   effort?: unknown;
   timeoutSeconds?: unknown;
+  attachments?: unknown;
 }
 
 export async function startWebServer(options: WebServerOptions): Promise<RunningWebServer> {
@@ -90,13 +93,17 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   const sseClients = new Set<ServerResponse>();
   const operations = new Map<string, Operation>();
   const activeThreads = new Set<string>();
+  const media = options.media ?? new MediaManager({
+    onUpdate: (item) => broadcast(sseClients, { type: "media", media: item }),
+  });
+  await media.initialize();
   const unsubscribe = options.client.subscribe((event) => {
     const forwarded = sanitizeNotification(event, activeThreads);
     if (forwarded) broadcast(sseClients, forwarded);
   });
 
   const server = createServer((request, response) => {
-    void handleRequest(request, response, options, operations, activeThreads, sseClients).catch(
+    void handleRequest(request, response, options, media, operations, activeThreads, sseClients).catch(
       (error) => sendError(response, error),
     );
   });
@@ -139,6 +146,7 @@ async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
   options: WebServerOptions,
+  media: MediaManager,
   operations: Map<string, Operation>,
   activeThreads: Set<string>,
   sseClients: Set<ServerResponse>,
@@ -156,7 +164,7 @@ async function handleRequest(
       response.end();
       return;
     }
-    await handleApi(request, response, url, options, operations, activeThreads, sseClients);
+    await handleApi(request, response, url, options, media, operations, activeThreads, sseClients);
     return;
   }
   await serveStatic(request, response, url.pathname, options.staticDir);
@@ -167,6 +175,7 @@ async function handleApi(
   response: ServerResponse,
   url: URL,
   options: WebServerOptions,
+  media: MediaManager,
   operations: Map<string, Operation>,
   activeThreads: Set<string>,
   sseClients: Set<ServerResponse>,
@@ -177,6 +186,7 @@ async function handleApi(
       ok: true,
       ...initialized,
       allowedWorkspaceRoots: options.paths.roots,
+      media: { maxBytes: media.maxBytes, videoModel: media.model },
     });
     return;
   }
@@ -223,6 +233,37 @@ async function handleApi(
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/media") {
+    assertWriteOrigin(request);
+    const contentType = request.headers["content-type"] ?? "";
+    const name = url.searchParams.get("name") ?? "attachment";
+    const item = await media.saveUpload(request, name, contentType);
+    sendJson(response, 201, { media: item });
+    return;
+  }
+
+  const mediaMatch = url.pathname.match(/^\/api\/media\/([^/]+)$/);
+  if (request.method === "GET" && mediaMatch) {
+    sendJson(response, 200, { media: media.get(decodeURIComponent(mediaMatch[1]!)) });
+    return;
+  }
+
+  const analyzeMatch = url.pathname.match(/^\/api\/media\/([^/]+)\/analyze$/);
+  if (request.method === "POST" && analyzeMatch) {
+    assertSameOrigin(request);
+    await readJson(request, true);
+    const item = media.queueAnalysis(decodeURIComponent(analyzeMatch[1]!));
+    sendJson(response, item.status === "ready" ? 200 : 202, { media: item });
+    return;
+  }
+
+  const frameMatch = url.pathname.match(/^\/api\/media\/([^/]+)\/frames\/(\d+)$/);
+  if (request.method === "GET" && frameMatch) {
+    const path = media.getFrame(decodeURIComponent(frameMatch[1]!), Number(frameMatch[2]));
+    await serveFile(request, response, path, "image/jpeg", "private, max-age=3600");
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/api/runs") {
     assertSameOrigin(request);
     const body = (await readJson(request)) as RunBody;
@@ -242,10 +283,13 @@ async function handleApi(
     const model = optionalString(body.model, "model", 200);
     const networkAccess = body.networkAccess === true;
     const timeoutSeconds = optionalInteger(body.timeoutSeconds, 30, 3600, 900, "timeoutSeconds");
+    const attachmentIds = optionalStringArray(body.attachments, "attachments", 4, 200);
+    const attachmentInput = media.resolveForTurn(attachmentIds);
     const begun = await options.client.beginTurn({
       threadId,
       cwd,
-      prompt,
+      prompt: `${prompt}${attachmentInput.promptContext}`,
+      imagePaths: attachmentInput.imagePaths,
       networkAccess,
       model,
       effort,
@@ -412,6 +456,32 @@ async function serveStatic(
   });
 }
 
+async function serveFile(
+  request: IncomingMessage,
+  response: ServerResponse,
+  filePath: string,
+  type: string,
+  cacheControl: string,
+): Promise<void> {
+  if (request.method !== "GET" && request.method !== "HEAD") throw new HttpError(405, "Method not allowed");
+  const info = await stat(filePath).catch(() => null);
+  if (!info?.isFile()) throw new HttpError(404, "File not found");
+  response.statusCode = 200;
+  response.setHeader("Content-Type", type);
+  response.setHeader("Content-Length", info.size);
+  response.setHeader("Cache-Control", cacheControl);
+  if (request.method === "HEAD") {
+    response.end();
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(filePath);
+    stream.once("error", reject);
+    response.once("finish", resolve);
+    stream.pipe(response);
+  });
+}
+
 function setSecurityHeaders(response: ServerResponse): void {
   response.setHeader(
     "Content-Security-Policy",
@@ -427,6 +497,10 @@ function assertSameOrigin(request: IncomingMessage): void {
   if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
     throw new HttpError(415, "application/json required");
   }
+  assertWriteOrigin(request);
+}
+
+function assertWriteOrigin(request: IncomingMessage): void {
   const origin = request.headers.origin;
   if (!origin) return;
   const host = request.headers.host;
@@ -490,7 +564,7 @@ function sendError(response: ServerResponse, error: unknown): void {
     response.end();
     return;
   }
-  const status = error instanceof HttpError ? error.status : 500;
+  const status = error instanceof HttpError ? error.status : error instanceof MediaError ? error.statusCode : 500;
   const message = error instanceof Error ? error.message : String(error);
   if (status >= 500) process.stderr.write(`[codex-web] ${message}\n`);
   sendJson(response, status, { error: message });
@@ -553,6 +627,20 @@ function optionalEnum<const T extends readonly string[]>(
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value !== "string" || !choices.includes(value)) throw new HttpError(400, `${name} is invalid`);
   return value as T[number];
+}
+
+function optionalStringArray(
+  value: unknown,
+  name: string,
+  maxItems: number,
+  maxLength: number,
+): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > maxItems) throw new HttpError(400, `${name} is invalid`);
+  return value.map((item) => {
+    if (typeof item !== "string" || !item || item.length > maxLength) throw new HttpError(400, `${name} is invalid`);
+    return item;
+  });
 }
 
 function isLoopbackHostHeader(host: string): boolean {

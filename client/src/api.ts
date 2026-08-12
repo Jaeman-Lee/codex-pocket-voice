@@ -5,6 +5,11 @@ interface ApiOptions {
   body?: unknown;
 }
 
+interface UploadResponse<T> {
+  media?: T;
+  error?: string;
+}
+
 const API_BASE = isNativeApp() ? "http://127.0.0.1:8788" : "";
 
 export function apiUrl(path: string): string {
@@ -28,4 +33,28 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
   const data = await response.json().catch(() => ({})) as T & { error?: string };
   if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
   return data;
+}
+
+export function uploadMedia<T>(file: File, onProgress: (percentage: number) => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", apiUrl(`/api/media?name=${encodeURIComponent(file.name)}`));
+    request.responseType = "json";
+    request.setRequestHeader("Accept", "application/json");
+    request.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
+    };
+    request.onerror = () => reject(new Error("첨부 파일을 PC로 보내지 못했습니다. 연결을 확인하세요."));
+    request.onload = () => {
+      const response = (request.response ?? {}) as UploadResponse<T>;
+      if (request.status < 200 || request.status >= 300 || !response.media) {
+        reject(new Error(response.error || `첨부 실패 (HTTP ${request.status})`));
+        return;
+      }
+      onProgress(100);
+      resolve(response.media);
+    };
+    request.send(file);
+  });
 }

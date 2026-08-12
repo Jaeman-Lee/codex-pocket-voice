@@ -8,6 +8,7 @@ import type { ThreadResumeResponse } from "../generated/app-server/v2/ThreadResu
 import type { ThreadStartResponse } from "../generated/app-server/v2/ThreadStartResponse";
 import type { Turn } from "../generated/app-server/v2/Turn";
 import type { TurnStartResponse } from "../generated/app-server/v2/TurnStartResponse";
+import type { UserInput } from "../generated/app-server/v2/UserInput";
 
 type RpcId = number | string;
 type JsonObject = Record<string, unknown>;
@@ -33,6 +34,7 @@ export interface RunTurnOptions {
   threadId?: string;
   cwd: string;
   prompt: string;
+  imagePaths?: string[];
   networkAccess?: boolean;
   model?: string;
   effort?: "low" | "medium" | "high" | "xhigh";
@@ -129,9 +131,13 @@ export class CodexAppServerClient {
     }
 
     const thread = threadResponse.thread;
+    const input: UserInput[] = [
+      { type: "text", text: options.prompt, text_elements: [] },
+      ...(options.imagePaths ?? []).map((path): UserInput => ({ type: "localImage", path, detail: "auto" })),
+    ];
     const started = await this.request<TurnStartResponse>("turn/start", {
       threadId: thread.id,
-      input: [{ type: "text", text: options.prompt, text_elements: [] }],
+      input,
       cwd: options.cwd,
       approvalPolicy: "never",
       sandboxPolicy: {

@@ -10,6 +10,7 @@
 
 - Android 네이티브 `ko-KR` 받아쓰기와 웹 한국어 음성 입력
 - PC의 여러 Git 프로젝트와 기존 Codex 대화 선택
+- 이미지 첨부와 영상 업로드, 로컬 Qwen3-VL 4B 대표 장면 분석
 - 답변, 명령 실행, 파일 변경 상태를 SSE로 실시간 표시
 - 실행 중인 Codex 턴 중단과 최종 diff·명령 요약
 - Android 한국어 TTS로 답변 읽기
@@ -31,7 +32,8 @@ Android APK / browser PWA
              ▼
 PC 127.0.0.1:8787
   └─ Codex Pocket web gateway
-       └─ codex app-server (stdio)
+       ├─ ffmpeg → Qwen3-VL 4B (local Ollama, video frames)
+       └─ codex app-server (text + selected images)
             └─ selected Git workspace
 ```
 
@@ -39,7 +41,7 @@ PC 127.0.0.1:8787
 
 ## 요구 사항
 
-- PC: Node.js 20 이상, Codex CLI, Git, tmux, SSH 서버
+- PC: Node.js 20 이상, Codex CLI, Git, tmux, SSH 서버, ffmpeg/ffprobe
 - Android: Termux, OpenSSH, Android Chrome 권장
 - 스마트폰에서 PC로 접속 가능한 SSH 경로(Tailscale 같은 사설망 권장)
 
@@ -51,6 +53,37 @@ cd codex-pocket-voice
 npm ci
 npm run build
 ./scripts/start-web-pc.sh
+```
+
+### 로컬 영상 분석(선택)
+
+영상은 Codex에 원본으로 보내지 않고 PC의 `ffmpeg`로 대표 프레임 4장을 만든 뒤 로컬
+[`qwen3-vl:4b`](https://ollama.com/library/qwen3-vl)로 먼저 분석합니다. 분석 요약과 대표 프레임은
+Codex 턴에 함께 전달됩니다. RTX 2060 6GB에서는 Q4 모델이 약 5.66GB VRAM을 사용했으므로
+영상 분석은 한 번에 하나씩 실행됩니다.
+
+Ollama 0.12.7 이상을 사용자 경로에 설치한 뒤 최초 한 번 모델을 받습니다. 기본 경로가 다르면
+환경 변수로 바꿀 수 있으며 사용자 경로나 네트워크 정보는 저장소에 하드코딩하지 않습니다.
+
+```sh
+export CODEX_VIDEO_OLLAMA_BIN="$HOME/.local/opt/ollama-vl/bin/ollama"
+export CODEX_VIDEO_OLLAMA_URL=http://127.0.0.1:11435
+export CODEX_VIDEO_OLLAMA_MODELS="$HOME/.local/share/ollama-vl/models"
+export CODEX_VIDEO_MODEL=qwen3-vl:4b
+
+OLLAMA_HOST=127.0.0.1:11435 \
+OLLAMA_MODELS="$CODEX_VIDEO_OLLAMA_MODELS" \
+"$CODEX_VIDEO_OLLAMA_BIN" pull "$CODEX_VIDEO_MODEL"
+```
+
+`start-web-pc.sh`는 설정된 사용자용 Ollama 서버를 자동으로 확인하고 시작합니다. 영상 원본과
+대표 프레임은 기본적으로 `~/.local/state/codex-pocket-voice/media`에 비공개로 저장되며 오래된
+임시 항목은 정리됩니다. 다음 값도 필요에 따라 변경할 수 있습니다.
+
+```sh
+export CODEX_POCKET_MEDIA_DIR=/private/path/codex-pocket-media
+export CODEX_MEDIA_MAX_BYTES=209715200
+export CODEX_VIDEO_ENABLED=true
 ```
 
 `start-web-pc.sh`는 기본적으로 `~/workspace` 아래의 Git 저장소를 찾아 허용 프로젝트로 등록하고 `127.0.0.1:8787`에서 서버를 시작합니다. 직접 지정하려면 다음처럼 실행합니다.

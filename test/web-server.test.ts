@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { resolve } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import type { Thread } from "../generated/app-server/v2/Thread";
 import type { Turn } from "../generated/app-server/v2/Turn";
 import type { AppServerNotification, RunTurnOptions } from "../src/app-server-client.js";
 import { PathPolicy } from "../src/path-policy.js";
+import { MediaManager } from "../src/media-manager.js";
 import { startWebServer, type WebCodexClient } from "../src/web-server.js";
 
 const cwd = process.cwd();
@@ -12,10 +15,13 @@ const cwd = process.cwd();
 test("loopback web gateway serves the PWA, validates origins, and controls a turn", async (t) => {
   const fake = new FakeWebClient();
   const paths = await PathPolicy.fromEnvironment(cwd);
+  const mediaDir = await mkdtemp(join(tmpdir(), "codex-pocket-media-test-"));
+  t.after(() => rm(mediaDir, { recursive: true, force: true }));
   const running = await startWebServer({
     client: fake,
     paths,
     staticDir: resolve(cwd, "client/dist"),
+    media: new MediaManager({ rootDir: mediaDir }),
     port: 0,
   });
   t.after(() => running.close());
@@ -58,14 +64,24 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.match(new TextDecoder().decode(initial.value), /connected/);
   streamAbort.abort();
 
+  const uploadedResponse = await fetch(`${base}/api/media?name=screen.png`, {
+    method: "POST",
+    headers: { "Content-Type": "image/png", Origin: "http://localhost" },
+    body: new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+  });
+  assert.equal(uploadedResponse.status, 201);
+  const uploaded = await uploadedResponse.json() as any;
+  assert.equal(uploaded.media.kind, "image");
+
   const started = await jsonFetch(`${base}/api/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: "http://localhost" },
-    body: JSON.stringify({ prompt: "change a file", cwd }),
+    body: JSON.stringify({ prompt: "change a file", cwd, attachments: [uploaded.media.id] }),
   });
   assert.equal(started.operation.status, "running");
   assert.equal(fake.lastRun?.cwd, cwd);
   assert.equal(fake.lastRun?.networkAccess, false);
+  assert.equal(fake.lastRun?.imagePaths?.length, 1);
 
   const nativeHealth = await fetch(`${base}/api/health`, { headers: { Origin: "http://localhost" } });
   assert.equal(nativeHealth.status, 200);

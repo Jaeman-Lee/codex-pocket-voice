@@ -46,6 +46,31 @@ export interface Operation {
   result?: RunResult;
 }
 
+export type MediaStatus = "uploaded" | "queued" | "analyzing" | "ready" | "failed";
+
+export interface MediaItem {
+  id: string;
+  name: string;
+  kind: "image" | "video";
+  mimeType: string;
+  size: number;
+  status: MediaStatus;
+  frameCount: number;
+  error?: string;
+  analysis?: {
+    summary: string;
+    issues: string[];
+    durationSeconds: number;
+    model: string;
+  };
+}
+
+export interface PendingAttachment extends Omit<MediaItem, "status"> {
+  status: MediaStatus | "uploading";
+  previewUrl?: string;
+  progress?: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -61,4 +86,5 @@ export interface CodexEvent {
   operation?: Operation;
   method?: string;
   params?: Record<string, unknown>;
+  media?: MediaItem;
 }
