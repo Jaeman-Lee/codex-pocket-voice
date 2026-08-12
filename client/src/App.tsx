@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { api, apiUrl } from "./api";
-import { isNativeApp, NativeSpeech, NativeTunnel } from "./native";
+import {
+  isNativeApp,
+  NativeSpeech,
+  NativeTunnel,
+  type NativeSpeechError,
+  type NativeSpeechResult,
+  type NativeSpeechState,
+} from "./native";
 import { mergeSpeechSegments } from "./speech-utils";
 import type {
   ChatMessage,
@@ -77,6 +84,10 @@ export function App() {
   const [tts, setTts] = useState(() => localStorage.getItem("codex-pocket-tts") === "true");
   const [networkAccess, setNetworkAccess] = useState(false);
   const [dictating, setDictating] = useState(false);
+  const [handsFree, setHandsFree] = useState(false);
+  const [controlsCollapsed, setControlsCollapsed] = useState(
+    () => localStorage.getItem("codex-pocket-controls-open") !== "true",
+  );
   const [speechSupported, setSpeechSupported] = useState(true);
   const [toast, setToast] = useState("");
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -94,6 +105,11 @@ export function App() {
   const toastTimerRef = useRef<number | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const dictationBaseRef = useRef("");
+  const nativeFinalRef = useRef("");
+  const handsFreeRef = useRef(false);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressTriggeredRef = useRef(false);
+  const voiceWasActiveRef = useRef(false);
   const initializedRef = useRef(false);
   const initializingRef = useRef(false);
   const handleEventRef = useRef<(event: CodexEvent) => void>(() => undefined);
@@ -103,6 +119,10 @@ export function App() {
   useEffect(() => { threadRef.current = threadId; }, [threadId]);
   useEffect(() => { ttsRef.current = tts; localStorage.setItem("codex-pocket-tts", String(tts)); }, [tts]);
   useEffect(() => { operationRef.current = operation; }, [operation]);
+  useEffect(() => { handsFreeRef.current = handsFree; }, [handsFree]);
+  useEffect(() => {
+    localStorage.setItem("codex-pocket-controls-open", String(!controlsCollapsed));
+  }, [controlsCollapsed]);
 
   const showToast = useCallback((text: string) => {
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
@@ -212,6 +232,49 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!isNativeApp()) return;
+    let disposed = false;
+    const listeners: Array<{ remove(): Promise<void> }> = [];
+    const keep = async (listener: Promise<{ remove(): Promise<void> }>) => {
+      const handle = await listener;
+      if (disposed) void handle.remove();
+      else listeners.push(handle);
+    };
+    const updateTranscript = (tail: string) => {
+      setPrompt(joinDictation(dictationBaseRef.current, mergeSpeechSegments([nativeFinalRef.current, tail])));
+    };
+
+    void keep(NativeSpeech.addListener("speechPartial", (event: NativeSpeechResult) => {
+      updateTranscript(event.transcript);
+    }));
+    void keep(NativeSpeech.addListener("speechFinal", (event: NativeSpeechResult) => {
+      nativeFinalRef.current = mergeSpeechSegments([nativeFinalRef.current, event.transcript]);
+      updateTranscript("");
+    }));
+    void keep(NativeSpeech.addListener("speechState", (event: NativeSpeechState) => {
+      if (event.state === "listening" || event.state === "processing" || event.state === "restarting") {
+        setDictating(true);
+      } else if (!handsFreeRef.current) {
+        setDictating(false);
+      }
+    }));
+    void keep(NativeSpeech.addListener("speechError", (event: NativeSpeechError) => {
+      if (!event.recoverable) {
+        handsFreeRef.current = false;
+        setHandsFree(false);
+        setDictating(false);
+        showToast(event.message);
+      }
+    }));
+
+    return () => {
+      disposed = true;
+      for (const listener of listeners) void listener.remove();
+      void NativeSpeech.stop();
+    };
+  }, [showToast]);
+
+  useEffect(() => {
     if (isNativeApp()) {
       setSpeechSupported(true);
       return;
@@ -241,7 +304,20 @@ export function App() {
         showToast(`음성 인식 오류: ${event.error}`);
       }
     };
-    recognition.onend = () => setDictating(false);
+    recognition.onend = () => {
+      if (handsFreeRef.current) {
+        window.setTimeout(() => {
+          if (!handsFreeRef.current) return;
+          try {
+            recognition.start();
+          } catch {
+            setDictating(false);
+          }
+        }, 280);
+      } else {
+        setDictating(false);
+      }
+    };
     recognitionRef.current = recognition;
     return () => {
       recognition.abort();
@@ -426,7 +502,7 @@ export function App() {
       showToast("프로젝트를 먼저 선택하세요.");
       return;
     }
-    if (dictating) recognitionRef.current?.stop();
+    if (dictating) await stopDictation();
 
     const userId = newId("user");
     const assistantId = newId("assistant");
@@ -498,39 +574,103 @@ export function App() {
     }
   }
 
-  async function toggleDictation() {
+  function setHandsFreeMode(enabled: boolean) {
+    handsFreeRef.current = enabled;
+    setHandsFree(enabled);
+  }
+
+  async function startDictation(continuous: boolean) {
+    if (dictating || handsFreeRef.current) return;
+    dictationBaseRef.current = prompt.trim();
+    nativeFinalRef.current = "";
+    setHandsFreeMode(continuous);
+    setDictating(true);
+    textareaRef.current?.blur();
+
     if (isNativeApp()) {
-      if (dictating) return;
-      setDictating(true);
       try {
-        const result = await NativeSpeech.listen({
+        await NativeSpeech.start({
           language: "ko-KR",
-          prompt: "Codex에게 보낼 내용을 한국어로 말씀해 주세요",
+          continuous,
         });
-        if (!result.cancelled && result.transcript.trim()) {
-          setPrompt((current) => joinDictation(current, result.transcript));
-        }
       } catch (error) {
-        showToast(`음성 인식 오류: ${errorMessage(error)}`);
-      } finally {
+        setHandsFreeMode(false);
         setDictating(false);
+        showToast(`음성 인식 오류: ${errorMessage(error)}`);
       }
       return;
     }
 
     const recognition = recognitionRef.current;
-    if (!recognition) return;
-    if (dictating) {
-      recognition.stop();
+    if (!recognition) {
+      setHandsFreeMode(false);
+      setDictating(false);
       return;
     }
-    dictationBaseRef.current = prompt.trim();
     try {
       recognition.lang = "ko-KR";
+      recognition.continuous = continuous;
       recognition.start();
     } catch (error) {
+      setHandsFreeMode(false);
+      setDictating(false);
       showToast(errorMessage(error));
     }
+  }
+
+  async function stopDictation() {
+    setHandsFreeMode(false);
+    setDictating(false);
+    if (isNativeApp()) {
+      try {
+        await NativeSpeech.stop();
+      } catch (error) {
+        showToast(`음성 입력을 중지하지 못했습니다: ${errorMessage(error)}`);
+      }
+      return;
+    }
+    recognitionRef.current?.stop();
+  }
+
+  function clearLongPressTimer() {
+    if (longPressTimerRef.current === null) return;
+    window.clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
+  }
+
+  function handleVoicePointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    voiceWasActiveRef.current = dictating || handsFreeRef.current;
+    longPressTriggeredRef.current = false;
+    clearLongPressTimer();
+    if (voiceWasActiveRef.current) return;
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null;
+      longPressTriggeredRef.current = true;
+      void startDictation(true);
+    }, 620);
+  }
+
+  function handleVoicePointerUp(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    const wasActive = voiceWasActiveRef.current;
+    const wasLongPress = longPressTriggeredRef.current;
+    clearLongPressTimer();
+    voiceWasActiveRef.current = false;
+    longPressTriggeredRef.current = false;
+    if (wasActive) {
+      void stopDictation();
+    } else if (!wasLongPress) {
+      void startDictation(false);
+    }
+  }
+
+  function handleVoicePointerCancel() {
+    clearLongPressTimer();
+    voiceWasActiveRef.current = false;
   }
 
   return (
@@ -544,6 +684,15 @@ export function App() {
           </div>
         </div>
         <div className="top-actions">
+          <button
+            className={`icon-button selector-toggle${controlsCollapsed ? " collapsed" : ""}`}
+            type="button"
+            aria-label={controlsCollapsed ? "프로젝트와 대화 선택 열기" : "프로젝트와 대화 선택 닫기"}
+            aria-expanded={!controlsCollapsed}
+            onClick={() => setControlsCollapsed((current) => !current)}
+          >
+            <span aria-hidden="true">⌃</span>
+          </button>
           {installPrompt && (
             <button className="icon-button" type="button" aria-label="홈 화면에 설치" onClick={() => {
               void installPrompt.prompt();
@@ -554,23 +703,23 @@ export function App() {
         </div>
       </header>
 
-      <section className="selectors" aria-label="작업 대상">
+      <section className={`selectors${controlsCollapsed ? " collapsed" : ""}`} aria-label="작업 대상" aria-hidden={controlsCollapsed}>
         <label>
           <span>프로젝트</span>
-          <select value={workspace} disabled={activity.running} aria-label="프로젝트 선택" onChange={(event) => void selectWorkspace(event.target.value)}>
+          <select value={workspace} disabled={activity.running || controlsCollapsed} aria-label="프로젝트 선택" onChange={(event) => void selectWorkspace(event.target.value)}>
             {workspaces.map((item) => <option key={item.path} value={item.path}>{item.name}</option>)}
           </select>
         </label>
         <label>
           <span>대화</span>
           <div className="select-row">
-            <select value={threadId} disabled={activity.running} aria-label="Codex 대화 선택" onChange={(event) => void selectThread(event.target.value)}>
+            <select value={threadId} disabled={activity.running || controlsCollapsed} aria-label="Codex 대화 선택" onChange={(event) => void selectThread(event.target.value)}>
               <option value="">새 대화</option>
               {threads.map((thread) => (
                 <option key={thread.id} value={thread.id}>{short(thread.name || thread.preview || "제목 없는 대화", 42)}</option>
               ))}
             </select>
-            <button className="icon-button" type="button" aria-label="대화 새로고침" onClick={() => void loadThreads(workspaceRef.current, true)}>↻</button>
+            <button className="icon-button" type="button" disabled={controlsCollapsed} aria-label="대화 새로고침" onClick={() => void loadThreads(workspaceRef.current, true)}>↻</button>
           </div>
         </label>
       </section>
@@ -601,37 +750,55 @@ export function App() {
       )}
 
       <footer className="composer-wrap">
-        <div className="composer">
+        <div className={`composer${handsFree ? " hands-free" : ""}`}>
           <div className="composer-input-row">
-            <textarea
-              ref={textareaRef}
-              lang="ko-KR"
-              inputMode="text"
-              rows={2}
-              maxLength={100_000}
-              value={prompt}
-              placeholder="한국어로 말하거나 직접 입력하세요"
-              aria-label="Codex에게 보낼 요청"
-              onChange={(event) => setPrompt(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-                  event.preventDefault();
-                  void submitPrompt();
-                }
-              }}
-            />
+            {handsFree ? (
+              <div className="voice-preview" role="status" aria-live="polite">
+                <strong>연속 받아쓰기</strong>
+                <p>{prompt || "말씀해 주세요…"}</p>
+              </div>
+            ) : (
+              <textarea
+                ref={textareaRef}
+                lang="ko-KR"
+                inputMode="text"
+                rows={2}
+                maxLength={100_000}
+                value={prompt}
+                placeholder="한국어로 말하거나 직접 입력하세요"
+                aria-label="Codex에게 보낼 요청"
+                onChange={(event) => setPrompt(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                    event.preventDefault();
+                    void submitPrompt();
+                  }
+                }}
+              />
+            )}
             <button
-              className={`voice-button${dictating ? " listening" : ""}`}
+              className={`voice-button${dictating ? " listening" : ""}${handsFree ? " hands-free" : ""}`}
               type="button"
               disabled={!speechSupported}
-              aria-label={dictating ? "음성 입력 중지" : "한국어 음성 입력 시작"}
+              aria-label={dictating ? "음성 입력 중지" : "짧게 누르면 받아쓰기, 길게 누르면 연속 받아쓰기"}
               aria-pressed={dictating}
               title={speechSupported ? undefined : "이 브라우저는 앱 내 음성 인식을 지원하지 않습니다."}
-              onClick={() => void toggleDictation()}
+              onPointerDown={handleVoicePointerDown}
+              onPointerUp={handleVoicePointerUp}
+              onPointerCancel={handleVoicePointerCancel}
+              onContextMenu={(event) => event.preventDefault()}
+              onClick={(event) => {
+                if (event.detail !== 0) return;
+                if (dictating || handsFreeRef.current) void stopDictation();
+                else void startDictation(false);
+              }}
             >
-              <span aria-hidden="true">🎙</span><small>{dictating ? "듣는 중" : "한국어"}</small>
+              <span aria-hidden="true">🎙</span><small>{handsFree ? "연속 중" : dictating ? "듣는 중" : "한국어"}</small>
             </button>
           </div>
+          <p className={`voice-help${handsFree ? " active" : ""}`}>
+            {handsFree ? "계속 듣는 중 · 마이크를 누르면 종료" : "짧게 누르기 · 길게 눌러 연속"}
+          </p>
           <div className="composer-bar">
             <label className="toggle">
               <input type="checkbox" checked={tts} onChange={(event) => setTts(event.target.checked)} />
@@ -643,7 +810,7 @@ export function App() {
               <span aria-hidden="true" />
               네트워크
             </label>
-            <button className="send-button" type="button" disabled={activity.running || !prompt.trim()} aria-label="요청 전송" onClick={() => void submitPrompt()}>
+            <button className="send-button" type="button" disabled={activity.running || dictating || !prompt.trim()} aria-label="요청 전송" onClick={() => void submitPrompt()}>
               보내기 <span aria-hidden="true">↑</span>
             </button>
           </div>

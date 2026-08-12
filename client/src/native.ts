@@ -1,12 +1,26 @@
-import { Capacitor, registerPlugin } from "@capacitor/core";
+import { Capacitor, registerPlugin, type PluginListenerHandle } from "@capacitor/core";
 
-interface NativeSpeechResult {
+export interface NativeSpeechResult {
   transcript: string;
-  cancelled?: boolean;
+}
+
+export interface NativeSpeechState {
+  state: "listening" | "processing" | "restarting" | "stopping" | "stopped";
+  continuous: boolean;
+}
+
+export interface NativeSpeechError {
+  message: string;
+  recoverable: boolean;
 }
 
 interface NativeSpeechPlugin {
-  listen(options: { language: string; prompt?: string }): Promise<NativeSpeechResult>;
+  start(options: { language: string; continuous: boolean }): Promise<{ started: boolean; continuous: boolean }>;
+  stop(): Promise<void>;
+  addListener(eventName: "speechPartial", listener: (event: NativeSpeechResult) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: "speechFinal", listener: (event: NativeSpeechResult) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: "speechState", listener: (event: NativeSpeechState) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: "speechError", listener: (event: NativeSpeechError) => void): Promise<PluginListenerHandle>;
 }
 
 interface NativeTunnelPlugin {

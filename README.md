@@ -133,6 +133,8 @@ npm run android:debug
 
 현재 APK는 SSH 키를 앱에 복제하지 않고 기존 Termux SSH 설정을 사용합니다. Termux 없이 동작하는 네이티브 SSH 단계와 보안 설계는 [Android 앱 구조](docs/android-architecture.md)에 정리했습니다.
 
+향후 사용자별 SSH·네트워크·경로 정보를 온보딩 화면에서 설정하는 작업은 [로드맵](docs/roadmap.md)에 정리했습니다. 실제 사용자 정보나 비밀키는 공개 저장소에 저장하지 않습니다.
+
 ## 보안 모델
 
 - 웹 서버는 `127.0.0.1` 이외의 주소에 바인딩되지 않습니다.
