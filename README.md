@@ -165,7 +165,9 @@ npm run android:debug
 설치 후 Android의 앱 정보 → 권한(또는 추가 권한)에서 **Termux 명령 실행**을 허용합니다. 이후에는 `pc-codex-web`을 사용자가 따로 열 필요 없이 Codex Pocket Voice 앱이 연결을 요청합니다. Termux가 강제로 종료되거나 배터리 최적화로 중지되면 Android 설정에서 Termux의 배터리 제한을 해제해야 할 수 있습니다.
 
 GitHub Actions의 APK는 저장소 비밀값에 보관된 고정 키로 서명됩니다. 1.2 이전 임시 디버그 APK는
-실행마다 서명이 달랐으므로 1.2 고정 서명판을 처음 설치할 때에만 기존 앱을 제거해야 합니다.
+실행마다 서명이 달랐고 일부 Android 사용자 영역에 이전 서명이 남을 수 있어, 1.2.1부터 충돌 없는
+영구 패키지 ID `io.github.jaemanlee.codexpocketvoice.stable`을 사용합니다. 처음 설치할 때만 별도 앱으로
+설치되며
 이후 버전은 앱 데이터와 설정을 유지한 채 덮어쓸 수 있습니다. 서명키 파일이나 암호는 저장소에
 커밋하지 않습니다.
 
