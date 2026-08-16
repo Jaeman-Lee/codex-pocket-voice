@@ -36,6 +36,8 @@ Model inference can still require internet access, but project files and complet
 
 ## Phase 3 — durable local work journal
 
+Implementation status: v1.6 introduces the versioned `WorkJournal` boundary, IndexedDB persistence with a localStorage fallback, offline conversation restore, and target-bound prompt queue recovery. Native Android SQLite, full event/diff journaling, retention controls, and reconciliation migrations remain in progress.
+
 - Add an app-owned SQLite work journal for conversations, queued prompts, command events, diffs, attachments, and target metadata.
 - Make project history and completed results readable while PC, phone CLI, or network connectivity is unavailable.
 - Reconcile the local journal with each CLI thread store after reconnection without duplicating turns.

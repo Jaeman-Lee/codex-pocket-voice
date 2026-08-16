@@ -147,6 +147,20 @@ export interface ChatMessage {
   details?: string;
 }
 
+export interface QueuedPrompt {
+  id: string;
+  text: string;
+  cwd: string;
+  threadId: string;
+  networkAccess: boolean;
+  model: string;
+  effort: string;
+  provider: ProviderId;
+  accountId: string;
+  attachments: PendingAttachment[];
+  displayed?: boolean;
+}
+
 export interface CodexEvent {
   type: string;
   action?: string;

@@ -59,7 +59,7 @@ jobs:
           ANDROID_SIGNING_KEYSTORE_BASE64: ${{ secrets.ANDROID_SIGNING_KEYSTORE_BASE64 }}
         run: |
           keystore="$RUNNER_TEMP/codex-pocket-release.jks"
-          output="android/app/build/outputs/apk/release/Codex-Pocket-Voice-v1.5.0-stable.apk"
+          output="android/app/build/outputs/apk/release/Codex-Pocket-Voice-v1.6.0-stable.apk"
           printf '%s' "$ANDROID_SIGNING_KEYSTORE_BASE64" | base64 --decode > "$keystore"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
             --ks "$keystore" \
@@ -73,7 +73,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Codex-Pocket-Voice-v1.5.0-stable
-          path: android/app/build/outputs/apk/release/Codex-Pocket-Voice-v1.5.0-stable.apk
+          name: Codex-Pocket-Voice-v1.6.0-stable
+          path: android/app/build/outputs/apk/release/Codex-Pocket-Voice-v1.6.0-stable.apk
           if-no-files-found: error
           retention-days: 14

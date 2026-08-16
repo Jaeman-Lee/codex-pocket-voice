@@ -9,6 +9,8 @@ import {
   type NativeSpeechState,
 } from "./native";
 import { mergeSpeechSegments } from "./speech-utils";
+import { createWorkJournal } from "./work-journal";
+import { conversationKey, restoredMessages, serializableQueue } from "./work-journal-model";
 import type {
   ChatMessage,
   CodexEvent,
@@ -25,6 +27,7 @@ import type {
   ProviderLoginSession,
   ProviderOption,
   ProviderResponse,
+  QueuedPrompt,
   RunResult,
   ThreadDetail,
   ThreadSummary,
@@ -78,19 +81,6 @@ interface ActivityState {
   detail: string;
 }
 
-interface QueuedPrompt {
-  id: string;
-  text: string;
-  cwd: string;
-  threadId: string;
-  networkAccess: boolean;
-  model: string;
-  effort: string;
-  provider: ProviderId;
-  accountId: string;
-  attachments: PendingAttachment[];
-}
-
 let localId = 0;
 const newId = (prefix: string) => `${prefix}-${Date.now()}-${localId++}`;
 
@@ -137,12 +127,17 @@ export function App() {
   const [connectionTest, setConnectionTest] = useState<Partial<Record<ProviderId, ProviderConnectionTest>>>({});
   const [loginSession, setLoginSession] = useState<ProviderLoginSession | null>(null);
   const [providerAliases, setProviderAliases] = useState<Partial<Record<ProviderId, string>>>({});
+  const [journalRestored, setJournalRestored] = useState(false);
+  const [journal] = useState(createWorkJournal);
 
   const transcriptRef = useRef<HTMLElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const operationRef = useRef<Operation | null>(null);
   const promptQueueRef = useRef<QueuedPrompt[]>([]);
+  const messagesRef = useRef<ChatMessage[]>([]);
+  const journalQueueReadyRef = useRef<DeviceId | null>(null);
+  const queueDispatchingRef = useRef(false);
   const workspaceRef = useRef("");
   const deviceRef = useRef<DeviceId>(device);
   const threadRef = useRef("");
@@ -173,6 +168,7 @@ export function App() {
   useEffect(() => { threadRef.current = threadId; }, [threadId]);
   useEffect(() => { ttsRef.current = tts; localStorage.setItem("codex-pocket-tts", String(tts)); }, [tts]);
   useEffect(() => { operationRef.current = operation; }, [operation]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { handsFreeRef.current = handsFree; }, [handsFree]);
   useEffect(() => {
     localStorage.setItem("codex-pocket-controls-open", String(!controlsCollapsed));
@@ -185,6 +181,56 @@ export function App() {
     setConnectionTest({});
     setLoginSession(null);
   }, [device]);
+
+  useEffect(() => {
+    let disposed = false;
+    journalQueueReadyRef.current = null;
+    void journal.loadQueue(device).then((record) => {
+      if (disposed || deviceRef.current !== device) return;
+      const prompts = serializableQueue(record?.prompts ?? []);
+      promptQueueRef.current = prompts;
+      setPromptQueue(prompts);
+      journalQueueReadyRef.current = device;
+    }).catch(() => undefined);
+    return () => { disposed = true; };
+  }, [device, journal]);
+
+  useEffect(() => {
+    if (!workspace) return;
+    let disposed = false;
+    const expectedKey = conversationKey(device, workspace, threadId);
+    void journal.loadConversation(device, workspace, threadId).then((record) => {
+      if (disposed || !record || record.key !== expectedKey || messagesRef.current.length > 0) return;
+      const restored = restoredMessages(record.messages);
+      if (!restored.length) return;
+      messagesRef.current = restored;
+      setMessages(restored);
+      setJournalRestored(true);
+    }).catch(() => undefined);
+    return () => { disposed = true; };
+  }, [device, journal, threadId, workspace]);
+
+  useEffect(() => {
+    if (!workspace || messages.length === 0) return;
+    const timer = window.setTimeout(() => {
+      void journal.saveConversation({
+        key: conversationKey(device, workspace, threadId),
+        device,
+        workspace,
+        threadId,
+        messages,
+        syncState: operation?.status === "running" ? "running" : connection === "online" ? "synced" : "local",
+        updatedAt: new Date().toISOString(),
+      }).catch(() => undefined);
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [connection, device, journal, messages, operation?.status, threadId, workspace]);
+
+  useEffect(() => {
+    if (connection !== "online" || operationRef.current || queueDispatchingRef.current || promptQueueRef.current.length === 0) return;
+    const timer = window.setTimeout(() => startNextQueuedPrompt(""), 250);
+    return () => window.clearTimeout(timer);
+  }, [connection, promptQueue.length]);
 
   const showToast = useCallback((text: string) => {
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
@@ -279,10 +325,30 @@ export function App() {
       setWorkspace(selected);
       workspaceRef.current = selected;
       await loadThreads(selected, true, localStorage.getItem(storageKey("thread", deviceRef.current)) ?? "");
+      if (threadRef.current) {
+        try {
+          const data = await api<{ thread: ThreadDetail }>(`/api/threads/${encodeURIComponent(threadRef.current)}`);
+          const restored = historyMessages(data.thread);
+          messagesRef.current = restored;
+          setMessages(restored);
+          setJournalRestored(false);
+        } catch {
+          // The local work journal effect restores the last saved copy.
+        }
+      }
       initializedRef.current = true;
     } catch (error) {
       setConnection("error");
       setConnectionText(`${deviceLabel(deviceRef.current)} 연결 실패`);
+      const cachedWorkspace = localStorage.getItem(storageKey("workspace", deviceRef.current)) ?? "";
+      const cachedThread = localStorage.getItem(storageKey("thread", deviceRef.current)) ?? "";
+      if (cachedWorkspace) {
+        setWorkspace(cachedWorkspace);
+        workspaceRef.current = cachedWorkspace;
+        setWorkspaces([{ path: cachedWorkspace, name: workspaceName(cachedWorkspace) }]);
+        setThreadId(cachedThread);
+        threadRef.current = cachedThread;
+      }
       showToast(errorMessage(error));
     } finally {
       initializingRef.current = false;
@@ -454,14 +520,22 @@ export function App() {
   }, [messages.length, newestText]);
 
   function replaceMessage(id: string, update: Partial<ChatMessage>) {
-    setMessages((current) => current.map((message) => message.id === id ? { ...message, ...update } : message));
+    setMessages((current) => {
+      const next = current.map((message) => message.id === id ? { ...message, ...update } : message);
+      messagesRef.current = next;
+      return next;
+    });
   }
 
   function ensureLiveMessage(): string {
     if (liveMessageIdRef.current) return liveMessageIdRef.current;
     const id = newId("assistant");
     liveMessageIdRef.current = id;
-    setMessages((current) => [...current, { id, role: "assistant", text: "", pending: true }]);
+    setMessages((current) => {
+      const next: ChatMessage[] = [...current, { id, role: "assistant", text: "", pending: true }];
+      messagesRef.current = next;
+      return next;
+    });
     return id;
   }
 
@@ -717,11 +791,12 @@ export function App() {
     };
     setPrompt("");
     setAttachments([]);
-    if (operationRef.current?.status === "running") {
+    if (connection !== "online" || operationRef.current?.status === "running") {
       const nextQueue = [...promptQueueRef.current, queued];
-      promptQueueRef.current = nextQueue;
-      setPromptQueue(nextQueue);
-      showToast(`요청을 대기열 ${nextQueue.length}번째에 추가했습니다.`);
+      updatePromptQueue(nextQueue);
+      showToast(connection === "online"
+        ? `요청을 대기열 ${nextQueue.length}번째에 추가했습니다.`
+        : `오프라인 대기열에 저장했습니다. ${deviceLabel(deviceRef.current)} 연결 후 자동 실행됩니다.`);
       return;
     }
     await executePrompt(queued);
@@ -733,11 +808,16 @@ export function App() {
     const attachmentLabel = queued.attachments.length
       ? `\n\n📎 ${queued.attachments.map((item) => item.name).join(", ")}`
       : "";
-    setMessages((current) => [
-      ...current,
-      { id: userId, role: "user", text: `${queued.text}${attachmentLabel}` },
-      { id: assistantId, role: "assistant", text: "", pending: true },
-    ]);
+    setMessages((current) => {
+      const next: ChatMessage[] = [
+        ...current,
+        ...(queued.displayed ? [] : [{ id: userId, role: "user" as const, text: `${queued.text}${attachmentLabel}` }]),
+        { id: assistantId, role: "assistant", text: "", pending: true },
+      ];
+      messagesRef.current = next;
+      return next;
+    });
+    setJournalRestored(false);
     liveMessageIdRef.current = assistantId;
     liveTextRef.current = "";
     latestDiffRef.current = "";
@@ -760,21 +840,45 @@ export function App() {
       });
       operationRef.current = data.operation;
       setOperation(data.operation);
+      queueDispatchingRef.current = false;
       for (const item of queued.attachments) if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
       scheduleOperationPoll(data.operation.id);
       setRunning("Codex가 프로젝트를 살펴보고 있습니다…");
     } catch (error) {
-      finishLiveMessage(`실행하지 못했습니다: ${errorMessage(error)}`, true);
+      queueDispatchingRef.current = false;
+      const message = errorMessage(error);
+      if (message.includes("연결할 수 없습니다")) {
+        setConnection("pending");
+        updatePromptQueue([{ ...queued, displayed: true }, ...promptQueueRef.current]);
+        finishLiveMessage("단말 연결이 끊겨 요청을 오프라인 대기열로 되돌렸습니다.", true);
+        stopRunning();
+        return;
+      }
+      finishLiveMessage(`실행하지 못했습니다: ${message}`, true);
       stopRunning();
       startNextQueuedPrompt(continuedThreadId || threadRef.current);
     }
   }
 
   function startNextQueuedPrompt(continuedThreadId: string) {
+    if (queueDispatchingRef.current) return;
     const [next, ...remaining] = promptQueueRef.current;
     if (!next) return;
-    promptQueueRef.current = remaining;
-    setPromptQueue(remaining);
+    queueDispatchingRef.current = true;
+    updatePromptQueue(remaining);
+    const effectiveThreadId = next.threadId || continuedThreadId;
+    if (workspaceRef.current !== next.cwd || threadRef.current !== effectiveThreadId) {
+      setWorkspace(next.cwd);
+      workspaceRef.current = next.cwd;
+      localStorage.setItem(storageKey("workspace", deviceRef.current), next.cwd);
+      setThreadId(effectiveThreadId);
+      threadRef.current = effectiveThreadId;
+      if (effectiveThreadId) localStorage.setItem(storageKey("thread", deviceRef.current), effectiveThreadId);
+      else localStorage.removeItem(storageKey("thread", deviceRef.current));
+      messagesRef.current = [];
+      setMessages([]);
+      setJournalRestored(false);
+    }
     window.setTimeout(() => void executePrompt(next, continuedThreadId), 0);
   }
 
@@ -784,8 +888,20 @@ export function App() {
       if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
     }
     const remaining = promptQueueRef.current.filter((item) => item.id !== id);
-    promptQueueRef.current = remaining;
-    setPromptQueue(remaining);
+    updatePromptQueue(remaining);
+  }
+
+  function updatePromptQueue(next: QueuedPrompt[]) {
+    const safe = serializableQueue(next);
+    promptQueueRef.current = safe;
+    setPromptQueue(safe);
+    if (journalQueueReadyRef.current === deviceRef.current) {
+      void journal.saveQueue({
+        device: deviceRef.current,
+        prompts: safe,
+        updatedAt: new Date().toISOString(),
+      }).catch(() => undefined);
+    }
   }
 
   async function stopOperation() {
@@ -818,8 +934,12 @@ export function App() {
     setModel("");
     setEffort("");
     setMessages([]);
+    messagesRef.current = [];
     promptQueueRef.current = [];
     setPromptQueue([]);
+    journalQueueReadyRef.current = null;
+    queueDispatchingRef.current = false;
+    setJournalRestored(false);
   }
 
   function selectModel(nextModel: string) {
@@ -957,6 +1077,8 @@ export function App() {
     threadRef.current = "";
     localStorage.removeItem(storageKey("thread", deviceRef.current));
     setMessages([]);
+    messagesRef.current = [];
+    setJournalRestored(false);
     await loadThreads(path, false);
   }
 
@@ -966,10 +1088,14 @@ export function App() {
     if (id) localStorage.setItem(storageKey("thread", deviceRef.current), id);
     else localStorage.removeItem(storageKey("thread", deviceRef.current));
     setMessages([]);
+    messagesRef.current = [];
+    setJournalRestored(false);
     if (!id) return;
     try {
       const data = await api<{ thread: ThreadDetail }>(`/api/threads/${encodeURIComponent(id)}`);
-      setMessages(historyMessages(data.thread));
+      const restored = historyMessages(data.thread);
+      messagesRef.current = restored;
+      setMessages(restored);
     } catch (error) {
       showToast(errorMessage(error));
     }
@@ -1324,6 +1450,14 @@ export function App() {
       )}
 
       <main ref={transcriptRef} className="transcript" aria-live="polite">
+        {(journalRestored || (connection !== "online" && (messages.length > 0 || promptQueue.length > 0))) && (
+          <div className="journal-banner" role="status">
+            <strong>{connection === "online" ? "로컬 기록 복원됨" : "오프라인 기록"}</strong>
+            <span>{connection === "online"
+              ? "CLI 기록과 다시 동기화합니다."
+              : `대화는 이 앱에 보존되며 예약 ${promptQueue.length}건은 ${deviceLabel(device)} 연결 후 실행됩니다.`}</span>
+          </div>
+        )}
         {messages.length === 0 ? (
           <section className="empty-state">
             <div className="empty-orbit" aria-hidden="true"><span /></div>
@@ -1506,7 +1640,7 @@ export function App() {
             </button>
           </div>
         </div>
-        <p className="safety-note">허용된 폴더만 수정 · 추가 권한은 자동 거절</p>
+        <p className="safety-note">허용된 폴더만 수정 · 대화와 대기열은 로컬 자동 저장</p>
       </footer>
 
       {toast && <div className="toast" role="status">{toast}</div>}
@@ -1573,6 +1707,10 @@ function joinDictation(...parts: string[]): string {
 
 function short(text: string, length: number): string {
   return text.length <= length ? text : `${text.slice(0, length - 1)}…`;
+}
+
+function workspaceName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
 }
 
 function statusMessage(status: Operation["status"]): string {
