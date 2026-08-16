@@ -21,11 +21,26 @@ public class PocketTunnelPlugin extends Plugin {
 
     @PluginMethod
     public void start(PluginCall call) {
+        if (!canRunCommand()) {
+            JSObject result = new JSObject();
+            result.put("scheduled", false);
+            result.put("manual", true);
+            result.put("message", "Google Play Termux에서는 내장 Boot 자동 시작을 사용합니다. 연결이 꺼져 있으면 Termux에서 codex-pocket-voice 작업을 한 번 실행해 주세요.");
+            call.resolve(result);
+            return;
+        }
         if (getPermissionState("runCommand") != PermissionState.GRANTED) {
             requestPermissionForAlias("runCommand", call, "permissionResult");
             return;
         }
         startTunnel(call);
+    }
+
+    private boolean canRunCommand() {
+        Intent intent = new Intent();
+        intent.setClassName(TERMUX_PACKAGE, TERMUX_SERVICE);
+        intent.setAction("com.termux.RUN_COMMAND");
+        return getContext().getPackageManager().resolveService(intent, 0) != null;
     }
 
     @PermissionCallback

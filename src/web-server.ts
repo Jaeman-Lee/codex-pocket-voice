@@ -18,6 +18,7 @@ import { PathPolicy } from "./path-policy.js";
 import { compactThread, presentThread, summarizeTurn } from "./result.js";
 import { MediaError, MediaManager } from "./media-manager.js";
 import { ProjectCreationError, ProjectManager } from "./project-manager.js";
+import { ProviderError, ProviderRegistry } from "./providers/registry.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_EVENT_TEXT = 80_000;
@@ -83,6 +84,8 @@ interface RunBody {
   effort?: unknown;
   timeoutSeconds?: unknown;
   attachments?: unknown;
+  provider?: unknown;
+  accountId?: unknown;
 }
 
 interface CreateProjectBody {
@@ -107,13 +110,14 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   });
   await media.initialize();
   const projects = options.projects ?? await ProjectManager.fromEnvironment(options.paths);
+  const providers = new ProviderRegistry(options.client);
   const unsubscribe = options.client.subscribe((event) => {
     const forwarded = sanitizeNotification(event, activeThreads);
     if (forwarded) broadcast(sseClients, forwarded);
   });
 
   const server = createServer((request, response) => {
-    void handleRequest(request, response, options, media, projects, operations, activeThreads, sseClients).catch(
+    void handleRequest(request, response, options, media, projects, providers, operations, activeThreads, sseClients).catch(
       (error) => sendError(response, error),
     );
   });
@@ -158,6 +162,7 @@ async function handleRequest(
   options: WebServerOptions,
   media: MediaManager,
   projects: ProjectManager,
+  providers: ProviderRegistry,
   operations: Map<string, Operation>,
   activeThreads: Set<string>,
   sseClients: Set<ServerResponse>,
@@ -175,7 +180,7 @@ async function handleRequest(
       response.end();
       return;
     }
-    await handleApi(request, response, url, options, media, projects, operations, activeThreads, sseClients);
+    await handleApi(request, response, url, options, media, projects, providers, operations, activeThreads, sseClients);
     return;
   }
   await serveStatic(request, response, url.pathname, options.staticDir);
@@ -188,6 +193,7 @@ async function handleApi(
   options: WebServerOptions,
   media: MediaManager,
   projects: ProjectManager,
+  providers: ProviderRegistry,
   operations: Map<string, Operation>,
   activeThreads: Set<string>,
   sseClients: Set<ServerResponse>,
@@ -214,7 +220,7 @@ async function handleApi(
   }
 
   if (request.method === "GET" && url.pathname === "/api/models") {
-    const catalog = await options.client.listModels();
+    const catalog = await providers.models(url.searchParams.get("provider"));
     sendJson(response, 200, {
       models: catalog.data.filter((model) => !model.hidden).map((model) => ({
         id: model.model,
@@ -228,6 +234,11 @@ async function handleApi(
         })),
       })),
     });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/providers") {
+    sendJson(response, 200, { providers: await providers.list() });
     return;
   }
 
@@ -311,6 +322,9 @@ async function handleApi(
     assertSameOrigin(request);
     const body = (await readJson(request)) as RunBody;
     const prompt = requiredString(body.prompt, "prompt", 100_000);
+    const provider = optionalString(body.provider, "provider", 40);
+    const accountId = optionalString(body.accountId, "accountId", 100);
+    providers.assertRunnable(provider, accountId);
     const threadId = optionalString(body.threadId, "threadId", 200);
     const requestedCwd = optionalString(body.cwd, "cwd", 4_096);
     let cwd: string;
@@ -613,7 +627,7 @@ function sendError(response: ServerResponse, error: unknown): void {
   }
   const status = error instanceof HttpError
     ? error.status
-    : error instanceof MediaError || error instanceof ProjectCreationError
+    : error instanceof MediaError || error instanceof ProjectCreationError || error instanceof ProviderError
       ? error.statusCode
       : 500;
   const message = error instanceof Error ? error.message : String(error);

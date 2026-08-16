@@ -1,5 +1,6 @@
 export type ConnectionStatus = "pending" | "online" | "error";
 export type DeviceId = "pc" | "phone";
+export type ProviderId = "codex" | "claude";
 
 export interface DeviceInfo {
   id: DeviceId;
@@ -29,6 +30,20 @@ export interface ModelOption {
 
 export interface ModelResponse {
   models: ModelOption[];
+}
+
+export interface ProviderOption {
+  id: ProviderId;
+  name: string;
+  available: boolean;
+  status: "connected" | "login_required" | "not_installed";
+  detail: string;
+  accounts: Array<{ id: string; label: string; connected: boolean }>;
+  loginCommand: string;
+}
+
+export interface ProviderResponse {
+  providers: ProviderOption[];
 }
 
 export interface ThreadSummary {

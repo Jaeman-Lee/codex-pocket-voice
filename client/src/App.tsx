@@ -20,6 +20,9 @@ import type {
   ModelOption,
   ModelResponse,
   PendingAttachment,
+  ProviderId,
+  ProviderOption,
+  ProviderResponse,
   RunResult,
   ThreadDetail,
   ThreadSummary,
@@ -73,6 +76,19 @@ interface ActivityState {
   detail: string;
 }
 
+interface QueuedPrompt {
+  id: string;
+  text: string;
+  cwd: string;
+  threadId: string;
+  networkAccess: boolean;
+  model: string;
+  effort: string;
+  provider: ProviderId;
+  accountId: string;
+  attachments: PendingAttachment[];
+}
+
 let localId = 0;
 const newId = (prefix: string) => `${prefix}-${Date.now()}-${localId++}`;
 
@@ -93,6 +109,9 @@ export function App() {
   const [tts, setTts] = useState(() => localStorage.getItem("codex-pocket-tts") === "true");
   const [networkAccess, setNetworkAccess] = useState(false);
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [providers, setProviders] = useState<ProviderOption[]>([]);
+  const [provider, setProvider] = useState<ProviderId>("codex");
+  const [accountId, setAccountId] = useState("cli-default");
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("");
   const [dictating, setDictating] = useState(false);
@@ -110,11 +129,13 @@ export function App() {
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectParent, setNewProjectParent] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
+  const [promptQueue, setPromptQueue] = useState<QueuedPrompt[]>([]);
 
   const transcriptRef = useRef<HTMLElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const operationRef = useRef<Operation | null>(null);
+  const promptQueueRef = useRef<QueuedPrompt[]>([]);
   const workspaceRef = useRef("");
   const deviceRef = useRef<DeviceId>(device);
   const threadRef = useRef("");
@@ -181,16 +202,28 @@ export function App() {
     if (initializingRef.current) return;
     initializingRef.current = true;
     try {
-      const [health, workspaceData, modelData] = await Promise.all([
+      const [health, workspaceData, providerData, modelData] = await Promise.all([
         api<{ userAgent: string; device: { name: string } }>("/api/health"),
         api<WorkspaceResponse>("/api/workspaces"),
-        api<ModelResponse>("/api/models"),
+        api<ProviderResponse>("/api/providers"),
+        api<ModelResponse>("/api/models?provider=codex"),
       ]);
       setConnectionText(`${health.device.name} · ${health.userAgent}`);
       setConnection("online");
       setWorkspaces(workspaceData.workspaces);
       setCreationLocations(workspaceData.creationLocations);
       setModels(modelData.models);
+      setProviders(providerData.providers);
+      const storedProvider = localStorage.getItem(storageKey("provider", deviceRef.current));
+      const selectedProvider = providerData.providers.find((item) => item.id === storedProvider && item.available)
+        ?? providerData.providers.find((item) => item.id === "codex")
+        ?? providerData.providers.find((item) => item.available);
+      setProvider(selectedProvider?.id ?? "codex");
+      const storedAccount = localStorage.getItem(storageKey("account", deviceRef.current));
+      const selectedAccount = selectedProvider?.accounts.find((item) => item.id === storedAccount)
+        ?? selectedProvider?.accounts.find((item) => item.connected)
+        ?? selectedProvider?.accounts[0];
+      setAccountId(selectedAccount?.id ?? "cli-default");
       const storedModel = localStorage.getItem(storageKey("model", deviceRef.current)) ?? "";
       const selectedModel = modelData.models.some((item) => item.id === storedModel) ? storedModel : "";
       setModel(selectedModel);
@@ -236,7 +269,8 @@ export function App() {
     void (async () => {
       if (isNativeApp()) {
         try {
-          await NativeTunnel.start();
+          const tunnel = await NativeTunnel.start();
+          if (tunnel.manual && tunnel.message) showToast(tunnel.message);
         } catch (error) {
           showToast(errorMessage(error));
         }
@@ -491,9 +525,11 @@ export function App() {
       }
       if (ttsRef.current && result.finalResponse) speak(result.finalResponse);
       void loadThreads(workspaceRef.current, true, result.threadId);
+      startNextQueuedPrompt(result.threadId ?? threadRef.current);
     } else if (action === "failed") {
       finishLiveMessage(`작업 실패: ${nextOperation.error || "알 수 없는 오류"}`, true);
       stopRunning();
+      startNextQueuedPrompt(threadRef.current);
     }
   }
 
@@ -629,52 +665,96 @@ export function App() {
   async function submitPrompt() {
     const text = prompt.trim() || (attachments.length ? "첨부한 매체를 분석하고 요청에 맞게 처리해 주세요." : "");
     const attachmentsReady = attachments.every((item) => item.kind === "image" || item.status === "ready");
-    if (!text || !attachmentsReady || mediaBusy || operationRef.current?.status === "running") return;
+    if (!text || !attachmentsReady || mediaBusy) return;
     if (!workspaceRef.current) {
       showToast("프로젝트를 먼저 선택하세요.");
       return;
     }
     if (dictating) await stopDictation();
 
+    const queued: QueuedPrompt = {
+      id: newId("queued"),
+      text,
+      cwd: workspaceRef.current,
+      threadId: threadRef.current,
+      networkAccess,
+      model,
+      effort,
+      provider,
+      accountId,
+      attachments: [...attachments],
+    };
+    setPrompt("");
+    setAttachments([]);
+    if (operationRef.current?.status === "running") {
+      const nextQueue = [...promptQueueRef.current, queued];
+      promptQueueRef.current = nextQueue;
+      setPromptQueue(nextQueue);
+      showToast(`요청을 대기열 ${nextQueue.length}번째에 추가했습니다.`);
+      return;
+    }
+    await executePrompt(queued);
+  }
+
+  async function executePrompt(queued: QueuedPrompt, continuedThreadId = "") {
     const userId = newId("user");
     const assistantId = newId("assistant");
-    const attachmentLabel = attachments.length
-      ? `\n\n📎 ${attachments.map((item) => item.name).join(", ")}`
+    const attachmentLabel = queued.attachments.length
+      ? `\n\n📎 ${queued.attachments.map((item) => item.name).join(", ")}`
       : "";
     setMessages((current) => [
       ...current,
-      { id: userId, role: "user", text: `${text}${attachmentLabel}` },
+      { id: userId, role: "user", text: `${queued.text}${attachmentLabel}` },
       { id: assistantId, role: "assistant", text: "", pending: true },
     ]);
     liveMessageIdRef.current = assistantId;
     liveTextRef.current = "";
     latestDiffRef.current = "";
-    setPrompt("");
     setRunning("Codex가 요청을 시작하고 있습니다…");
 
     try {
       const data = await api<{ operation: Operation }>("/api/runs", {
         method: "POST",
         body: {
-          prompt: text,
-          cwd: workspaceRef.current,
-          threadId: threadRef.current || undefined,
-          networkAccess,
-          model: model || undefined,
-          effort: effort || undefined,
-          attachments: attachments.map((item) => item.id),
+          prompt: queued.text,
+          cwd: queued.cwd,
+          threadId: queued.threadId || continuedThreadId || undefined,
+          networkAccess: queued.networkAccess,
+          model: queued.model || undefined,
+          effort: queued.effort || undefined,
+          provider: queued.provider,
+          accountId: queued.accountId,
+          attachments: queued.attachments.map((item) => item.id),
         },
       });
       operationRef.current = data.operation;
       setOperation(data.operation);
-      for (const item of attachments) if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
-      setAttachments([]);
+      for (const item of queued.attachments) if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
       scheduleOperationPoll(data.operation.id);
       setRunning("Codex가 프로젝트를 살펴보고 있습니다…");
     } catch (error) {
       finishLiveMessage(`실행하지 못했습니다: ${errorMessage(error)}`, true);
       stopRunning();
+      startNextQueuedPrompt(continuedThreadId || threadRef.current);
     }
+  }
+
+  function startNextQueuedPrompt(continuedThreadId: string) {
+    const [next, ...remaining] = promptQueueRef.current;
+    if (!next) return;
+    promptQueueRef.current = remaining;
+    setPromptQueue(remaining);
+    window.setTimeout(() => void executePrompt(next, continuedThreadId), 0);
+  }
+
+  function removeQueuedPrompt(id: string) {
+    const removed = promptQueueRef.current.find((item) => item.id === id);
+    for (const attachment of removed?.attachments ?? []) {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    }
+    const remaining = promptQueueRef.current.filter((item) => item.id !== id);
+    promptQueueRef.current = remaining;
+    setPromptQueue(remaining);
   }
 
   async function stopOperation() {
@@ -701,9 +781,14 @@ export function App() {
     setWorkspaces([]);
     setCreationLocations([]);
     setModels([]);
+    setProviders([]);
+    setProvider("codex");
+    setAccountId("cli-default");
     setModel("");
     setEffort("");
     setMessages([]);
+    promptQueueRef.current = [];
+    setPromptQueue([]);
   }
 
   function selectModel(nextModel: string) {
@@ -714,6 +799,28 @@ export function App() {
       ?? models.find((item) => item.isDefault)
       ?? models[0];
     if (effort && !info?.efforts.some((item) => item.id === effort)) selectEffort("");
+  }
+
+  async function selectProvider(nextProvider: ProviderId) {
+    const info = providers.find((item) => item.id === nextProvider);
+    if (!info?.available) {
+      showToast(info?.detail ?? "이 AI 연결은 현재 사용할 수 없습니다.");
+      return;
+    }
+    setProvider(nextProvider);
+    localStorage.setItem(storageKey("provider", deviceRef.current), nextProvider);
+    const nextAccount = info.accounts.find((item) => item.connected) ?? info.accounts[0];
+    setAccountId(nextAccount?.id ?? "");
+    if (nextAccount) localStorage.setItem(storageKey("account", deviceRef.current), nextAccount.id);
+    const modelData = await api<ModelResponse>(`/api/models?provider=${encodeURIComponent(nextProvider)}`);
+    setModels(modelData.models);
+    setModel("");
+    setEffort("");
+  }
+
+  function selectAccount(nextAccount: string) {
+    setAccountId(nextAccount);
+    localStorage.setItem(storageKey("account", deviceRef.current), nextAccount);
   }
 
   function selectEffort(nextEffort: string) {
@@ -912,6 +1019,23 @@ export function App() {
           </select>
         </label>
         <label>
+          <span>AI 연결</span>
+          <select
+            value={provider}
+            disabled={activity.running || controlsCollapsed}
+            aria-label="AI 제공자 선택"
+            title={activeProvider(providers, provider)?.detail}
+            onChange={(event) => void selectProvider(event.target.value as ProviderId)}
+          >
+            {providers.length === 0 && <option value="codex">OpenAI Codex</option>}
+            {providers.map((item) => (
+              <option key={item.id} value={item.id} disabled={!item.available}>
+                {item.name}{item.available ? "" : item.status === "not_installed" ? " · 설치 필요" : " · 연결 준비 중"}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
           <span>프로젝트</span>
           <div className="select-row">
             <select value={workspace} disabled={activity.running || controlsCollapsed} aria-label="프로젝트 선택" onChange={(event) => void selectWorkspace(event.target.value)}>
@@ -1012,14 +1136,36 @@ export function App() {
       )}
 
       <footer className="composer-wrap">
+        {promptQueue.length > 0 && (
+          <div className="prompt-queue" aria-label="예약 요청">
+            <div className="prompt-queue-head">
+              <strong>대기열 {promptQueue.length}</strong>
+              <span>현재 작업이 끝나면 순서대로 실행</span>
+            </div>
+            {promptQueue.map((item, index) => (
+              <div className="prompt-queue-item" key={item.id}>
+                <span>{index + 1}</span>
+                <p>{short(item.text, 72)}</p>
+                <button type="button" aria-label={`${index + 1}번째 예약 요청 취소`} onClick={() => removeQueuedPrompt(item.id)}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className={`composer${handsFree ? " hands-free" : ""}`}>
           {models.length > 0 && (
             <div className="model-bar" aria-label="Codex 모델 설정">
               <label>
+                <span>계정</span>
+                <select value={accountId} aria-label="AI 계정 프로필" onChange={(event) => selectAccount(event.target.value)}>
+                  {(activeProvider(providers, provider)?.accounts ?? []).map((item) => (
+                    <option key={item.id} value={item.id}>{item.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
                 <span>모델</span>
                 <select
                   value={model}
-                  disabled={activity.running}
                   aria-label="Codex 모델"
                   onChange={(event) => selectModel(event.target.value)}
                 >
@@ -1033,7 +1179,6 @@ export function App() {
                 <span>성능</span>
                 <select
                   value={effort}
-                  disabled={activity.running}
                   aria-label="추론 성능"
                   onChange={(event) => selectEffort(event.target.value)}
                 >
@@ -1123,7 +1268,7 @@ export function App() {
             <button
               className="attach-button"
               type="button"
-              disabled={activity.running || mediaBusy || attachments.length >= 4}
+              disabled={mediaBusy || attachments.length >= 4}
               aria-label="이미지 또는 영상 첨부"
               onClick={() => fileInputRef.current?.click()}
             >📎 <span>첨부</span></button>
@@ -1140,11 +1285,11 @@ export function App() {
             <button
               className="send-button"
               type="button"
-              disabled={activity.running || dictating || mediaBusy || (!prompt.trim() && attachments.length === 0) || attachments.some((item) => item.kind === "video" && item.status !== "ready")}
-              aria-label="요청 전송"
+              disabled={dictating || mediaBusy || (!prompt.trim() && attachments.length === 0) || attachments.some((item) => item.kind === "video" && item.status !== "ready")}
+              aria-label={activity.running ? "요청을 대기열에 추가" : "요청 전송"}
               onClick={() => void submitPrompt()}
             >
-              보내기 <span aria-hidden="true">↑</span>
+              {activity.running ? "대기열" : "보내기"} <span aria-hidden="true">{activity.running ? "+" : "↑"}</span>
             </button>
           </div>
         </div>
@@ -1234,8 +1379,12 @@ function mediaStatusText(item: PendingAttachment, device: DeviceId): string {
   return `${Math.max(1, Math.round(item.size / 1024))}KB · 전송 완료`;
 }
 
-function storageKey(kind: "workspace" | "thread" | "model" | "effort", device: DeviceId): string {
+function storageKey(kind: "workspace" | "thread" | "model" | "effort" | "provider" | "account", device: DeviceId): string {
   return `codex-pocket-${kind}-${device}`;
+}
+
+function activeProvider(providers: ProviderOption[], provider: ProviderId): ProviderOption | undefined {
+  return providers.find((item) => item.id === provider);
 }
 
 function defaultModel(models: ModelOption[]): ModelOption | undefined {

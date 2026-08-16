@@ -46,6 +46,11 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const models = await jsonFetch(`${base}/api/models`);
   assert.equal(models.models[0].id, "test-codex");
   assert.equal(models.models[0].defaultEffort, "medium");
+  const providerData = await jsonFetch(`${base}/api/providers`);
+  assert.equal(providerData.providers[0].id, "codex");
+  assert.equal(providerData.providers[0].status, "connected");
+  const unsupportedProvider = await fetch(`${base}/api/models?provider=claude`);
+  assert.equal(unsupportedProvider.status, 409);
 
   const workspaceData = await jsonFetch(`${base}/api/workspaces`);
   assert.equal(workspaceData.creationLocations[0].path, projectHome);
@@ -96,7 +101,15 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const started = await jsonFetch(`${base}/api/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: "http://localhost" },
-    body: JSON.stringify({ prompt: "change a file", cwd, model: "test-codex", effort: "high", attachments: [uploaded.media.id] }),
+    body: JSON.stringify({
+      prompt: "change a file",
+      cwd,
+      provider: "codex",
+      accountId: "cli-default",
+      model: "test-codex",
+      effort: "high",
+      attachments: [uploaded.media.id],
+    }),
   });
   assert.equal(started.operation.status, "running");
   assert.equal(fake.lastRun?.cwd, cwd);
