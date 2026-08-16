@@ -132,6 +132,52 @@ select {
 .create-project-button { height: 2.8rem; border: 0; border-radius: 0.72rem; color: #06120e; background: var(--accent); font-weight: 800; cursor: pointer; }
 .create-project-button:disabled { opacity: 0.4; cursor: not-allowed; }
 
+.connection-center { position: fixed; z-index: 30; inset: 0; display: grid; justify-items: center; overflow-y: auto; padding: max(0.75rem, env(safe-area-inset-top)) 0.75rem max(0.75rem, env(safe-area-inset-bottom)); background: rgba(3, 8, 12, 0.82); backdrop-filter: blur(10px); }
+.connection-center-sheet { width: min(100%, 42rem); margin: auto 0; padding: 1rem; border: 1px solid var(--line); border-radius: 1.15rem; background: var(--surface); box-shadow: var(--shadow); }
+.connection-center-head { display: flex; align-items: flex-start; gap: 1rem; }
+.connection-center-head > div { flex: 1; min-width: 0; }
+.connection-center-head strong, .connection-center-head small { display: block; }
+.connection-center-head strong { font-size: 1.08rem; }
+.connection-center-head small { margin-top: 0.25rem; color: var(--muted); font-size: 0.74rem; }
+.connection-center-head > button { width: 2.25rem; height: 2.25rem; border: 0; border-radius: 50%; color: var(--muted); background: var(--surface-2); cursor: pointer; }
+.connection-device { display: block; margin-top: 0.9rem; }
+.connection-device > span, .alias-field > span { display: block; margin: 0 0 0.3rem 0.15rem; color: var(--muted); font-size: 0.68rem; font-weight: 750; }
+.connection-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.35rem; margin: 0.75rem 0; }
+.connection-steps span { padding: 0.5rem 0.25rem; border-radius: 0.55rem; color: var(--accent); background: rgba(62, 213, 165, 0.07); text-align: center; font-size: 0.65rem; font-weight: 750; }
+.provider-cards { display: grid; gap: 0.7rem; }
+.provider-card { padding: 0.85rem; border: 1px solid var(--line); border-radius: 0.9rem; background: var(--surface-2); }
+.provider-card.connected { border-color: rgba(62, 213, 165, 0.3); }
+.provider-card.login_required { border-color: rgba(255, 203, 136, 0.3); }
+.provider-card-head { display: flex; align-items: flex-start; gap: 0.7rem; }
+.provider-card-head > div { flex: 1; min-width: 0; }
+.provider-card-head strong, .provider-card-head small { display: block; }
+.provider-card-head strong { font-size: 0.9rem; }
+.provider-card-head small { margin-top: 0.18rem; overflow: hidden; color: var(--muted); font-size: 0.62rem; text-overflow: ellipsis; white-space: nowrap; }
+.provider-badge { flex: 0 0 auto; padding: 0.3rem 0.48rem; border-radius: 999px; color: var(--muted); background: rgba(146, 165, 168, 0.12); font-size: 0.61rem; font-weight: 800; }
+.provider-badge.connected { color: var(--accent); background: rgba(62, 213, 165, 0.1); }
+.provider-badge.login_required { color: var(--warm); background: rgba(255, 203, 136, 0.1); }
+.provider-card > p { margin: 0.55rem 0; color: var(--muted); font-size: 0.72rem; line-height: 1.45; }
+.alias-field { display: block; margin-top: 0.65rem; }
+.alias-field small { font-weight: 500; }
+.alias-field input { width: 100%; height: 2.45rem; padding: 0 0.68rem; border: 1px solid var(--line); border-radius: 0.64rem; color: var(--text); background: var(--surface); outline: none; }
+.alias-field input:focus { border-color: rgba(157, 242, 213, 0.62); }
+.install-guide, .login-session { margin-top: 0.7rem; padding: 0.65rem; border-radius: 0.68rem; background: rgba(5, 10, 14, 0.4); }
+.install-guide > strong, .login-session > strong { display: block; color: var(--warm); font-size: 0.68rem; }
+.install-guide p { margin: 0.3rem 0; color: var(--muted); font-size: 0.67rem; line-height: 1.4; }
+.install-guide code { display: block; overflow-x: auto; padding: 0.48rem; border-radius: 0.45rem; color: var(--accent); background: #080d12; font: 0.62rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+.provider-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.6rem; }
+.provider-actions button, .provider-actions a, .login-link, .login-code { min-height: 2.25rem; padding: 0.45rem 0.65rem; border: 1px solid var(--line); border-radius: 0.58rem; color: var(--text); background: var(--surface); cursor: pointer; font-size: 0.68rem; font-weight: 750; text-decoration: none; }
+.provider-actions.primary button:first-child { color: #06120e; border-color: transparent; background: var(--accent); }
+.provider-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+.provider-actions .danger { color: var(--danger) !important; border-color: rgba(255, 129, 124, 0.3) !important; background: transparent !important; }
+.login-session > button { display: block; width: 100%; margin-top: 0.45rem; }
+.login-session pre { max-height: 8rem; overflow: auto; margin: 0.5rem 0 0; color: #c8d9d7; font: 0.61rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.login-session.connected > strong { color: var(--accent); }
+.login-session.failed > strong { color: var(--danger); }
+.provider-card .test-result { color: var(--accent); }
+.adapter-note { display: block; margin-top: 0.55rem; color: var(--warm); font-size: 0.62rem; }
+.privacy-note { margin: 0.8rem 0 0; color: var(--muted); font-size: 0.63rem; line-height: 1.45; text-align: center; }
+
 select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shadow: 0 0 0 0.2rem rgba(157, 242, 213, 0.08); }
 .select-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.45rem; }
 .icon-button {

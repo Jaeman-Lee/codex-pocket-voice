@@ -40,10 +40,37 @@ export interface ProviderOption {
   detail: string;
   accounts: Array<{ id: string; label: string; connected: boolean }>;
   loginCommand: string;
+  installed: boolean;
+  version?: string;
+  canLogin: boolean;
+  canTest: boolean;
+  installGuide: {
+    summary: string;
+    command: string;
+    docsUrl: string;
+  };
 }
 
 export interface ProviderResponse {
   providers: ProviderOption[];
+}
+
+export interface ProviderConnectionTest {
+  ok: boolean;
+  detail: string;
+  checkedAt: string;
+  modelCount?: number;
+}
+
+export interface ProviderLoginSession {
+  id: string;
+  provider: ProviderId;
+  status: "starting" | "waiting" | "connected" | "failed" | "cancelled";
+  output: string;
+  verificationUrl?: string;
+  userCode?: string;
+  startedAt: string;
+  completedAt?: string;
 }
 
 export interface ThreadSummary {

@@ -21,6 +21,8 @@ import type {
   ModelResponse,
   PendingAttachment,
   ProviderId,
+  ProviderConnectionTest,
+  ProviderLoginSession,
   ProviderOption,
   ProviderResponse,
   RunResult,
@@ -130,6 +132,11 @@ export function App() {
   const [newProjectParent, setNewProjectParent] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
   const [promptQueue, setPromptQueue] = useState<QueuedPrompt[]>([]);
+  const [showConnectionCenter, setShowConnectionCenter] = useState(false);
+  const [testingProvider, setTestingProvider] = useState<ProviderId | null>(null);
+  const [connectionTest, setConnectionTest] = useState<Partial<Record<ProviderId, ProviderConnectionTest>>>({});
+  const [loginSession, setLoginSession] = useState<ProviderLoginSession | null>(null);
+  const [providerAliases, setProviderAliases] = useState<Partial<Record<ProviderId, string>>>({});
 
   const transcriptRef = useRef<HTMLElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -170,12 +177,36 @@ export function App() {
   useEffect(() => {
     localStorage.setItem("codex-pocket-controls-open", String(!controlsCollapsed));
   }, [controlsCollapsed]);
+  useEffect(() => {
+    setProviderAliases({
+      codex: localStorage.getItem(providerAliasKey(device, "codex")) ?? "",
+      claude: localStorage.getItem(providerAliasKey(device, "claude")) ?? "",
+    });
+    setConnectionTest({});
+    setLoginSession(null);
+  }, [device]);
 
   const showToast = useCallback((text: string) => {
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
     setToast(text);
     toastTimerRef.current = window.setTimeout(() => setToast(""), 4_000);
   }, []);
+
+  useEffect(() => {
+    if (!loginSession || (loginSession.status !== "starting" && loginSession.status !== "waiting")) return;
+    const timer = window.setTimeout(() => {
+      void api<{ login: ProviderLoginSession }>(`/api/provider-logins/${encodeURIComponent(loginSession.id)}`)
+        .then((data) => {
+          setLoginSession(data.login);
+          if (data.login.status === "connected") {
+            showToast("계정 연결이 완료되었습니다.");
+            void refreshProviders();
+          }
+        })
+        .catch((error) => showToast(errorMessage(error)));
+    }, 1_200);
+    return () => window.clearTimeout(timer);
+  }, [loginSession, showToast]);
 
   const loadThreads = useCallback(async (
     selectedWorkspace: string,
@@ -823,6 +854,74 @@ export function App() {
     localStorage.setItem(storageKey("account", deviceRef.current), nextAccount);
   }
 
+  async function refreshProviders() {
+    try {
+      const data = await api<ProviderResponse>("/api/providers");
+      setProviders(data.providers);
+    } catch (error) {
+      showToast(errorMessage(error));
+    }
+  }
+
+  async function testProviderConnection(providerId: ProviderId) {
+    if (testingProvider) return;
+    setTestingProvider(providerId);
+    try {
+      const data = await api<{ test: ProviderConnectionTest }>(`/api/providers/${encodeURIComponent(providerId)}/test`, {
+        method: "POST",
+        body: {},
+      });
+      setConnectionTest((current) => ({ ...current, [providerId]: data.test }));
+      showToast(data.test.detail);
+      await refreshProviders();
+    } catch (error) {
+      showToast(errorMessage(error));
+    } finally {
+      setTestingProvider(null);
+    }
+  }
+
+  async function startProviderLogin(providerId: ProviderId) {
+    try {
+      const data = await api<{ login: ProviderLoginSession }>(`/api/providers/${encodeURIComponent(providerId)}/login`, {
+        method: "POST",
+        body: {},
+      });
+      setLoginSession(data.login);
+    } catch (error) {
+      showToast(errorMessage(error));
+    }
+  }
+
+  async function cancelProviderLogin() {
+    if (!loginSession) return;
+    try {
+      const data = await api<{ login: ProviderLoginSession }>(`/api/provider-logins/${encodeURIComponent(loginSession.id)}/cancel`, {
+        method: "POST",
+        body: {},
+      });
+      setLoginSession(data.login);
+    } catch (error) {
+      showToast(errorMessage(error));
+    }
+  }
+
+  function saveProviderAlias(providerId: ProviderId, value: string) {
+    const alias = value.slice(0, 40);
+    setProviderAliases((current) => ({ ...current, [providerId]: alias }));
+    if (alias.trim()) localStorage.setItem(providerAliasKey(deviceRef.current, providerId), alias.trim());
+    else localStorage.removeItem(providerAliasKey(deviceRef.current, providerId));
+  }
+
+  async function copyText(text: string, success: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(success);
+    } catch {
+      showToast("복사하지 못했습니다. 길게 눌러 직접 복사해 주세요.");
+    }
+  }
+
   function selectEffort(nextEffort: string) {
     setEffort(nextEffort);
     if (nextEffort) localStorage.setItem(storageKey("effort", deviceRef.current), nextEffort);
@@ -987,6 +1086,16 @@ export function App() {
         </div>
         <div className="top-actions">
           <button
+            className="icon-button"
+            type="button"
+            aria-label="AI 연결 센터 열기"
+            title="AI 연결 센터"
+            onClick={() => {
+              setShowConnectionCenter(true);
+              void refreshProviders();
+            }}
+          >◎</button>
+          <button
             className={`icon-button selector-toggle${controlsCollapsed ? " collapsed" : ""}`}
             type="button"
             aria-label={controlsCollapsed ? "프로젝트와 대화 선택 열기" : "프로젝트와 대화 선택 닫기"}
@@ -1064,6 +1173,110 @@ export function App() {
           </div>
         </label>
       </section>
+
+      {showConnectionCenter && (
+        <section className="connection-center" role="dialog" aria-modal="true" aria-labelledby="connection-center-title">
+          <div className="connection-center-sheet">
+            <div className="connection-center-head">
+              <div>
+                <strong id="connection-center-title">AI 연결 센터</strong>
+                <small>비밀번호 입력 없이 CLI 계정을 연결합니다.</small>
+              </div>
+              <button type="button" aria-label="닫기" onClick={() => setShowConnectionCenter(false)}>×</button>
+            </div>
+
+            <label className="connection-device">
+              <span>확인할 단말</span>
+              <select value={device} disabled={activity.running} onChange={(event) => selectDevice(event.target.value as DeviceId)}>
+                <option value="pc">내 PC</option>
+                {isNativeApp() && <option value="phone">이 스마트폰</option>}
+              </select>
+            </label>
+
+            <div className="connection-steps" aria-label="연결 단계">
+              <span>1 CLI 확인</span><span>2 브라우저 연결</span><span>3 무료 테스트</span>
+            </div>
+
+            <div className="provider-cards">
+              {providers.map((item) => {
+                const test = connectionTest[item.id];
+                const ownLogin = loginSession?.provider === item.id ? loginSession : null;
+                const loginActive = ownLogin?.status === "starting" || ownLogin?.status === "waiting";
+                return (
+                  <article className={`provider-card ${item.status}`} key={item.id}>
+                    <div className="provider-card-head">
+                      <div>
+                        <strong>{item.name}</strong>
+                        <small>{item.version ?? (item.installed ? "CLI 설치됨" : "CLI 없음")}</small>
+                      </div>
+                      <span className={`provider-badge ${item.status}`}>{providerStatusLabel(item)}</span>
+                    </div>
+                    <p>{item.detail}</p>
+
+                    <label className="alias-field">
+                      <span>내 별명 <small>선택 · 이 폰에만 저장</small></span>
+                      <input
+                        type="text"
+                        maxLength={40}
+                        value={providerAliases[item.id] ?? ""}
+                        placeholder="예: 개인 계정"
+                        onChange={(event) => saveProviderAlias(item.id, event.target.value)}
+                      />
+                    </label>
+
+                    {!item.installed && (
+                      <div className="install-guide">
+                        <strong>설치 필요</strong>
+                        <p>{item.installGuide.summary}</p>
+                        <code>{item.installGuide.command}</code>
+                        <div className="provider-actions">
+                          <button type="button" onClick={() => void copyText(item.installGuide.command, "설치 명령을 복사했습니다.")}>명령 복사</button>
+                          <a href={item.installGuide.docsUrl} target="_blank" rel="noreferrer">공식 안내</a>
+                        </div>
+                      </div>
+                    )}
+
+                    {ownLogin && (
+                      <div className={`login-session ${ownLogin.status}`}>
+                        <strong>{loginStatusLabel(ownLogin.status)}</strong>
+                        {ownLogin.verificationUrl && (
+                          <button type="button" className="login-link" onClick={() => window.open(ownLogin.verificationUrl, "_blank", "noopener,noreferrer")}>
+                            브라우저에서 계정 연결
+                          </button>
+                        )}
+                        {ownLogin.userCode && (
+                          <button type="button" className="login-code" onClick={() => void copyText(ownLogin.userCode!, "인증 코드를 복사했습니다.")}>
+                            코드 {ownLogin.userCode} · 복사
+                          </button>
+                        )}
+                        <pre>{ownLogin.output}</pre>
+                      </div>
+                    )}
+
+                    {test && <p className="test-result">✓ {test.detail}</p>}
+
+                    <div className="provider-actions primary">
+                      {item.canLogin && (
+                        <button type="button" disabled={loginActive} onClick={() => void startProviderLogin(item.id)}>
+                          {item.status === "connected" ? "다른 계정 연결" : loginActive ? "연결 대기 중…" : "브라우저로 연결"}
+                        </button>
+                      )}
+                      {item.canTest && (
+                        <button type="button" disabled={testingProvider !== null} onClick={() => void testProviderConnection(item.id)}>
+                          {testingProvider === item.id ? "확인 중…" : "무료 연결 테스트"}
+                        </button>
+                      )}
+                      {loginActive && <button type="button" className="danger" onClick={() => void cancelProviderLogin()}>취소</button>}
+                    </div>
+                    {item.status === "connected" && !item.available && <small className="adapter-note">계정은 연결됐지만 대화 실행 모듈은 아직 준비 중입니다.</small>}
+                  </article>
+                );
+              })}
+            </div>
+            <p className="privacy-note">비밀번호·API 키를 받거나 저장하지 않습니다. 로그인은 각 CLI의 공식 브라우저 인증을 사용합니다.</p>
+          </div>
+        </section>
+      )}
 
       {showProjectCreator && (
         <section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title">
@@ -1377,6 +1590,23 @@ function mediaStatusText(item: PendingAttachment, device: DeviceId): string {
     return `분석 완료 · ${item.frameCount}개 대표 장면`;
   }
   return `${Math.max(1, Math.round(item.size / 1024))}KB · 전송 완료`;
+}
+
+function providerAliasKey(device: DeviceId, provider: ProviderId): string {
+  return `codex-pocket-provider-alias-${device}-${provider}`;
+}
+
+function providerStatusLabel(provider: ProviderOption): string {
+  if (provider.status === "connected") return provider.available ? "사용 가능" : "계정 연결됨";
+  if (provider.status === "login_required") return "로그인 필요";
+  return "설치 필요";
+}
+
+function loginStatusLabel(status: ProviderLoginSession["status"]): string {
+  if (status === "connected") return "연결 완료";
+  if (status === "failed") return "연결 실패";
+  if (status === "cancelled") return "연결 취소됨";
+  return "브라우저 인증 대기 중";
 }
 
 function storageKey(kind: "workspace" | "thread" | "model" | "effort" | "provider" | "account", device: DeviceId): string {

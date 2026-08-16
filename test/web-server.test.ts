@@ -49,6 +49,16 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const providerData = await jsonFetch(`${base}/api/providers`);
   assert.equal(providerData.providers[0].id, "codex");
   assert.equal(providerData.providers[0].status, "connected");
+  assert.equal(providerData.providers[0].installed, true);
+  assert.equal(providerData.providers[0].canLogin, true);
+  const providerTest = await jsonFetch(`${base}/api/providers/codex/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: "http://localhost" },
+    body: "{}",
+  });
+  assert.equal(providerTest.test.ok, true);
+  assert.equal(providerTest.test.modelCount, 1);
+  assert.match(providerTest.test.detail, /AI 요청은 보내지 않았습니다/);
   const unsupportedProvider = await fetch(`${base}/api/models?provider=claude`);
   assert.equal(unsupportedProvider.status, 409);
 

@@ -1,7 +1,7 @@
 import type { ModelListResponse } from "../../generated/app-server/v2/ModelListResponse";
 import { ClaudeProviderAdapter } from "./claude-provider.js";
 import { CodexProviderAdapter, type CodexProviderClient } from "./codex-provider.js";
-import { ProviderError, type ModelProviderAdapter, type ProviderDescriptor } from "./types.js";
+import { ProviderError, type ModelProviderAdapter, type ProviderConnectionTest, type ProviderDescriptor, type ProviderLoginSpec } from "./types.js";
 export { ProviderError } from "./types.js";
 
 export class ProviderRegistry {
@@ -17,6 +17,14 @@ export class ProviderRegistry {
 
   async models(providerId: string | null): Promise<ModelListResponse> {
     return this.adapter(providerId).listModels();
+  }
+
+  test(providerId: string | null): Promise<ProviderConnectionTest> {
+    return this.adapter(providerId).testConnection();
+  }
+
+  loginSpec(providerId: string | null): Promise<ProviderLoginSpec> {
+    return this.adapter(providerId).loginSpec();
   }
 
   assertRunnable(providerId: unknown, accountId: unknown): void {

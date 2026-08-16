@@ -19,6 +19,7 @@ import { compactThread, presentThread, summarizeTurn } from "./result.js";
 import { MediaError, MediaManager } from "./media-manager.js";
 import { ProjectCreationError, ProjectManager } from "./project-manager.js";
 import { ProviderError, ProviderRegistry } from "./providers/registry.js";
+import { ProviderLoginManager } from "./provider-login-manager.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_EVENT_TEXT = 80_000;
@@ -111,13 +112,14 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   await media.initialize();
   const projects = options.projects ?? await ProjectManager.fromEnvironment(options.paths);
   const providers = new ProviderRegistry(options.client);
+  const providerLogins = new ProviderLoginManager(providers);
   const unsubscribe = options.client.subscribe((event) => {
     const forwarded = sanitizeNotification(event, activeThreads);
     if (forwarded) broadcast(sseClients, forwarded);
   });
 
   const server = createServer((request, response) => {
-    void handleRequest(request, response, options, media, projects, providers, operations, activeThreads, sseClients).catch(
+    void handleRequest(request, response, options, media, projects, providers, providerLogins, operations, activeThreads, sseClients).catch(
       (error) => sendError(response, error),
     );
   });
@@ -146,6 +148,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     port: address.port,
     async close() {
       clearInterval(heartbeat);
+      providerLogins.close();
       unsubscribe();
       for (const response of sseClients) response.end();
       sseClients.clear();
@@ -163,6 +166,7 @@ async function handleRequest(
   media: MediaManager,
   projects: ProjectManager,
   providers: ProviderRegistry,
+  providerLogins: ProviderLoginManager,
   operations: Map<string, Operation>,
   activeThreads: Set<string>,
   sseClients: Set<ServerResponse>,
@@ -180,7 +184,7 @@ async function handleRequest(
       response.end();
       return;
     }
-    await handleApi(request, response, url, options, media, projects, providers, operations, activeThreads, sseClients);
+    await handleApi(request, response, url, options, media, projects, providers, providerLogins, operations, activeThreads, sseClients);
     return;
   }
   await serveStatic(request, response, url.pathname, options.staticDir);
@@ -194,6 +198,7 @@ async function handleApi(
   media: MediaManager,
   projects: ProjectManager,
   providers: ProviderRegistry,
+  providerLogins: ProviderLoginManager,
   operations: Map<string, Operation>,
   activeThreads: Set<string>,
   sseClients: Set<ServerResponse>,
@@ -239,6 +244,38 @@ async function handleApi(
 
   if (request.method === "GET" && url.pathname === "/api/providers") {
     sendJson(response, 200, { providers: await providers.list() });
+    return;
+  }
+
+  const providerTestMatch = url.pathname.match(/^\/api\/providers\/([^/]+)\/test$/);
+  if (request.method === "POST" && providerTestMatch) {
+    assertSameOrigin(request);
+    await readJson(request, true);
+    const provider = decodeURIComponent(providerTestMatch[1]!);
+    sendJson(response, 200, { test: await providers.test(provider) });
+    return;
+  }
+
+  const providerLoginMatch = url.pathname.match(/^\/api\/providers\/([^/]+)\/login$/);
+  if (request.method === "POST" && providerLoginMatch) {
+    assertSameOrigin(request);
+    await readJson(request, true);
+    const provider = decodeURIComponent(providerLoginMatch[1]!);
+    sendJson(response, 202, { login: await providerLogins.start(provider) });
+    return;
+  }
+
+  const loginSessionMatch = url.pathname.match(/^\/api\/provider-logins\/([^/]+)$/);
+  if (request.method === "GET" && loginSessionMatch) {
+    sendJson(response, 200, { login: providerLogins.get(decodeURIComponent(loginSessionMatch[1]!)) });
+    return;
+  }
+
+  const cancelLoginMatch = url.pathname.match(/^\/api\/provider-logins\/([^/]+)\/cancel$/);
+  if (request.method === "POST" && cancelLoginMatch) {
+    assertSameOrigin(request);
+    await readJson(request, true);
+    sendJson(response, 200, { login: providerLogins.cancel(decodeURIComponent(cancelLoginMatch[1]!)) });
     return;
   }
 
