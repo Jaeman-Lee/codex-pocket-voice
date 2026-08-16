@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import type { InitializeResponse } from "../generated/app-server/InitializeResponse";
 import type { Thread } from "../generated/app-server/v2/Thread";
 import type { ThreadListResponse } from "../generated/app-server/v2/ThreadListResponse";
+import type { ModelListResponse } from "../generated/app-server/v2/ModelListResponse";
 import type { ThreadReadResponse } from "../generated/app-server/v2/ThreadReadResponse";
 import type { ThreadResumeResponse } from "../generated/app-server/v2/ThreadResumeResponse";
 import type { ThreadStartResponse } from "../generated/app-server/v2/ThreadStartResponse";
@@ -37,7 +38,7 @@ export interface RunTurnOptions {
   imagePaths?: string[];
   networkAccess?: boolean;
   model?: string;
-  effort?: "low" | "medium" | "high" | "xhigh";
+  effort?: string;
   timeoutMs?: number;
 }
 
@@ -94,6 +95,14 @@ export class CodexAppServerClient {
       sortKey: "updated_at",
       sortDirection: "desc",
       searchTerm: searchTerm ?? null,
+    });
+  }
+
+  async listModels(): Promise<ModelListResponse> {
+    await this.start();
+    return this.request<ModelListResponse>("model/list", {
+      limit: 100,
+      includeHidden: false,
     });
   }
 

@@ -24,7 +24,7 @@ interface NativeSpeechPlugin {
 }
 
 interface NativeTunnelPlugin {
-  start(): Promise<{ scheduled: boolean }>;
+  start(): Promise<{ scheduled: boolean; pc?: boolean; phone?: boolean }>;
 }
 
 export const NativeSpeech = registerPlugin<NativeSpeechPlugin>("PocketSpeech");

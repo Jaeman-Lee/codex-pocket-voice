@@ -1,4 +1,5 @@
 import { isNativeApp } from "./native";
+import type { DeviceId } from "./types";
 
 interface ApiOptions {
   method?: string;
@@ -10,10 +11,19 @@ interface UploadResponse<T> {
   error?: string;
 }
 
-const API_BASE = isNativeApp() ? "http://127.0.0.1:8788" : "";
+let activeDevice: DeviceId = localStorage.getItem("codex-pocket-device") === "phone" ? "phone" : "pc";
+
+export function setApiDevice(device: DeviceId): void {
+  activeDevice = device;
+}
+
+function apiBase(): string {
+  if (!isNativeApp()) return "";
+  return activeDevice === "phone" ? "http://127.0.0.1:8789" : "http://127.0.0.1:8788";
+}
 
 export function apiUrl(path: string): string {
-  return `${API_BASE}${path}`;
+  return `${apiBase()}${path}`;
 }
 
 export async function api<T>(path: string, options: ApiOptions = {}): Promise<T> {
@@ -28,7 +38,9 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
   try {
     response = await fetch(apiUrl(path), init);
   } catch {
-    throw new Error("PC에 연결할 수 없습니다. PC 전원과 Tailscale 연결을 확인하세요.");
+    throw new Error(activeDevice === "phone"
+      ? "스마트폰 Codex 서버에 연결할 수 없습니다. Termux가 실행 중인지 확인하세요."
+      : "PC에 연결할 수 없습니다. PC 전원과 Tailscale 연결을 확인하세요.");
   }
   const data = await response.json().catch(() => ({})) as T & { error?: string };
   if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
@@ -45,7 +57,9 @@ export function uploadMedia<T>(file: File, onProgress: (percentage: number) => v
     request.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
     };
-    request.onerror = () => reject(new Error("첨부 파일을 PC로 보내지 못했습니다. 연결을 확인하세요."));
+    request.onerror = () => reject(new Error(
+      `첨부 파일을 ${activeDevice === "phone" ? "스마트폰 Codex" : "PC"}로 보내지 못했습니다. 연결을 확인하세요.`,
+    ));
     request.onload = () => {
       const response = (request.response ?? {}) as UploadResponse<T>;
       if (request.status < 200 || request.status >= 300 || !response.media) {

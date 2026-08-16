@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import type { Thread } from "../generated/app-server/v2/Thread";
+import type { ModelListResponse } from "../generated/app-server/v2/ModelListResponse";
 import type { Turn } from "../generated/app-server/v2/Turn";
 import type { AppServerNotification, RunTurnOptions } from "../src/app-server-client.js";
 import { PathPolicy } from "../src/path-policy.js";
 import { MediaManager } from "../src/media-manager.js";
+import { ProjectManager } from "../src/project-manager.js";
 import { startWebServer, type WebCodexClient } from "../src/web-server.js";
 
 const cwd = process.cwd();
@@ -16,12 +18,16 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const fake = new FakeWebClient();
   const paths = await PathPolicy.fromEnvironment(cwd);
   const mediaDir = await mkdtemp(join(tmpdir(), "codex-pocket-media-test-"));
+  const projectHome = await mkdtemp(join(tmpdir(), "codex-pocket-projects-test-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
+  t.after(() => rm(projectHome, { recursive: true, force: true }));
+  const projects = await ProjectManager.fromEnvironment(paths, projectHome);
   const running = await startWebServer({
     client: fake,
     paths,
     staticDir: resolve(cwd, "client/dist"),
     media: new MediaManager({ rootDir: mediaDir }),
+    projects,
     port: 0,
   });
   t.after(() => running.close());
@@ -36,6 +42,20 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const health = await jsonFetch(`${base}/api/health`);
   assert.equal(health.ok, true);
   assert.deepEqual(health.allowedWorkspaceRoots, [cwd]);
+
+  const models = await jsonFetch(`${base}/api/models`);
+  assert.equal(models.models[0].id, "test-codex");
+  assert.equal(models.models[0].defaultEffort, "medium");
+
+  const workspaceData = await jsonFetch(`${base}/api/workspaces`);
+  assert.equal(workspaceData.creationLocations[0].path, projectHome);
+  const created = await jsonFetch(`${base}/api/projects`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: "http://localhost" },
+    body: JSON.stringify({ name: "new-mobile-project", parent: projectHome }),
+  });
+  assert.equal(created.project.name, "new-mobile-project");
+  assert.equal(paths.isAllowed(created.project.path), true);
 
   const listed = await jsonFetch(`${base}/api/threads`);
   assert.equal(listed.threads[0].id, "thread-web");
@@ -76,11 +96,13 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const started = await jsonFetch(`${base}/api/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: "http://localhost" },
-    body: JSON.stringify({ prompt: "change a file", cwd, attachments: [uploaded.media.id] }),
+    body: JSON.stringify({ prompt: "change a file", cwd, model: "test-codex", effort: "high", attachments: [uploaded.media.id] }),
   });
   assert.equal(started.operation.status, "running");
   assert.equal(fake.lastRun?.cwd, cwd);
   assert.equal(fake.lastRun?.networkAccess, false);
+  assert.equal(fake.lastRun?.model, "test-codex");
+  assert.equal(fake.lastRun?.effort, "high");
   assert.equal(fake.lastRun?.imagePaths?.length, 1);
 
   const nativeHealth = await fetch(`${base}/api/health`, { headers: { Origin: "http://localhost" } });
@@ -115,6 +137,35 @@ class FakeWebClient implements WebCodexClient {
 
   async listThreads() {
     return { data: [thread()], nextCursor: null, backwardsCursor: null };
+  }
+
+  async listModels(): Promise<ModelListResponse> {
+    return {
+      data: [{
+        id: "test-codex",
+        model: "test-codex",
+        upgrade: null,
+        upgradeInfo: null,
+        availabilityNux: null,
+        displayName: "Test Codex",
+        description: "Model used by the gateway test",
+        modelSpecialty: null,
+        hidden: false,
+        supportedReasoningEfforts: [
+          { reasoningEffort: "low", description: "Fast" },
+          { reasoningEffort: "medium", description: "Balanced" },
+          { reasoningEffort: "high", description: "Deep" },
+        ],
+        defaultReasoningEffort: "medium",
+        inputModalities: ["text"],
+        supportsPersonality: false,
+        additionalSpeedTiers: [],
+        serviceTiers: [],
+        defaultServiceTier: null,
+        isDefault: true,
+      }],
+      nextCursor: null,
+    };
   }
 
   async readThread() {

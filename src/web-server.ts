@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { basename, extname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { InitializeResponse } from "../generated/app-server/InitializeResponse";
+import type { ModelListResponse } from "../generated/app-server/v2/ModelListResponse";
 import type { Thread } from "../generated/app-server/v2/Thread";
 import type { ThreadListResponse } from "../generated/app-server/v2/ThreadListResponse";
 import type { ThreadReadResponse } from "../generated/app-server/v2/ThreadReadResponse";
@@ -16,6 +17,7 @@ import type {
 import { PathPolicy } from "./path-policy.js";
 import { compactThread, presentThread, summarizeTurn } from "./result.js";
 import { MediaError, MediaManager } from "./media-manager.js";
+import { ProjectCreationError, ProjectManager } from "./project-manager.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_EVENT_TEXT = 80_000;
@@ -32,6 +34,7 @@ const STATIC_FILES = new Map([
 
 export interface WebCodexClient {
   start(): Promise<InitializeResponse>;
+  listModels(): Promise<ModelListResponse>;
   listThreads(limit?: number, searchTerm?: string): Promise<ThreadListResponse>;
   readThread(threadId: string, includeTurns?: boolean): Promise<ThreadReadResponse>;
   beginTurn(options: RunTurnOptions): Promise<BeginTurnResult>;
@@ -46,6 +49,7 @@ export interface WebServerOptions {
   host?: string;
   port?: number;
   media?: MediaManager;
+  projects?: ProjectManager;
 }
 
 export interface RunningWebServer {
@@ -81,6 +85,11 @@ interface RunBody {
   attachments?: unknown;
 }
 
+interface CreateProjectBody {
+  name?: unknown;
+  parent?: unknown;
+}
+
 export async function startWebServer(options: WebServerOptions): Promise<RunningWebServer> {
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 8787;
@@ -97,13 +106,14 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     onUpdate: (item) => broadcast(sseClients, { type: "media", media: item }),
   });
   await media.initialize();
+  const projects = options.projects ?? await ProjectManager.fromEnvironment(options.paths);
   const unsubscribe = options.client.subscribe((event) => {
     const forwarded = sanitizeNotification(event, activeThreads);
     if (forwarded) broadcast(sseClients, forwarded);
   });
 
   const server = createServer((request, response) => {
-    void handleRequest(request, response, options, media, operations, activeThreads, sseClients).catch(
+    void handleRequest(request, response, options, media, projects, operations, activeThreads, sseClients).catch(
       (error) => sendError(response, error),
     );
   });
@@ -147,6 +157,7 @@ async function handleRequest(
   response: ServerResponse,
   options: WebServerOptions,
   media: MediaManager,
+  projects: ProjectManager,
   operations: Map<string, Operation>,
   activeThreads: Set<string>,
   sseClients: Set<ServerResponse>,
@@ -164,7 +175,7 @@ async function handleRequest(
       response.end();
       return;
     }
-    await handleApi(request, response, url, options, media, operations, activeThreads, sseClients);
+    await handleApi(request, response, url, options, media, projects, operations, activeThreads, sseClients);
     return;
   }
   await serveStatic(request, response, url.pathname, options.staticDir);
@@ -176,6 +187,7 @@ async function handleApi(
   url: URL,
   options: WebServerOptions,
   media: MediaManager,
+  projects: ProjectManager,
   operations: Map<string, Operation>,
   activeThreads: Set<string>,
   sseClients: Set<ServerResponse>,
@@ -187,14 +199,45 @@ async function handleApi(
       ...initialized,
       allowedWorkspaceRoots: options.paths.roots,
       media: { maxBytes: media.maxBytes, videoModel: media.model },
+      device: deviceInfo(),
     });
     return;
   }
 
   if (request.method === "GET" && url.pathname === "/api/workspaces") {
     sendJson(response, 200, {
-      workspaces: options.paths.roots.map((path) => ({ path, name: basename(path) || path })),
+      device: deviceInfo(),
+      workspaces: projects.list(),
+      creationLocations: projects.creationLocations(),
     });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/models") {
+    const catalog = await options.client.listModels();
+    sendJson(response, 200, {
+      models: catalog.data.filter((model) => !model.hidden).map((model) => ({
+        id: model.model,
+        displayName: model.displayName,
+        description: model.description,
+        isDefault: model.isDefault,
+        defaultEffort: model.defaultReasoningEffort,
+        efforts: model.supportedReasoningEfforts.map((option) => ({
+          id: option.reasoningEffort,
+          description: option.description,
+        })),
+      })),
+    });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/projects") {
+    assertSameOrigin(request);
+    const body = (await readJson(request)) as CreateProjectBody;
+    const name = requiredString(body.name, "name", 80);
+    const parent = optionalString(body.parent, "parent", 4_096);
+    const project = await projects.create(name, parent);
+    sendJson(response, 201, { device: deviceInfo(), project });
     return;
   }
 
@@ -279,7 +322,11 @@ async function handleApi(
       cwd = await options.paths.resolveWorkspace(requestedCwd);
     }
 
-    const effort = optionalEnum(body.effort, ["low", "medium", "high", "xhigh"] as const, "effort");
+    const effort = optionalEnum(
+      body.effort,
+      ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const,
+      "effort",
+    );
     const model = optionalString(body.model, "model", 200);
     const networkAccess = body.networkAccess === true;
     const timeoutSeconds = optionalInteger(body.timeoutSeconds, 30, 3600, 900, "timeoutSeconds");
@@ -564,7 +611,11 @@ function sendError(response: ServerResponse, error: unknown): void {
     response.end();
     return;
   }
-  const status = error instanceof HttpError ? error.status : error instanceof MediaError ? error.statusCode : 500;
+  const status = error instanceof HttpError
+    ? error.status
+    : error instanceof MediaError || error instanceof ProjectCreationError
+      ? error.statusCode
+      : 500;
   const message = error instanceof Error ? error.message : String(error);
   if (status >= 500) process.stderr.write(`[codex-web] ${message}\n`);
   sendJson(response, status, { error: message });
@@ -683,6 +734,14 @@ function contentType(filename: string): string {
     default:
       return "application/octet-stream";
   }
+}
+
+function deviceInfo(): { id: string; name: string } {
+  const id = process.env.CODEX_DEVICE_ID === "phone" ? "phone" : "pc";
+  return {
+    id,
+    name: process.env.CODEX_DEVICE_NAME ?? (id === "phone" ? "이 스마트폰" : "내 PC"),
+  };
 }
 
 class HttpError extends Error {

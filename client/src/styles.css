@@ -27,7 +27,7 @@ body {
     var(--bg);
 }
 
-button, select, textarea { font: inherit; }
+button, select, textarea, input { font: inherit; }
 button { color: inherit; }
 
 .app-shell {
@@ -77,9 +77,9 @@ h1 { margin: 0; font-size: 1.05rem; letter-spacing: 0.01em; }
 
 .selectors {
   display: grid;
-  grid-template-columns: 1fr 1.45fr;
+  grid-template-columns: 0.8fr 1fr 1.35fr;
   gap: 0.7rem;
-  max-height: 7rem;
+  max-height: 8rem;
   padding: 0.8rem 1rem;
   border-bottom: 1px solid var(--line);
   background: rgba(18, 27, 36, 0.62);
@@ -118,6 +118,19 @@ select {
   background: var(--surface-2);
   outline: none;
 }
+
+.project-dialog { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgba(3, 8, 12, 0.72); backdrop-filter: blur(8px); }
+.project-dialog-card { width: min(100%, 26rem); display: grid; gap: 0.8rem; padding: 1rem; border: 1px solid var(--line); border-radius: 1rem; background: var(--surface); box-shadow: var(--shadow); }
+.project-dialog-head { display: flex; align-items: flex-start; gap: 1rem; }
+.project-dialog-head div { flex: 1; min-width: 0; }
+.project-dialog-head strong, .project-dialog-head small { display: block; }
+.project-dialog-head small { margin-top: 0.25rem; color: var(--muted); font-size: 0.72rem; }
+.project-dialog-head button { width: 2rem; height: 2rem; border: 0; border-radius: 50%; color: var(--muted); background: var(--surface-2); cursor: pointer; }
+.project-dialog-card label > span { display: block; margin: 0 0 0.3rem 0.15rem; color: var(--muted); font-size: 0.7rem; font-weight: 700; }
+.project-dialog-card input { width: 100%; height: 2.7rem; padding: 0 0.75rem; border: 1px solid var(--line); border-radius: 0.72rem; color: var(--text); background: var(--surface-2); outline: none; }
+.project-dialog-card input:focus { border-color: rgba(157, 242, 213, 0.62); box-shadow: 0 0 0 0.2rem rgba(157, 242, 213, 0.08); }
+.create-project-button { height: 2.8rem; border: 0; border-radius: 0.72rem; color: #06120e; background: var(--accent); font-weight: 800; cursor: pointer; }
+.create-project-button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shadow: 0 0 0 0.2rem rgba(157, 242, 213, 0.08); }
 .select-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.45rem; }
@@ -221,6 +234,10 @@ select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shad
   backdrop-filter: blur(22px);
 }
 .composer { border: 1px solid var(--line); border-radius: 1rem; padding: 0.35rem; background: var(--surface); box-shadow: var(--shadow); }
+.model-bar { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 0.38rem; padding: 0.1rem 0.15rem 0.4rem; }
+.model-bar label { min-width: 0; }
+.model-bar label > span { display: block; margin: 0 0 0.18rem 0.35rem; color: var(--muted); font-size: 0.58rem; font-weight: 750; letter-spacing: 0.05em; }
+.model-bar select { height: 2rem; padding-left: 0.55rem; border-radius: 0.58rem; font-size: 0.69rem; }
 .attachment-tray { display: grid; gap: 0.4rem; max-height: 12rem; overflow-y: auto; padding: 0.2rem 0.2rem 0.45rem; }
 .attachment-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.55rem; min-height: 3.1rem; padding: 0.38rem 0.45rem; border: 1px solid var(--line); border-radius: 0.72rem; background: rgba(24, 36, 46, 0.76); }
 .attachment-card.analyzing, .attachment-card.queued { border-color: rgba(255, 203, 136, 0.34); }
@@ -272,7 +289,8 @@ textarea::placeholder { color: #6f8285; }
 
 @media (max-width: 560px) {
   .app-shell { border: 0; }
-  .selectors { grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.4fr); padding-inline: 0.7rem; }
+  .selectors { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); max-height: 12rem; padding-inline: 0.7rem; }
+  .selectors > label:last-child { grid-column: 1 / -1; }
   .transcript { padding-inline: 0.75rem; }
   .network-toggle { display: none; }
   .composer-bar { gap: 0.5rem; padding-left: 0.25rem; }

@@ -2,14 +2,16 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-스마트폰에서 한국어로 말하고, PC의 Codex CLI가 실제 프로젝트를 수정하게 만드는 React 기반 모바일 인터페이스입니다. Android 앱과 설치형 PWA를 지원하며 별도의 Whisper·Realtime API 비용이 들지 않습니다.
+스마트폰에서 한국어로 말하고, PC 또는 스마트폰의 Codex CLI가 실제 프로젝트를 수정하게 만드는 React 기반 모바일 인터페이스입니다. Android 앱과 설치형 PWA를 지원하며 별도의 Whisper·Realtime API 비용이 들지 않습니다.
 
 > Codex 모델 사용량은 사용자의 Codex 계정과 플랜 정책을 따릅니다. 이 프로젝트는 OpenAI의 공식 제품이 아닙니다.
 
 ## 핵심 기능
 
 - Android 네이티브 `ko-KR` 받아쓰기와 웹 한국어 음성 입력
-- PC의 여러 Git 프로젝트와 기존 Codex 대화 선택
+- PC와 스마트폰의 여러 Git 프로젝트·기존 Codex 대화 선택
+- 실행 단말을 골라 새 Git 프로젝트 생성
+- 각 단말이 제공하는 Codex 모델과 지원 추론 성능을 실시간 조회·선택
 - 이미지 첨부와 영상 업로드, 로컬 Qwen3-VL 4B 대표 장면 분석
 - 답변, 명령 실행, 파일 변경 상태를 SSE로 실시간 표시
 - 실행 중인 Codex 턴 중단과 최종 diff·명령 요약
@@ -26,18 +28,19 @@ Android APK / browser PWA
   ├─ React mobile UI
   ├─ Android native / Web speech recognition (ko-KR)
   ├─ Android TTS
-  └─ http://127.0.0.1:8788
-             │
-             │ background SSH port forwarding
-             ▼
-PC 127.0.0.1:8787
-  └─ Codex Pocket web gateway
+  ├─ PC 선택 → http://127.0.0.1:8788
+  │                 │ background SSH port forwarding
+  │                 ▼
+  │              PC 127.0.0.1:8787
+  └─ 스마트폰 선택 → Termux 127.0.0.1:8789
+
+각 단말의 Codex Pocket web gateway
        ├─ ffmpeg → Qwen3-VL 4B (local Ollama, video frames)
        └─ codex app-server (text + selected images)
-            └─ selected Git workspace
+            └─ 선택하거나 새로 만든 Git workspace
 ```
 
-웹 서버와 Codex app-server는 PC의 loopback에만 노출됩니다. 스마트폰은 SSH를 통해서만 접근합니다.
+두 웹 서버와 Codex app-server는 각 단말의 loopback에만 노출됩니다. PC 서버는 스마트폰에서 SSH 터널을 통해서만 접근합니다.
 
 ## 요구 사항
 
@@ -86,7 +89,7 @@ export CODEX_MEDIA_MAX_BYTES=209715200
 export CODEX_VIDEO_ENABLED=true
 ```
 
-`start-web-pc.sh`는 기본적으로 `~/workspace` 아래의 Git 저장소를 찾아 허용 프로젝트로 등록하고 `127.0.0.1:8787`에서 서버를 시작합니다. 직접 지정하려면 다음처럼 실행합니다.
+`start-web-pc.sh`는 기본적으로 `~/workspace` 아래의 Git 저장소를 찾아 허용 프로젝트로 등록하고, 같은 위치에 새 프로젝트를 만들 수 있게 한 뒤 `127.0.0.1:8787`에서 서버를 시작합니다. 직접 지정하려면 다음처럼 실행합니다.
 
 ```sh
 export CODEX_VOICE_ROOTS=/path/to/project-a:/path/to/project-b
@@ -153,6 +156,15 @@ APK는 React 화면을 앱 안에 포함하고, 실행될 때 Termux에 SSH 터�
 ./scripts/setup-android-app.sh
 ```
 
+이 설정은 `pc-codex-web`과 `phone-codex-web`을 함께 설치합니다. 스마트폰 쪽은 기본적으로
+`~/codex` 아래 Git 저장소를 찾아 `127.0.0.1:8789`에서 실행하며 다음 값으로 바꿀 수 있습니다.
+
+```sh
+export PHONE_PROJECTS_HOME=/private/phone/projects
+export PHONE_CODEX_ROOTS=/project/a:/project/b
+export CODEX_PHONE_WEB_PORT=8789
+```
+
 Android Studio가 설치된 PC에서 APK 프로젝트를 동기화하고 빌드합니다.
 
 ```sh
@@ -162,7 +174,9 @@ npm run android:sync
 npm run android:debug
 ```
 
-설치 후 Android의 앱 정보 → 권한(또는 추가 권한)에서 **Termux 명령 실행**을 허용합니다. 이후에는 `pc-codex-web`을 사용자가 따로 열 필요 없이 Codex Pocket Voice 앱이 연결을 요청합니다. Termux가 강제로 종료되거나 배터리 최적화로 중지되면 Android 설정에서 Termux의 배터리 제한을 해제해야 할 수 있습니다.
+설치 후 Android의 앱 정보 → 권한(또는 추가 권한)에서 **Termux 명령 실행**을 허용합니다. 이후에는 `pc-codex-web`이나 `phone-codex-web`을 사용자가 따로 열 필요 없이 Codex Pocket Voice 앱이 양쪽 연결을 요청합니다. Termux가 강제로 종료되거나 배터리 최적화로 중지되면 Android 설정에서 Termux의 배터리 제한을 해제해야 할 수 있습니다.
+
+앱의 **실행 단말**에서 `내 PC` 또는 `이 스마트폰`을 선택할 수 있습니다. 프로젝트 옆 `＋`는 선택한 단말의 허용된 생성 위치에 폴더를 만들고 `git init --initial-branch=main`을 수행합니다. 모델과 성능 선택지는 단말의 Codex 카탈로그에서 읽으므로, 계정이나 CLI 버전에서 실제 지원하는 항목만 표시됩니다.
 
 GitHub Actions의 APK는 저장소 비밀값에 보관된 고정 키로 서명됩니다. 1.2 이전 임시 디버그 APK는
 실행마다 서명이 달랐고 일부 Android 사용자 영역에 이전 서명이 남을 수 있어, 1.2.1부터 충돌 없는

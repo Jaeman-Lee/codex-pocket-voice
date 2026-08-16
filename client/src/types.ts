@@ -1,9 +1,34 @@
 export type ConnectionStatus = "pending" | "online" | "error";
+export type DeviceId = "pc" | "phone";
+
+export interface DeviceInfo {
+  id: DeviceId;
+  name: string;
+}
 export type OperationStatus = "running" | "completed" | "interrupted" | "failed";
 
 export interface Workspace {
   path: string;
   name: string;
+}
+
+export interface WorkspaceResponse {
+  device: DeviceInfo;
+  workspaces: Workspace[];
+  creationLocations: Workspace[];
+}
+
+export interface ModelOption {
+  id: string;
+  displayName: string;
+  description: string;
+  isDefault: boolean;
+  defaultEffort: string;
+  efforts: Array<{ id: string; description: string }>;
+}
+
+export interface ModelResponse {
+  models: ModelOption[];
 }
 
 export interface ThreadSummary {

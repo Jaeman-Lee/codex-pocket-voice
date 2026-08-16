@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { api, apiUrl, uploadMedia } from "./api";
+import { api, apiUrl, setApiDevice, uploadMedia } from "./api";
 import {
   isNativeApp,
   NativeSpeech,
@@ -13,14 +13,18 @@ import type {
   ChatMessage,
   CodexEvent,
   ConnectionStatus,
+  DeviceId,
   HistoryItem,
   Operation,
   MediaItem,
+  ModelOption,
+  ModelResponse,
   PendingAttachment,
   RunResult,
   ThreadDetail,
   ThreadSummary,
   Workspace,
+  WorkspaceResponse,
 } from "./types";
 
 interface SpeechRecognitionEventLike {
@@ -73,6 +77,9 @@ let localId = 0;
 const newId = (prefix: string) => `${prefix}-${Date.now()}-${localId++}`;
 
 export function App() {
+  const [device, setDevice] = useState<DeviceId>(
+    () => localStorage.getItem("codex-pocket-device") === "phone" && isNativeApp() ? "phone" : "pc",
+  );
   const [connection, setConnection] = useState<ConnectionStatus>("pending");
   const [connectionText, setConnectionText] = useState("PC에 연결 중…");
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -85,6 +92,9 @@ export function App() {
   const [activity, setActivity] = useState<ActivityState>({ running: false, text: "", detail: "" });
   const [tts, setTts] = useState(() => localStorage.getItem("codex-pocket-tts") === "true");
   const [networkAccess, setNetworkAccess] = useState(false);
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [model, setModel] = useState("");
+  const [effort, setEffort] = useState("");
   const [dictating, setDictating] = useState(false);
   const [handsFree, setHandsFree] = useState(false);
   const [controlsCollapsed, setControlsCollapsed] = useState(
@@ -95,12 +105,18 @@ export function App() {
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [mediaBusy, setMediaBusy] = useState(false);
+  const [creationLocations, setCreationLocations] = useState<Workspace[]>([]);
+  const [showProjectCreator, setShowProjectCreator] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectParent, setNewProjectParent] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
 
   const transcriptRef = useRef<HTMLElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const operationRef = useRef<Operation | null>(null);
   const workspaceRef = useRef("");
+  const deviceRef = useRef<DeviceId>(device);
   const threadRef = useRef("");
   const ttsRef = useRef(tts);
   const liveMessageIdRef = useRef<string | null>(null);
@@ -121,6 +137,11 @@ export function App() {
   const initializeRef = useRef<() => Promise<void>>(async () => undefined);
 
   useEffect(() => { workspaceRef.current = workspace; }, [workspace]);
+  useEffect(() => {
+    deviceRef.current = device;
+    setApiDevice(device);
+    localStorage.setItem("codex-pocket-device", device);
+  }, [device]);
   useEffect(() => { threadRef.current = threadId; }, [threadId]);
   useEffect(() => { ttsRef.current = tts; localStorage.setItem("codex-pocket-tts", String(tts)); }, [tts]);
   useEffect(() => { operationRef.current = operation; }, [operation]);
@@ -160,15 +181,32 @@ export function App() {
     if (initializingRef.current) return;
     initializingRef.current = true;
     try {
-      const [health, workspaceData] = await Promise.all([
-        api<{ userAgent: string }>("/api/health"),
-        api<{ workspaces: Workspace[] }>("/api/workspaces"),
+      const [health, workspaceData, modelData] = await Promise.all([
+        api<{ userAgent: string; device: { name: string } }>("/api/health"),
+        api<WorkspaceResponse>("/api/workspaces"),
+        api<ModelResponse>("/api/models"),
       ]);
-      setConnectionText(`${health.userAgent} · 안전 연결`);
+      setConnectionText(`${health.device.name} · ${health.userAgent}`);
       setConnection("online");
       setWorkspaces(workspaceData.workspaces);
+      setCreationLocations(workspaceData.creationLocations);
+      setModels(modelData.models);
+      const storedModel = localStorage.getItem(storageKey("model", deviceRef.current)) ?? "";
+      const selectedModel = modelData.models.some((item) => item.id === storedModel) ? storedModel : "";
+      setModel(selectedModel);
+      const selectedModelInfo = modelData.models.find((item) => item.id === selectedModel)
+        ?? modelData.models.find((item) => item.isDefault)
+        ?? modelData.models[0];
+      const storedEffort = localStorage.getItem(storageKey("effort", deviceRef.current)) ?? "";
+      const selectedEffort = selectedModelInfo?.efforts.some((item) => item.id === storedEffort)
+        ? storedEffort
+        : "";
+      setEffort(selectedEffort);
+      setNewProjectParent((current) => workspaceData.creationLocations.some((item) => item.path === current)
+        ? current
+        : (workspaceData.creationLocations[0]?.path ?? ""));
 
-      const stored = localStorage.getItem("codex-pocket-workspace") ?? "";
+      const stored = localStorage.getItem(storageKey("workspace", deviceRef.current)) ?? "";
       const selected = workspaceData.workspaces.some((item) => item.path === workspaceRef.current)
         ? workspaceRef.current
         : workspaceData.workspaces.some((item) => item.path === stored)
@@ -176,11 +214,11 @@ export function App() {
           : (workspaceData.workspaces[0]?.path ?? "");
       setWorkspace(selected);
       workspaceRef.current = selected;
-      await loadThreads(selected, true, localStorage.getItem("codex-pocket-thread") ?? "");
+      await loadThreads(selected, true, localStorage.getItem(storageKey("thread", deviceRef.current)) ?? "");
       initializedRef.current = true;
     } catch (error) {
       setConnection("error");
-      setConnectionText("PC 연결 실패");
+      setConnectionText(`${deviceLabel(deviceRef.current)} 연결 실패`);
       showToast(errorMessage(error));
     } finally {
       initializingRef.current = false;
@@ -190,11 +228,15 @@ export function App() {
   initializeRef.current = initialize;
 
   useEffect(() => {
+    deviceRef.current = device;
+    setApiDevice(device);
+    initializedRef.current = false;
+    setConnection("pending");
+    setConnectionText(`${deviceLabel(device)} 연결을 준비하는 중…`);
     void (async () => {
       if (isNativeApp()) {
         try {
           await NativeTunnel.start();
-          setConnectionText("PC 연결을 준비하는 중…");
         } catch (error) {
           showToast(errorMessage(error));
         }
@@ -204,7 +246,9 @@ export function App() {
     const stream = new EventSource(apiUrl("/api/events"));
     stream.onopen = () => {
       setConnection("online");
-      setConnectionText((current) => current.includes("복구") || current.includes("실패") ? "PC와 안전하게 연결됨" : current);
+      setConnectionText((current) => current.includes("복구") || current.includes("실패")
+        ? `${deviceLabel(device)}와 안전하게 연결됨`
+        : current);
       if (!initializedRef.current) void initializeRef.current();
     };
     stream.onerror = () => {
@@ -219,7 +263,7 @@ export function App() {
       }
     };
     return () => stream.close();
-  }, [initialize]);
+  }, [device, initialize, showToast]);
 
   useEffect(() => {
     if (isNativeApp()) return;
@@ -443,7 +487,7 @@ export function App() {
       if (result.threadId) {
         setThreadId(result.threadId);
         threadRef.current = result.threadId;
-        localStorage.setItem("codex-pocket-thread", result.threadId);
+        localStorage.setItem(storageKey("thread", deviceRef.current), result.threadId);
       }
       if (ttsRef.current && result.finalResponse) speak(result.finalResponse);
       void loadThreads(workspaceRef.current, true, result.threadId);
@@ -616,6 +660,8 @@ export function App() {
           cwd: workspaceRef.current,
           threadId: threadRef.current || undefined,
           networkAccess,
+          model: model || undefined,
+          effort: effort || undefined,
           attachments: attachments.map((item) => item.id),
         },
       });
@@ -642,13 +688,68 @@ export function App() {
     }
   }
 
+  function selectDevice(nextDevice: DeviceId) {
+    if (nextDevice === deviceRef.current) return;
+    setApiDevice(nextDevice);
+    deviceRef.current = nextDevice;
+    setDevice(nextDevice);
+    setWorkspace("");
+    workspaceRef.current = "";
+    setThreadId("");
+    threadRef.current = "";
+    setThreads([]);
+    setWorkspaces([]);
+    setCreationLocations([]);
+    setModels([]);
+    setModel("");
+    setEffort("");
+    setMessages([]);
+  }
+
+  function selectModel(nextModel: string) {
+    setModel(nextModel);
+    if (nextModel) localStorage.setItem(storageKey("model", deviceRef.current), nextModel);
+    else localStorage.removeItem(storageKey("model", deviceRef.current));
+    const info = models.find((item) => item.id === nextModel)
+      ?? models.find((item) => item.isDefault)
+      ?? models[0];
+    if (effort && !info?.efforts.some((item) => item.id === effort)) selectEffort("");
+  }
+
+  function selectEffort(nextEffort: string) {
+    setEffort(nextEffort);
+    if (nextEffort) localStorage.setItem(storageKey("effort", deviceRef.current), nextEffort);
+    else localStorage.removeItem(storageKey("effort", deviceRef.current));
+  }
+
+  async function createProject() {
+    const name = newProjectName.trim();
+    if (!name || creatingProject) return;
+    setCreatingProject(true);
+    try {
+      const data = await api<{ project: Workspace }>("/api/projects", {
+        method: "POST",
+        body: { name, parent: newProjectParent || undefined },
+      });
+      setWorkspaces((current) => [...current.filter((item) => item.path !== data.project.path), data.project]);
+      setNewProjectName("");
+      setShowProjectCreator(false);
+      await selectWorkspace(data.project.path);
+      showToast(`${deviceLabel(deviceRef.current)}에 ${data.project.name} 프로젝트를 만들었습니다.`);
+    } catch (error) {
+      showToast(errorMessage(error));
+    } finally {
+      setCreatingProject(false);
+    }
+  }
+
   async function selectWorkspace(path: string) {
     setWorkspace(path);
     workspaceRef.current = path;
-    localStorage.setItem("codex-pocket-workspace", path);
+    localStorage.setItem(storageKey("workspace", deviceRef.current), path);
     setThreadId("");
     threadRef.current = "";
-    localStorage.removeItem("codex-pocket-thread");
+    localStorage.removeItem(storageKey("thread", deviceRef.current));
     setMessages([]);
     await loadThreads(path, false);
   }
@@ -656,8 +757,8 @@ export function App() {
   async function selectThread(id: string) {
     setThreadId(id);
     threadRef.current = id;
-    if (id) localStorage.setItem("codex-pocket-thread", id);
-    else localStorage.removeItem("codex-pocket-thread");
+    if (id) localStorage.setItem(storageKey("thread", deviceRef.current), id);
+    else localStorage.removeItem(storageKey("thread", deviceRef.current));
     setMessages([]);
     if (!id) return;
     try {
@@ -799,10 +900,32 @@ export function App() {
 
       <section className={`selectors${controlsCollapsed ? " collapsed" : ""}`} aria-label="작업 대상" aria-hidden={controlsCollapsed}>
         <label>
-          <span>프로젝트</span>
-          <select value={workspace} disabled={activity.running || controlsCollapsed} aria-label="프로젝트 선택" onChange={(event) => void selectWorkspace(event.target.value)}>
-            {workspaces.map((item) => <option key={item.path} value={item.path}>{item.name}</option>)}
+          <span>실행 단말</span>
+          <select
+            value={device}
+            disabled={activity.running || controlsCollapsed}
+            aria-label="Codex 실행 단말 선택"
+            onChange={(event) => selectDevice(event.target.value as DeviceId)}
+          >
+            <option value="pc">내 PC</option>
+            {isNativeApp() && <option value="phone">이 스마트폰</option>}
           </select>
+        </label>
+        <label>
+          <span>프로젝트</span>
+          <div className="select-row">
+            <select value={workspace} disabled={activity.running || controlsCollapsed} aria-label="프로젝트 선택" onChange={(event) => void selectWorkspace(event.target.value)}>
+              {workspaces.length === 0 && <option value="">프로젝트 없음</option>}
+              {workspaces.map((item) => <option key={item.path} value={item.path}>{item.name}</option>)}
+            </select>
+            <button
+              className="icon-button"
+              type="button"
+              disabled={activity.running || controlsCollapsed || creationLocations.length === 0}
+              aria-label={`${deviceLabel(device)}에 새 프로젝트 만들기`}
+              onClick={() => setShowProjectCreator(true)}
+            >＋</button>
+          </div>
         </label>
         <label>
           <span>대화</span>
@@ -818,12 +941,57 @@ export function App() {
         </label>
       </section>
 
+      {showProjectCreator && (
+        <section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title">
+          <div className="project-dialog-card">
+            <div className="project-dialog-head">
+              <div>
+                <strong id="project-dialog-title">새 프로젝트</strong>
+                <small>Git 저장소로 안전하게 초기화합니다.</small>
+              </div>
+              <button type="button" aria-label="닫기" onClick={() => setShowProjectCreator(false)}>×</button>
+            </div>
+            <label>
+              <span>생성할 단말</span>
+              <select value={device} disabled={creatingProject} onChange={(event) => selectDevice(event.target.value as DeviceId)}>
+                <option value="pc">내 PC</option>
+                {isNativeApp() && <option value="phone">이 스마트폰</option>}
+              </select>
+            </label>
+            <label>
+              <span>위치</span>
+              <select value={newProjectParent} disabled={creatingProject || creationLocations.length === 0} onChange={(event) => setNewProjectParent(event.target.value)}>
+                {creationLocations.map((item) => <option key={item.path} value={item.path}>{item.name}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>프로젝트 이름</span>
+              <input
+                type="text"
+                maxLength={80}
+                value={newProjectName}
+                placeholder="예: my-new-app"
+                autoFocus
+                disabled={creatingProject}
+                onChange={(event) => setNewProjectName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void createProject();
+                }}
+              />
+            </label>
+            <button className="create-project-button" type="button" disabled={creatingProject || !newProjectName.trim() || creationLocations.length === 0} onClick={() => void createProject()}>
+              {creatingProject ? "만드는 중…" : `${deviceLabel(device)}에 만들기`}
+            </button>
+          </div>
+        </section>
+      )}
+
       <main ref={transcriptRef} className="transcript" aria-live="polite">
         {messages.length === 0 ? (
           <section className="empty-state">
             <div className="empty-orbit" aria-hidden="true"><span /></div>
             <h2>말하고, 확인하고, 실행하세요.</h2>
-            <p>한국어 음성 버튼으로 말한 뒤 전송하면 PC의 Codex가 선택한 프로젝트에서 작업합니다.</p>
+            <p>한국어 음성 버튼으로 말한 뒤 전송하면 {deviceLabel(device)}의 Codex가 선택한 프로젝트에서 작업합니다.</p>
             <div className="suggestions">
               <button type="button" onClick={() => setPrompt("이 프로젝트의 현재 상태를 확인하고 다음 할 일을 알려주세요.")}>현재 상태 확인</button>
               <button type="button" onClick={() => setPrompt("테스트를 실행하고 실패 원인을 고쳐주세요.")}>테스트 실행·수정</button>
@@ -845,6 +1013,38 @@ export function App() {
 
       <footer className="composer-wrap">
         <div className={`composer${handsFree ? " hands-free" : ""}`}>
+          {models.length > 0 && (
+            <div className="model-bar" aria-label="Codex 모델 설정">
+              <label>
+                <span>모델</span>
+                <select
+                  value={model}
+                  disabled={activity.running}
+                  aria-label="Codex 모델"
+                  onChange={(event) => selectModel(event.target.value)}
+                >
+                  <option value="">자동 · {defaultModel(models)?.displayName ?? "Codex 기본값"}</option>
+                  {models.map((item) => (
+                    <option key={item.id} value={item.id}>{item.displayName}{item.isDefault ? " · 기본" : ""}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>성능</span>
+                <select
+                  value={effort}
+                  disabled={activity.running}
+                  aria-label="추론 성능"
+                  onChange={(event) => selectEffort(event.target.value)}
+                >
+                  <option value="">기본 · {effortLabel(activeModel(models, model)?.defaultEffort ?? "medium")}</option>
+                  {(activeModel(models, model)?.efforts ?? []).map((item) => (
+                    <option key={item.id} value={item.id}>{effortLabel(item.id)}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
           {attachments.length > 0 && (
             <div className="attachment-tray" aria-label="첨부 파일">
               {attachments.map((item) => (
@@ -855,7 +1055,7 @@ export function App() {
                   )}
                   <div>
                     <strong>{item.kind === "video" ? "🎬" : "🖼️"} {short(item.name, 28)}</strong>
-                    <span>{mediaStatusText(item)}</span>
+                    <span>{mediaStatusText(item, device)}</span>
                     {item.analysis?.summary && <small>{short(item.analysis.summary, 72)}</small>}
                   </div>
                   <button type="button" aria-label={`${item.name} 첨부 제거`} onClick={() => removeAttachment(item.id)}>×</button>
@@ -1023,8 +1223,8 @@ function statusMessage(status: Operation["status"]): string {
   return "작업이 완료되었습니다.";
 }
 
-function mediaStatusText(item: PendingAttachment): string {
-  if (item.status === "uploading") return `PC로 전송 중 · ${item.progress ?? 0}%`;
+function mediaStatusText(item: PendingAttachment, device: DeviceId): string {
+  if (item.status === "uploading") return `${deviceLabel(device)}로 전송 중 · ${item.progress ?? 0}%`;
   if (item.status === "queued") return "4B 영상 분석 대기 중";
   if (item.status === "analyzing") return "4B가 대표 장면 분석 중 · 약 2~3분";
   if (item.status === "failed") return item.error || "분석 실패";
@@ -1032,6 +1232,36 @@ function mediaStatusText(item: PendingAttachment): string {
     return `분석 완료 · ${item.frameCount}개 대표 장면`;
   }
   return `${Math.max(1, Math.round(item.size / 1024))}KB · 전송 완료`;
+}
+
+function storageKey(kind: "workspace" | "thread" | "model" | "effort", device: DeviceId): string {
+  return `codex-pocket-${kind}-${device}`;
+}
+
+function defaultModel(models: ModelOption[]): ModelOption | undefined {
+  return models.find((item) => item.isDefault) ?? models[0];
+}
+
+function activeModel(models: ModelOption[], model: string): ModelOption | undefined {
+  return models.find((item) => item.id === model) ?? defaultModel(models);
+}
+
+function effortLabel(effort: string): string {
+  const labels: Record<string, string> = {
+    none: "없음 · 즉시",
+    minimal: "최소 · 매우 빠름",
+    low: "낮음 · 빠름",
+    medium: "중간 · 균형",
+    high: "높음 · 정밀",
+    xhigh: "매우 높음 · 심층",
+    max: "최대 · 최고 품질",
+    ultra: "울트라 · 작업 분담",
+  };
+  return labels[effort] ?? effort;
+}
+
+function deviceLabel(device: DeviceId): string {
+  return device === "phone" ? "이 스마트폰" : "내 PC";
 }
 
 function errorMessage(error: unknown): string {
