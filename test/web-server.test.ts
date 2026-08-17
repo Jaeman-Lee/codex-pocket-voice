@@ -133,6 +133,9 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(uploadedResponse.status, 201);
   const uploaded = await uploadedResponse.json() as any;
   assert.equal(uploaded.media.kind, "image");
+  const reloadedMedia = new MediaManager({ rootDir: mediaDir });
+  await reloadedMedia.initialize();
+  assert.equal(reloadedMedia.get(uploaded.media.id).name, "screen.png");
 
   const started = await jsonFetch(`${base}/api/runs`, {
     method: "POST",

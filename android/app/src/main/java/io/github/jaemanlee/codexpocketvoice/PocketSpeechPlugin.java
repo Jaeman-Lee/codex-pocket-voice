@@ -17,6 +17,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 import java.util.ArrayList;
+import java.util.Locale;
 
 @CapacitorPlugin(
     name = "PocketSpeech",
@@ -29,7 +30,7 @@ public class PocketSpeechPlugin extends Plugin implements RecognitionListener {
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private SpeechRecognizer recognizer;
-    private String language = "ko-KR";
+    private String language = Locale.getDefault().toLanguageTag();
     private boolean continuous;
     private boolean listening;
     private boolean stopRequested = true;
@@ -57,7 +58,7 @@ public class PocketSpeechPlugin extends Plugin implements RecognitionListener {
     }
 
     private void startRecognizer(PluginCall call) {
-        language = call.getString("language", "ko-KR");
+        language = call.getString("language", Locale.getDefault().toLanguageTag());
         continuous = Boolean.TRUE.equals(call.getBoolean("continuous", false));
         stopRequested = false;
         mainHandler.removeCallbacksAndMessages(null);
@@ -206,8 +207,8 @@ public class PocketSpeechPlugin extends Plugin implements RecognitionListener {
             case SpeechRecognizer.ERROR_NETWORK_TIMEOUT: return "음성 인식 네트워크 오류가 발생했습니다.";
             case SpeechRecognizer.ERROR_SERVER:
             case SpeechRecognizer.ERROR_SERVER_DISCONNECTED: return "음성 인식 서비스에 연결할 수 없습니다.";
-            case SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED: return "한국어 음성 인식을 지원하지 않습니다.";
-            case SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE: return "한국어 음성 모델을 사용할 수 없습니다.";
+            case SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED: return "선택한 언어의 음성 인식을 지원하지 않습니다.";
+            case SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE: return "선택한 언어의 음성 모델을 사용할 수 없습니다.";
             default: return "음성 인식 오류가 발생했습니다. (" + error + ")";
         }
     }

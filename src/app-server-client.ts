@@ -10,6 +10,7 @@ import type { ThreadStartResponse } from "../generated/app-server/v2/ThreadStart
 import type { Turn } from "../generated/app-server/v2/Turn";
 import type { TurnStartResponse } from "../generated/app-server/v2/TurnStartResponse";
 import type { UserInput } from "../generated/app-server/v2/UserInput";
+import { APP_VERSION } from "./version.js";
 
 type RpcId = number | string;
 type JsonObject = Record<string, unknown>;
@@ -215,8 +216,14 @@ export class CodexAppServerClient {
     });
 
     const initialized = await this.request<InitializeResponse>("initialize", {
-      clientInfo: { name: "codex_voice_bridge", title: "Codex Voice Bridge", version: "0.1.0" },
-      capabilities: null,
+      clientInfo: { name: "codex_pocket_voice", title: "Codex Pocket Voice", version: APP_VERSION },
+      capabilities: {
+        experimentalApi: true,
+        requestAttestation: false,
+        mcpServerOpenaiFormElicitation: false,
+        optOutNotificationMethods: [],
+        extensions: null,
+      },
     });
     this.notify("initialized", {});
     return initialized;

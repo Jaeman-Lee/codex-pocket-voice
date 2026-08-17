@@ -26,6 +26,7 @@ import {
 import { mergeSpeechSegments } from "./speech-utils";
 import { createWorkJournal } from "./work-journal";
 import { conversationKey, restoredMessages, serializableQueue } from "./work-journal-model";
+import { initialSpeechLanguage, initialUiLanguage, translate, type MessageKey, type UiLanguage } from "./i18n";
 import type {
   ChatMessage,
   CodexEvent,
@@ -45,6 +46,7 @@ import type {
   ProviderResponse,
   QueuedPrompt,
   RunResult,
+  SystemDiagnostics,
   ThreadDetail,
   ThreadSummary,
   Workspace,
@@ -150,7 +152,11 @@ export function App() {
   const [showDeviceCreator, setShowDeviceCreator] = useState(false);
   const [newDeviceName, setNewDeviceName] = useState("");
   const [newDevicePort, setNewDevicePort] = useState("8790");
+  const [uiLanguage, setUiLanguage] = useState<UiLanguage>(initialUiLanguage);
+  const [speechLanguage, setSpeechLanguage] = useState(initialSpeechLanguage);
+  const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null);
   const [journal] = useState(createWorkJournal);
+  const tr = (key: MessageKey) => translate(uiLanguage, key);
 
   const transcriptRef = useRef<HTMLElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -173,10 +179,12 @@ export function App() {
   const dictationBaseRef = useRef("");
   const nativeFinalRef = useRef("");
   const handsFreeRef = useRef(false);
+  const speechLanguageRef = useRef(speechLanguage);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
   const voiceWasActiveRef = useRef(false);
   const initializedRef = useRef(false);
+  const onboardingShownRef = useRef(false);
   const initializingRef = useRef(false);
   const handleEventRef = useRef<(event: CodexEvent) => void>(() => undefined);
   const initializeRef = useRef<() => Promise<void>>(async () => undefined);
@@ -192,6 +200,11 @@ export function App() {
   useEffect(() => { operationRef.current = operation; }, [operation]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { handsFreeRef.current = handsFree; }, [handsFree]);
+  useEffect(() => {
+    speechLanguageRef.current = speechLanguage;
+    localStorage.setItem("codex-pocket-speech-language", speechLanguage);
+  }, [speechLanguage]);
+  useEffect(() => { localStorage.setItem("codex-pocket-ui-language", uiLanguage); }, [uiLanguage]);
   useEffect(() => {
     localStorage.setItem("codex-pocket-controls-open", String(!controlsCollapsed));
   }, [controlsCollapsed]);
@@ -209,7 +222,10 @@ export function App() {
     journalQueueReadyRef.current = null;
     void journal.loadQueue(device).then((record) => {
       if (disposed || deviceRef.current !== device) return;
-      const prompts = serializableQueue(record?.prompts ?? []);
+      const now = Date.now();
+      const prompts = serializableQueue(record?.prompts ?? [])
+        .filter((prompt) => !prompt.expiresAt || Date.parse(prompt.expiresAt) > now)
+        .map((prompt) => ({ ...prompt, requiresConfirmation: true }));
       promptQueueRef.current = prompts;
       setPromptQueue(prompts);
       journalQueueReadyRef.current = device;
@@ -249,7 +265,8 @@ export function App() {
   }, [connection, device, journal, messages, operation?.status, threadId, workspace]);
 
   useEffect(() => {
-    if (connection !== "online" || operationRef.current || queueDispatchingRef.current || promptQueueRef.current.length === 0) return;
+    if (connection !== "online" || operationRef.current || queueDispatchingRef.current || promptQueueRef.current.length === 0
+      || promptQueueRef.current[0]?.requiresConfirmation) return;
     const timer = window.setTimeout(() => startNextQueuedPrompt(""), 250);
     return () => window.clearTimeout(timer);
   }, [connection, promptQueue.length]);
@@ -367,6 +384,11 @@ export function App() {
         }
       }
       initializedRef.current = true;
+      if (!onboardingShownRef.current && localStorage.getItem("codex-pocket-onboarding-complete") !== "true") {
+        onboardingShownRef.current = true;
+        setShowConnectionCenter(true);
+        void refreshDiagnostics();
+      }
     } catch (error) {
       setConnection("error");
       setConnectionText(`${deviceLabel(deviceRef.current)} 연결 실패`);
@@ -490,7 +512,7 @@ export function App() {
       return;
     }
     const recognition = new Recognition();
-    recognition.lang = "ko-KR";
+    recognition.lang = speechLanguageRef.current;
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
@@ -605,10 +627,10 @@ export function App() {
     if (!("speechSynthesis" in window)) return;
     speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text.slice(0, 4_000));
-    utterance.lang = "ko-KR";
+    utterance.lang = speechLanguageRef.current;
     utterance.rate = 1.03;
-    const korean = speechSynthesis.getVoices().find((voice) => voice.lang.toLowerCase().startsWith("ko"));
-    if (korean) utterance.voice = korean;
+    const preferredVoice = speechSynthesis.getVoices().find((voice) => voice.lang.toLowerCase().startsWith(speechLanguageRef.current.split("-", 1)[0]!.toLowerCase()));
+    if (preferredVoice) utterance.voice = preferredVoice;
     speechSynthesis.speak(utterance);
   }
 
@@ -784,7 +806,9 @@ export function App() {
       : item));
   }
 
-  function removeAttachment(id: string) {
+  async function removeAttachment(id: string) {
+    const uploaded = attachments.find((item) => item.id === id && item.status !== "uploading");
+    if (uploaded) await api(`/api/media/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => undefined);
     setAttachments((current) => {
       const removed = current.find((item) => item.id === id);
       if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
@@ -813,6 +837,8 @@ export function App() {
       provider,
       accountId,
       attachments: [...attachments],
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
     };
     setPrompt("");
     setAttachments([]);
@@ -888,7 +914,12 @@ export function App() {
   function startNextQueuedPrompt(continuedThreadId: string) {
     if (queueDispatchingRef.current) return;
     const [next, ...remaining] = promptQueueRef.current;
-    if (!next) return;
+    if (!next || next.requiresConfirmation) return;
+    if (next.expiresAt && Date.parse(next.expiresAt) <= Date.now()) {
+      updatePromptQueue(remaining);
+      startNextQueuedPrompt(continuedThreadId);
+      return;
+    }
     queueDispatchingRef.current = true;
     updatePromptQueue(remaining);
     const effectiveThreadId = next.threadId || continuedThreadId;
@@ -927,6 +958,16 @@ export function App() {
         updatedAt: new Date().toISOString(),
       }).catch(() => undefined);
     }
+  }
+
+  function confirmRestoredQueue() {
+    updatePromptQueue(promptQueueRef.current.map((item) => ({ ...item, requiresConfirmation: false })));
+    showToast("저장된 대기열 실행을 재개합니다.");
+  }
+
+  function closeConnectionCenter() {
+    localStorage.setItem("codex-pocket-onboarding-complete", "true");
+    setShowConnectionCenter(false);
   }
 
   async function stopOperation() {
@@ -1003,6 +1044,15 @@ export function App() {
     try {
       const data = await api<ProviderResponse>("/api/providers");
       setProviders(data.providers);
+    } catch (error) {
+      showToast(errorMessage(error));
+    }
+  }
+
+  async function refreshDiagnostics() {
+    try {
+      const data = await api<{ diagnostics: SystemDiagnostics }>("/api/diagnostics");
+      setDiagnostics(data.diagnostics);
     } catch (error) {
       showToast(errorMessage(error));
     }
@@ -1142,7 +1192,7 @@ export function App() {
     if (isNativeApp()) {
       try {
         await NativeSpeech.start({
-          language: "ko-KR",
+          language: speechLanguageRef.current,
           continuous,
         });
       } catch (error) {
@@ -1160,7 +1210,7 @@ export function App() {
       return;
     }
     try {
-      recognition.lang = "ko-KR";
+      recognition.lang = speechLanguageRef.current;
       recognition.continuous = continuous;
       recognition.start();
     } catch (error) {
@@ -1287,6 +1337,7 @@ export function App() {
             onClick={() => {
               setShowConnectionCenter(true);
               void refreshProviders();
+              void refreshDiagnostics();
             }}
           >◎</button>
           <button
@@ -1334,7 +1385,7 @@ export function App() {
 
       <section className={`selectors${controlsCollapsed ? " collapsed" : ""}`} aria-label="작업 대상" aria-hidden={controlsCollapsed}>
         <label>
-          <span>실행 단말</span>
+          <span>{tr("target")}</span>
           <select
             value={device}
             disabled={activity.running || controlsCollapsed}
@@ -1345,7 +1396,7 @@ export function App() {
           </select>
         </label>
         <label>
-          <span>AI 연결</span>
+          <span>{tr("provider")}</span>
           <select
             value={provider}
             disabled={activity.running || controlsCollapsed}
@@ -1362,10 +1413,10 @@ export function App() {
           </select>
         </label>
         <label>
-          <span>프로젝트</span>
+          <span>{tr("project")}</span>
           <div className="select-row">
             <select value={workspace} disabled={activity.running || controlsCollapsed} aria-label="프로젝트 선택" onChange={(event) => void selectWorkspace(event.target.value)}>
-              {workspaces.length === 0 && <option value="">프로젝트 없음</option>}
+              {workspaces.length === 0 && <option value="">{tr("noProject")}</option>}
               {workspaces.map((item) => <option key={item.path} value={item.path}>{item.name}</option>)}
             </select>
             <button
@@ -1378,12 +1429,12 @@ export function App() {
           </div>
         </label>
         <label>
-          <span>대화</span>
+          <span>{tr("conversation")}</span>
           <div className="select-row">
             <select value={threadId} disabled={activity.running || controlsCollapsed} aria-label="Codex 대화 선택" onChange={(event) => void selectThread(event.target.value)}>
-              <option value="">새 대화</option>
+              <option value="">{tr("newConversation")}</option>
               {threads.map((thread) => (
-                <option key={thread.id} value={thread.id}>{short(thread.name || thread.preview || "제목 없는 대화", 42)}</option>
+                <option key={thread.id} value={thread.id}>{short(thread.name || thread.preview || tr("unnamed"), 42)}</option>
               ))}
             </select>
             <button className="icon-button" type="button" disabled={controlsCollapsed} aria-label="대화 새로고침" onClick={() => void loadThreads(workspaceRef.current, true)}>↻</button>
@@ -1399,7 +1450,7 @@ export function App() {
                 <strong id="connection-center-title">AI 연결 센터</strong>
                 <small>비밀번호 입력 없이 CLI 계정을 연결합니다.</small>
               </div>
-              <button type="button" aria-label="닫기" onClick={() => setShowConnectionCenter(false)}>×</button>
+              <button type="button" aria-label="닫기" onClick={closeConnectionCenter}>×</button>
             </div>
 
             <label className="connection-device">
@@ -1408,6 +1459,43 @@ export function App() {
                 {deviceTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
               </select>
             </label>
+
+            <section className="preference-grid" aria-label="언어 설정">
+              <label>
+                <span>{tr("uiLanguage")}</span>
+                <select value={uiLanguage} onChange={(event) => setUiLanguage(event.target.value as UiLanguage)}>
+                  <option value="ko">한국어</option>
+                  <option value="en">English</option>
+                </select>
+              </label>
+              <label>
+                <span>{tr("speechLanguage")}</span>
+                <select value={speechLanguage} onChange={(event) => setSpeechLanguage(event.target.value)}>
+                  <option value="ko-KR">한국어 · 대한민국</option>
+                  <option value="en-US">English · United States</option>
+                  <option value="en-GB">English · United Kingdom</option>
+                  <option value="ja-JP">日本語</option>
+                  <option value="zh-CN">中文 · 简体</option>
+                  <option value="es-ES">Español</option>
+                </select>
+              </label>
+            </section>
+
+            {diagnostics && (
+              <section className={`diagnostics ${diagnostics.ok ? "ok" : "warning"}`}>
+                <div className="diagnostics-head">
+                  <strong>{tr("diagnostics")}</strong>
+                  <small>{diagnostics.platform} {diagnostics.architecture} · Node {diagnostics.nodeVersion}</small>
+                </div>
+                <div className="diagnostic-tools">
+                  {diagnostics.tools.map((tool) => (
+                    <span className={tool.available ? "available" : "missing"} key={tool.id} title={tool.version}>
+                      {tool.available ? "✓" : "!"} {tool.label} · {tool.available ? tr("connected") : tr("missing")}
+                    </span>
+                  ))}
+                </div>
+              </section>
+            )}
 
             <section className="device-manager" aria-label="실행 단말 관리">
               <div className="device-manager-head">
@@ -1572,11 +1660,11 @@ export function App() {
         {messages.length === 0 ? (
           <section className="empty-state">
             <div className="empty-orbit" aria-hidden="true"><span /></div>
-            <h2>말하고, 확인하고, 실행하세요.</h2>
-            <p>한국어 음성 버튼으로 말한 뒤 전송하면 {deviceLabel(device)}의 Codex가 선택한 프로젝트에서 작업합니다.</p>
+            <h2>{tr("emptyTitle")}</h2>
+            <p>{tr("emptyBody")}</p>
             <div className="suggestions">
-              <button type="button" onClick={() => setPrompt("이 프로젝트의 현재 상태를 확인하고 다음 할 일을 알려주세요.")}>현재 상태 확인</button>
-              <button type="button" onClick={() => setPrompt("테스트를 실행하고 실패 원인을 고쳐주세요.")}>테스트 실행·수정</button>
+              <button type="button" onClick={() => setPrompt(uiLanguage === "ko" ? "이 프로젝트의 현재 상태를 확인하고 다음 할 일을 알려주세요." : "Inspect this project and tell me the best next step.")}>{tr("statusPrompt")}</button>
+              <button type="button" onClick={() => setPrompt(uiLanguage === "ko" ? "테스트를 실행하고 실패 원인을 고쳐주세요." : "Run the tests and fix any failures.")}>{tr("testPrompt")}</button>
             </div>
           </section>
         ) : messages.map((message) => <Message key={message.id} message={message} />)}
@@ -1599,6 +1687,9 @@ export function App() {
             <div className="prompt-queue-head">
               <strong>대기열 {promptQueue.length}</strong>
               <span>현재 작업이 끝나면 순서대로 실행</span>
+              {promptQueue.some((item) => item.requiresConfirmation) && (
+                <button type="button" onClick={confirmRestoredQueue}>실행 재개</button>
+              )}
             </div>
             {promptQueue.map((item, index) => (
               <div className="prompt-queue-item" key={item.id}>
@@ -1613,7 +1704,7 @@ export function App() {
           {models.length > 0 && (
             <div className="model-bar" aria-label="Codex 모델 설정">
               <label>
-                <span>계정</span>
+                <span>{tr("account")}</span>
                 <select value={accountId} aria-label="AI 계정 프로필" onChange={(event) => selectAccount(event.target.value)}>
                   {(activeProvider(providers, provider)?.accounts ?? []).map((item) => (
                     <option key={item.id} value={item.id}>{item.label}</option>
@@ -1621,20 +1712,20 @@ export function App() {
                 </select>
               </label>
               <label>
-                <span>모델</span>
+                <span>{tr("model")}</span>
                 <select
                   value={model}
                   aria-label="Codex 모델"
                   onChange={(event) => selectModel(event.target.value)}
                 >
-                  <option value="">자동 · {defaultModel(models)?.displayName ?? "Codex 기본값"}</option>
+                  <option value="">{tr("automatic")} · {defaultModel(models)?.displayName ?? "Codex"}</option>
                   {models.map((item) => (
                     <option key={item.id} value={item.id}>{item.displayName}{item.isDefault ? " · 기본" : ""}</option>
                   ))}
                 </select>
               </label>
               <label>
-                <span>성능</span>
+                <span>{tr("performance")}</span>
                 <select
                   value={effort}
                   aria-label="추론 성능"
@@ -1661,7 +1752,7 @@ export function App() {
                     <span>{mediaStatusText(item, device)}</span>
                     {item.analysis?.summary && <small>{short(item.analysis.summary, 72)}</small>}
                   </div>
-                  <button type="button" aria-label={`${item.name} 첨부 제거`} onClick={() => removeAttachment(item.id)}>×</button>
+                  <button type="button" aria-label={`${item.name} 첨부 제거`} onClick={() => void removeAttachment(item.id)}>×</button>
                 </article>
               ))}
             </div>
@@ -1675,12 +1766,12 @@ export function App() {
             ) : (
               <textarea
                 ref={textareaRef}
-                lang="ko-KR"
+                lang={speechLanguage}
                 inputMode="text"
                 rows={2}
                 maxLength={100_000}
                 value={prompt}
-                placeholder="한국어로 말하거나 직접 입력하세요"
+                placeholder={tr("speechPlaceholder")}
                 aria-label="Codex에게 보낼 요청"
                 onChange={(event) => setPrompt(event.target.value)}
                 onKeyDown={(event) => {
@@ -1708,11 +1799,11 @@ export function App() {
                 else void startDictation(false);
               }}
             >
-              <span aria-hidden="true">🎙</span><small>{handsFree ? "연속 중" : dictating ? "듣는 중" : "한국어"}</small>
+              <span aria-hidden="true">🎙</span><small>{handsFree ? tr("continuous") : dictating ? tr("listening") : tr("speech")}</small>
             </button>
           </div>
           <p className={`voice-help${handsFree ? " active" : ""}`}>
-            {handsFree ? "계속 듣는 중 · 마이크를 누르면 종료" : "짧게 누르기 · 길게 눌러 연속"}
+            {handsFree ? tr("speechActive") : tr("speechHelp")}
           </p>
           <div className="composer-bar">
             <input
@@ -1729,16 +1820,16 @@ export function App() {
               disabled={mediaBusy || attachments.length >= 4}
               aria-label="이미지 또는 영상 첨부"
               onClick={() => fileInputRef.current?.click()}
-            >📎 <span>첨부</span></button>
+            >📎 <span>{tr("attachment")}</span></button>
             <label className="toggle">
               <input type="checkbox" checked={tts} onChange={(event) => setTts(event.target.checked)} />
               <span aria-hidden="true" />
-              답변 읽기
+              {tr("readAnswer")}
             </label>
             <label className="toggle network-toggle" title="패키지 설치 등 꼭 필요한 경우에만 켜세요">
               <input type="checkbox" checked={networkAccess} onChange={(event) => setNetworkAccess(event.target.checked)} />
               <span aria-hidden="true" />
-              네트워크
+              {tr("network")}
             </label>
             <button
               className="send-button"
@@ -1747,11 +1838,11 @@ export function App() {
               aria-label={activity.running ? "요청을 대기열에 추가" : "요청 전송"}
               onClick={() => void submitPrompt()}
             >
-              {activity.running ? "대기열" : "보내기"} <span aria-hidden="true">{activity.running ? "+" : "↑"}</span>
+              {activity.running ? tr("queue") : tr("send")} <span aria-hidden="true">{activity.running ? "+" : "↑"}</span>
             </button>
           </div>
         </div>
-        <p className="safety-note">허용된 폴더만 수정 · 대화와 대기열은 로컬 자동 저장</p>
+        <p className="safety-note">{tr("safeNote")}</p>
       </footer>
 
       {toast && <div className="toast" role="status">{toast}</div>}

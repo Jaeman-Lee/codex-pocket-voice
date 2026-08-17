@@ -8,7 +8,7 @@
 
 ## 핵심 기능
 
-- Android 네이티브 `ko-KR` 받아쓰기와 웹 한국어 음성 입력
+- 시스템 언어 기반 Android·웹 받아쓰기와 한국어/영어 UI, 별도 음성 언어 선택
 - PC와 스마트폰의 여러 Git 프로젝트·기존 Codex 대화 선택
 - 실행 단말을 골라 새 Git 프로젝트 생성
 - 각 단말이 제공하는 Codex 모델과 지원 추론 성능을 실시간 조회·선택
@@ -24,6 +24,8 @@
 - 앱 실행 시 Termux SSH 터널 자동 시작
 - Termux 터미널을 닫아도 유지되는 백그라운드 SSH 터널
 - 선택적으로 사용할 수 있는 안전 범위 MCP 서버
+- 만료되는 코드와 Android Keystore를 사용하는 장치 페어링
+- 여러 Linux Companion 등록과 앱 내 Linux 도구 진단
 
 ## 구조
 
@@ -58,13 +60,17 @@ WSL·가상 머신·컨테이너는 동작할 수 있지만 공식 지원 및 �
 
 ## PC 설치
 
+권장 설치는 Linux 사용자 서비스와 권한 제한 설정을 함께 만드는 설치 스크립트입니다.
+
 ```sh
 git clone https://github.com/Jaeman-Lee/codex-pocket-voice.git
 cd codex-pocket-voice
-npm ci
-npm run build
-./scripts/start-web-pc.sh
+./scripts/install-linux-companion.sh
 ```
+
+systemd 사용자 서비스를 사용할 수 없는 Linux 환경에서는 스크립트 안내에 따라
+`./scripts/start-web-pc.sh`를 실행합니다. Companion 로그에 10분간 유효한 8자리
+페어링 코드가 표시되며, 앱에 한 번 입력하면 이후 토큰은 Android Keystore로 보호됩니다.
 
 ### 로컬 영상 분석(선택)
 
@@ -192,7 +198,7 @@ F-Droid/GitHub판 Termux는 설치 후 Android의 앱 정보 → 권한(또는 �
 
 Codex 작업 중에도 입력·음성·첨부를 계속 사용할 수 있습니다. 이때 전송 버튼은 **대기열 +**로 바뀌며, 현재 작업이 끝나면 예약한 요청을 같은 프로젝트와 대화에서 순서대로 실행합니다. 각 예약 항목은 추가 당시의 모델·성능·네트워크 설정을 유지하며 시작 전 취소할 수 있습니다.
 
-v1.6부터 대화와 예약 프롬프트를 버전된 `WorkJournal` 저장소에 기록합니다. PC 또는 스마트폰 CLI가 오프라인이어도 마지막 대화를 열람하고 요청을 예약할 수 있으며, 요청은 다른 단말로 넘기지 않고 원래 대상이 다시 연결된 뒤 실행됩니다. 현재 웹·Android 공통 어댑터는 IndexedDB와 localStorage 비상 저장소를 사용하며, Android 네이티브 SQLite 어댑터는 같은 인터페이스로 추가할 예정입니다.
+v1.7부터 대화와 예약 프롬프트를 AES-GCM으로 암호화해 버전된 `WorkJournal` 저장소에 기록합니다. Android 암호화 키는 Keystore가 보호하며 기존 v1 평문 기록은 읽을 때 자동으로 암호화 형식으로 이전됩니다. PC 또는 스마트폰 CLI가 오프라인이어도 마지막 대화를 열람하고 요청을 예약할 수 있으며, 요청은 다른 단말로 넘기지 않고 원래 대상이 다시 연결된 뒤 실행됩니다.
 
 GitHub Actions의 APK는 저장소 비밀값에 보관된 고정 키로 서명됩니다. 1.2 이전 임시 디버그 APK는
 실행마다 서명이 달랐고 일부 Android 사용자 영역에 이전 서명이 남을 수 있어, 1.2.1부터 충돌 없는
@@ -208,7 +214,8 @@ GitHub Actions의 APK는 저장소 비밀값에 보관된 고정 키로 서명�
 ## 보안 모델
 
 - 웹 서버는 `127.0.0.1` 이외의 주소에 바인딩되지 않습니다.
-- 모든 쓰기 API는 same-origin JSON 요청만 받습니다.
+- 모든 API는 페어링된 bearer token을 요구하며, 쓰기 API는 허용된 origin도 함께 검사합니다.
+- 페어링 코드는 10분 후 만료되고 잘못된 입력은 속도 제한됩니다.
 - 프로젝트 경로는 `CODEX_VOICE_ROOTS` 내부인지 실제 경로 기준으로 검사합니다.
 - Codex 턴은 `workspace-write` 샌드박스와 `approvalPolicy: never`로 실행됩니다.
 - 추가 권한·샌드박스 탈출 요청은 브리지에서 자동 거절합니다.

@@ -54,6 +54,12 @@ export interface ProviderOption {
   version?: string;
   canLogin: boolean;
   canTest: boolean;
+  capabilities: {
+    run: boolean;
+    resume: boolean;
+    models: boolean;
+    attachments: boolean;
+  };
   installGuide: {
     summary: string;
     command: string;
@@ -81,6 +87,23 @@ export interface ProviderLoginSession {
   userCode?: string;
   startedAt: string;
   completedAt?: string;
+}
+
+export interface SystemDiagnostics {
+  ok: boolean;
+  platform: "linux";
+  architecture: string;
+  nodeVersion: string;
+  tools: Array<{
+    id: string;
+    label: string;
+    required: boolean;
+    available: boolean;
+    version?: string;
+  }>;
+  workspaceCount: number;
+  creationLocationCount: number;
+  checkedAt: string;
 }
 
 export interface ThreadSummary {
@@ -169,6 +192,9 @@ export interface QueuedPrompt {
   accountId: string;
   attachments: PendingAttachment[];
   displayed?: boolean;
+  createdAt?: string;
+  expiresAt?: string;
+  requiresConfirmation?: boolean;
 }
 
 export interface CodexEvent {

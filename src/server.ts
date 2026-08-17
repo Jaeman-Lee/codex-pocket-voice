@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod/v4";
 import { CodexAppServerClient } from "./app-server-client.js";
 import { PathPolicy } from "./path-policy.js";
+import { APP_VERSION } from "./version.js";
 import { compactThread, errorResult, summarizeTurn, textResult } from "./result.js";
 
 export interface BridgeDependencies {
@@ -10,7 +11,7 @@ export interface BridgeDependencies {
 }
 
 export function createBridgeServer({ client, paths }: BridgeDependencies): McpServer {
-  const server = new McpServer({ name: "codex-voice-bridge", version: "0.1.0" });
+  const server = new McpServer({ name: "codex-voice-bridge", version: APP_VERSION });
 
   server.registerTool(
     "codex_health",

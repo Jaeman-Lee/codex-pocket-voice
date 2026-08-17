@@ -1,15 +1,22 @@
 apply plugin: 'com.android.application'
 
+import groovy.json.JsonSlurper
+
+def pocketPackage = new JsonSlurper().parseText(file('../../package.json').text)
+def pocketApplicationId = System.getenv('POCKET_APPLICATION_ID') ?: 'io.github.jaemanlee.codexpocketvoice.stable'
+def pocketVersionParts = pocketPackage.version.tokenize('.').collect { it as int }
+def pocketVersionCode = pocketVersionParts[0] * 10000 + pocketVersionParts[1] * 100 + pocketVersionParts[2]
+
 android {
     namespace = "io.github.jaemanlee.codexpocketvoice"
     compileSdk = rootProject.ext.compileSdkVersion
     buildToolsVersion = "36.0.0"
     defaultConfig {
-        applicationId "io.github.jaemanlee.codexpocketvoice.stable"
+        applicationId pocketApplicationId
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 8
-        versionName "1.6.0"
+        versionCode pocketVersionCode
+        versionName pocketPackage.version
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

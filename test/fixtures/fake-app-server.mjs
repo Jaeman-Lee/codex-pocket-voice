@@ -50,6 +50,10 @@ rl.on("line", (line) => {
 
   switch (message.method) {
     case "initialize":
+      if (message.params?.capabilities?.experimentalApi !== true) {
+        write({ id: message.id, error: { code: -1, message: "experimentalApi capability required" } });
+        break;
+      }
       write({ id: message.id, result: { userAgent: "fake/1", codexHome: cwd, platformFamily: "unix", platformOs: "android" } });
       break;
     case "thread/list":

@@ -1,6 +1,13 @@
-import type { ModelListResponse } from "../../generated/app-server/v2/ModelListResponse";
+export type ProviderId = string;
 
-export type ProviderId = "codex" | "claude";
+export interface ProviderModel {
+  id: string;
+  displayName: string;
+  description: string;
+  isDefault: boolean;
+  defaultEffort: string;
+  efforts: Array<{ id: string; description: string }>;
+}
 
 export interface ProviderAccount {
   id: string;
@@ -20,6 +27,12 @@ export interface ProviderDescriptor {
   version?: string;
   canLogin: boolean;
   canTest: boolean;
+  capabilities: {
+    run: boolean;
+    resume: boolean;
+    models: boolean;
+    attachments: boolean;
+  };
   installGuide: {
     summary: string;
     command: string;
@@ -41,8 +54,9 @@ export interface ProviderLoginSpec {
 
 export interface ModelProviderAdapter {
   readonly id: ProviderId;
+  readonly canRun: boolean;
   describe(): Promise<ProviderDescriptor>;
-  listModels(): Promise<ModelListResponse>;
+  listModels(): Promise<ProviderModel[]>;
   assertAccount(accountId: unknown): void;
   testConnection(): Promise<ProviderConnectionTest>;
   loginSpec(): Promise<ProviderLoginSpec>;

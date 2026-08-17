@@ -1,12 +1,12 @@
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { delimiter, isAbsolute, join } from "node:path";
-import type { ModelListResponse } from "../../generated/app-server/v2/ModelListResponse";
 import { spawn } from "node:child_process";
 import { ProviderError, type ModelProviderAdapter, type ProviderConnectionTest, type ProviderDescriptor, type ProviderLoginSpec } from "./types.js";
 
 export class ClaudeProviderAdapter implements ModelProviderAdapter {
   readonly id = "claude" as const;
+  readonly canRun = false;
 
   async describe(): Promise<ProviderDescriptor> {
     const command = process.env.CLAUDE_BIN ?? "claude";
@@ -29,6 +29,7 @@ export class ClaudeProviderAdapter implements ModelProviderAdapter {
       version: auth?.version,
       canLogin: installed,
       canTest: installed,
+      capabilities: { run: false, resume: false, models: false, attachments: false },
       installGuide: {
         summary: "PC에 Claude Code를 설치한 뒤 이 화면에서 연결하세요.",
         command: "curl -fsSL https://claude.ai/install.sh | bash",
@@ -37,7 +38,7 @@ export class ClaudeProviderAdapter implements ModelProviderAdapter {
     };
   }
 
-  async listModels(): Promise<ModelListResponse> {
+  async listModels(): Promise<never> {
     throw new ProviderError(409, "Claude Code 실행 어댑터는 아직 연결되지 않았습니다.");
   }
 

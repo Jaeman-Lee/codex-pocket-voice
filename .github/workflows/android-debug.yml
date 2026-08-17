@@ -21,23 +21,23 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
           cache: gradle
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android platform
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
@@ -48,10 +48,26 @@ jobs:
       - name: Check and test
         run: npm run check && npm test
 
+      - name: Read application version
+        id: app
+        run: echo "version=$(node -p 'require(\"./package.json\").version')" >> "$GITHUB_OUTPUT"
+
       - name: Build unsigned release APK
         run: npm run android:sync && cd android && ./gradlew assembleRelease
 
+      - name: Detect signing configuration
+        id: signing
+        env:
+          SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$SIGNING_KEY" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Sign APK with the stable project key
+        if: steps.signing.outputs.available == 'true'
         env:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -59,7 +75,7 @@ jobs:
           ANDROID_SIGNING_KEYSTORE_BASE64: ${{ secrets.ANDROID_SIGNING_KEYSTORE_BASE64 }}
         run: |
           keystore="$RUNNER_TEMP/codex-pocket-release.jks"
-          output="android/app/build/outputs/apk/release/Codex-Pocket-Voice-v1.6.0-stable.apk"
+          output="android/app/build/outputs/apk/release/Codex-Pocket-Voice-v${{ steps.app.outputs.version }}-stable.apk"
           printf '%s' "$ANDROID_SIGNING_KEYSTORE_BASE64" | base64 --decode > "$keystore"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
             --ks "$keystore" \
@@ -70,10 +86,23 @@ jobs:
             android/app/build/outputs/apk/release/app-release-unsigned.apk
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$output"
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - name: Prepare unsigned fork artifact
+        if: steps.signing.outputs.available == 'false'
+        run: cp android/app/build/outputs/apk/release/app-release-unsigned.apk "android/app/build/outputs/apk/release/Codex-Pocket-Voice-v${{ steps.app.outputs.version }}-unsigned.apk"
+
+      - name: Create checksum
+        run: cd android/app/build/outputs/apk/release && sha256sum Codex-Pocket-Voice-v*.apk > SHA256SUMS
+
+      - name: Generate dependency SBOM
+        run: npm sbom --sbom-format cyclonedx > android/app/build/outputs/apk/release/codex-pocket-sbom.json
+
+      - name: Upload APK, checksum, and SBOM
+        uses: actions/upload-artifact@v7
         with:
-          name: Codex-Pocket-Voice-v1.6.0-stable
-          path: android/app/build/outputs/apk/release/Codex-Pocket-Voice-v1.6.0-stable.apk
+          name: Codex-Pocket-Voice-v${{ steps.app.outputs.version }}
+          path: |
+            android/app/build/outputs/apk/release/Codex-Pocket-Voice-v*.apk
+            android/app/build/outputs/apk/release/SHA256SUMS
+            android/app/build/outputs/apk/release/codex-pocket-sbom.json
           if-no-files-found: error
           retention-days: 14

@@ -1,6 +1,6 @@
 import type { InitializeResponse } from "../../generated/app-server/InitializeResponse";
 import type { ModelListResponse } from "../../generated/app-server/v2/ModelListResponse";
-import { ProviderError, type ModelProviderAdapter, type ProviderConnectionTest, type ProviderDescriptor, type ProviderLoginSpec } from "./types.js";
+import { ProviderError, type ModelProviderAdapter, type ProviderConnectionTest, type ProviderDescriptor, type ProviderLoginSpec, type ProviderModel } from "./types.js";
 
 export interface CodexProviderClient {
   start(): Promise<InitializeResponse>;
@@ -9,6 +9,7 @@ export interface CodexProviderClient {
 
 export class CodexProviderAdapter implements ModelProviderAdapter {
   readonly id = "codex" as const;
+  readonly canRun = true;
 
   constructor(private readonly client: CodexProviderClient) {}
 
@@ -30,16 +31,28 @@ export class CodexProviderAdapter implements ModelProviderAdapter {
       version: initialized.userAgent,
       canLogin: true,
       canTest: true,
+      capabilities: { run: true, resume: true, models: true, attachments: true },
       installGuide: {
-        summary: "macOS·Linux 공식 설치 스크립트",
+        summary: "Linux 공식 설치 스크립트",
         command: "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
         docsUrl: "https://developers.openai.com/codex/cli/",
       },
     };
   }
 
-  listModels(): Promise<ModelListResponse> {
-    return this.client.listModels();
+  async listModels(): Promise<ProviderModel[]> {
+    const catalog = await this.client.listModels();
+    return catalog.data.filter((model) => !model.hidden).map((model) => ({
+      id: model.model,
+      displayName: model.displayName,
+      description: model.description,
+      isDefault: model.isDefault,
+      defaultEffort: model.defaultReasoningEffort,
+      efforts: model.supportedReasoningEfforts.map((option) => ({
+        id: option.reasoningEffort,
+        description: option.description,
+      })),
+    }));
   }
 
   assertAccount(accountId: unknown): void {
@@ -49,8 +62,7 @@ export class CodexProviderAdapter implements ModelProviderAdapter {
   }
 
   async testConnection(): Promise<ProviderConnectionTest> {
-    const models = await this.client.listModels();
-    const visible = models.data.filter((model) => !model.hidden);
+    const visible = await this.listModels();
     return {
       ok: true,
       detail: `CLI 로그인과 모델 ${visible.length}개를 확인했습니다. AI 요청은 보내지 않았습니다.`,

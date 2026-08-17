@@ -1,5 +1,5 @@
 import { createWriteStream } from "node:fs";
-import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { spawn } from "node:child_process";
@@ -18,7 +18,9 @@ const VIDEO_TYPES = new Map([
   ["video/x-matroska", ".mkv"],
 ]);
 const DEFAULT_MAX_BYTES = 200 * 1024 * 1024;
-const MAX_MEDIA_AGE_MS = 24 * 60 * 60_000;
+const DEFAULT_MEDIA_RETENTION_HOURS = 24;
+const MANIFEST_NAME = "record.json";
+const MANIFEST_VERSION = 1;
 
 export type MediaKind = "image" | "video";
 export type MediaStatus = "uploaded" | "queued" | "analyzing" | "ready" | "failed";
@@ -51,6 +53,21 @@ export interface MediaRecord {
   error?: string;
 }
 
+interface PersistedMediaRecord {
+  version: typeof MANIFEST_VERSION;
+  id: string;
+  name: string;
+  kind: MediaKind;
+  mimeType: string;
+  size: number;
+  status: MediaStatus;
+  createdAt: string;
+  originalFile: string;
+  frameFiles: string[];
+  analysis?: VideoAnalysis;
+  error?: string;
+}
+
 export interface PublicMediaRecord extends Omit<MediaRecord, "path" | "frames"> {
   frameCount: number;
 }
@@ -60,6 +77,8 @@ export interface MediaManagerOptions {
   maxBytes?: number;
   ollamaUrl?: string;
   model?: string;
+  analysisLanguage?: string;
+  retentionHours?: number;
   onUpdate?: (media: PublicMediaRecord) => void;
 }
 
@@ -74,6 +93,8 @@ export class MediaManager {
   readonly maxBytes: number;
   readonly ollamaUrl: string;
   readonly model: string;
+  readonly analysisLanguage: string;
+  readonly retentionMs: number;
   private readonly records = new Map<string, MediaRecord>();
   private queue: Promise<void> = Promise.resolve();
 
@@ -84,16 +105,25 @@ export class MediaManager {
     this.ollamaUrl = (options.ollamaUrl ?? process.env.CODEX_VIDEO_OLLAMA_URL
       ?? "http://127.0.0.1:11435").replace(/\/$/, "");
     this.model = options.model ?? process.env.CODEX_VIDEO_MODEL ?? "qwen3-vl:4b";
+    this.analysisLanguage = options.analysisLanguage ?? process.env.CODEX_MEDIA_RESPONSE_LANGUAGE ?? "ko";
+    const retentionHours = options.retentionHours
+      ?? environmentInteger("CODEX_MEDIA_RETENTION_HOURS", DEFAULT_MEDIA_RETENTION_HOURS);
+    this.retentionMs = retentionHours * 60 * 60_000;
   }
 
   async initialize(): Promise<void> {
     await mkdir(this.rootDir, { recursive: true, mode: 0o700 });
-    const cutoff = Date.now() - MAX_MEDIA_AGE_MS;
+    const cutoff = Date.now() - this.retentionMs;
     for (const entry of await readdir(this.rootDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const path = join(this.rootDir, entry.name);
       const info = await stat(path).catch(() => null);
-      if (info && info.mtimeMs < cutoff) await rm(path, { recursive: true, force: true });
+      if (info && info.mtimeMs < cutoff) {
+        await rm(path, { recursive: true, force: true });
+        continue;
+      }
+      const record = await loadPersistedRecord(path, entry.name);
+      if (record) this.records.set(record.id, record);
     }
   }
 
@@ -149,6 +179,7 @@ export class MediaManager {
       frames: [],
     };
     this.records.set(id, record);
+    await this.persist(record);
     this.notify(record);
     return publicMedia(record);
   }
@@ -164,6 +195,12 @@ export class MediaManager {
     return frame;
   }
 
+  async delete(id: string): Promise<void> {
+    this.required(id);
+    this.records.delete(id);
+    await rm(join(this.rootDir, id), { recursive: true, force: true });
+  }
+
   queueAnalysis(id: string): PublicMediaRecord {
     const record = this.required(id);
     if (record.kind !== "video") throw new MediaError(400, "영상 파일만 분석할 수 있습니다.");
@@ -171,6 +208,7 @@ export class MediaManager {
     if (record.status === "ready") return publicMedia(record);
     record.status = "queued";
     record.error = undefined;
+    void this.persist(record).catch(() => undefined);
     this.notify(record);
     this.queue = this.queue.then(() => this.analyze(record)).catch(() => undefined);
     return publicMedia(record);
@@ -212,6 +250,7 @@ export class MediaManager {
 
   private async analyze(record: MediaRecord): Promise<void> {
     record.status = "analyzing";
+    await this.persist(record);
     this.notify(record);
     try {
       const probe = await probeVideo(record.path);
@@ -239,7 +278,7 @@ export class MediaManager {
           model: this.model,
           messages: [{
             role: "user",
-            content: videoPrompt(timestamps),
+            content: videoPrompt(timestamps, this.analysisLanguage),
             images,
           }],
           stream: false,
@@ -278,10 +317,12 @@ export class MediaManager {
         durationSeconds: probe.durationSeconds,
       };
       record.status = "ready";
+      await this.persist(record);
       this.notify(record);
     } catch (error) {
       record.status = "failed";
       record.error = error instanceof Error ? error.message : String(error);
+      await this.persist(record).catch(() => undefined);
       this.notify(record);
     }
   }
@@ -289,6 +330,78 @@ export class MediaManager {
   private notify(record: MediaRecord): void {
     this.options.onUpdate?.(publicMedia(record));
   }
+
+  private async persist(record: MediaRecord): Promise<void> {
+    const directory = join(this.rootDir, record.id);
+    const value: PersistedMediaRecord = {
+      version: MANIFEST_VERSION,
+      id: record.id,
+      name: record.name,
+      kind: record.kind,
+      mimeType: record.mimeType,
+      size: record.size,
+      status: record.status,
+      createdAt: record.createdAt,
+      originalFile: basename(record.path),
+      frameFiles: record.frames.map((frame) => `frames/${basename(frame)}`),
+      ...(record.analysis ? { analysis: record.analysis } : {}),
+      ...(record.error ? { error: record.error } : {}),
+    };
+    const temporary = join(directory, `${MANIFEST_NAME}.${process.pid}.tmp`);
+    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    await rename(temporary, join(directory, MANIFEST_NAME));
+  }
+}
+
+async function loadPersistedRecord(directory: string, directoryName: string): Promise<MediaRecord | undefined> {
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(join(directory, MANIFEST_NAME), "utf8")) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (!isPersistedRecord(value) || value.id !== directoryName) return undefined;
+  const originalFile = safeRelativeMediaFile(value.originalFile, false);
+  const frameFiles = value.frameFiles.map((file) => safeRelativeMediaFile(file, true));
+  if (!originalFile || frameFiles.some((file) => !file)) return undefined;
+  const path = join(directory, originalFile);
+  if (!(await stat(path).catch(() => null))?.isFile()) return undefined;
+  const frames: string[] = [];
+  for (const frame of frameFiles) {
+    const path = join(directory, frame!);
+    if ((await stat(path).catch(() => null))?.isFile()) frames.push(path);
+  }
+  const interrupted = value.status === "queued" || value.status === "analyzing";
+  return {
+    id: value.id,
+    name: value.name,
+    kind: value.kind,
+    mimeType: value.mimeType,
+    size: value.size,
+    status: interrupted ? "uploaded" : value.status,
+    createdAt: value.createdAt,
+    path,
+    frames,
+    ...(value.analysis ? { analysis: value.analysis } : {}),
+    ...(interrupted ? { error: "Companion 재시작 후 영상 분석을 다시 요청해 주세요." } : value.error ? { error: value.error } : {}),
+  };
+}
+
+function isPersistedRecord(value: unknown): value is PersistedMediaRecord {
+  if (!isRecord(value)) return false;
+  return value.version === MANIFEST_VERSION && typeof value.id === "string"
+    && typeof value.name === "string" && (value.kind === "image" || value.kind === "video")
+    && typeof value.mimeType === "string" && typeof value.size === "number"
+    && ["uploaded", "queued", "analyzing", "ready", "failed"].includes(String(value.status))
+    && typeof value.createdAt === "string" && typeof value.originalFile === "string"
+    && Array.isArray(value.frameFiles) && value.frameFiles.every((file) => typeof file === "string");
+}
+
+function safeRelativeMediaFile(value: string, frame: boolean): string | undefined {
+  const normalized = value.replace(/\\/g, "/");
+  if (normalized.includes("..") || normalized.startsWith("/") || normalized.includes("\0")) return undefined;
+  if (frame) return /^frames\/frame-\d{2}\.jpg$/.test(normalized) ? normalized : undefined;
+  return /^original\.(?:jpg|png|webp|gif|mp4|webm|mov|mkv)$/.test(normalized) ? normalized : undefined;
 }
 
 function publicMedia(record: MediaRecord): PublicMediaRecord {
@@ -320,8 +433,11 @@ function representativeTimestamps(duration: number): number[] {
     .map((value) => Math.max(0, Math.min(duration - 0.01, value)));
 }
 
-function videoPrompt(timestamps: number[]): string {
+function videoPrompt(timestamps: number[], language: string): string {
   const labels = timestamps.map((value, index) => `${index + 1}번=${value.toFixed(1)}초`).join(", ");
+  if (language.toLowerCase().startsWith("en")) {
+    return `These images are representative video frames in chronological order (${labels}). Read on-screen text and analyze changes, user actions, and errors. Reply only with this JSON shape in English: {"summary":"overall summary","timeline":[{"timestamp":0.0,"observation":"scene","screenText":"visible text"}],"issues":["issue"]}. Use an empty issues array when no issue is visible.`;
+  }
   return `다음 이미지는 영상에서 시간순으로 뽑은 대표 프레임입니다 (${labels}). 화면 글자를 정확히 읽고 변화, 사용자 동작, 오류를 분석하세요. 반드시 다음 JSON 형태로만 한국어로 답하세요: {"summary":"전체 요약","timeline":[{"timestamp":0.0,"observation":"장면 설명","screenText":"읽힌 글자"}],"issues":["발견한 문제"]}. 문제가 없으면 issues는 빈 배열로 쓰세요.`;
 }
 

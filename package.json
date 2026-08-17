@@ -1,6 +1,6 @@
 {
   "name": "codex-pocket-voice",
-  "version": "0.1.0",
+  "version": "1.7.0",
   "private": true,
   "type": "module",
   "description": "A mobile-first voice interface for controlling Codex CLI safely over SSH.",
@@ -16,6 +16,7 @@
     "android:open": "cap open android",
     "android:debug": "npm run android:sync && cd android && ./gradlew assembleDebug",
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "check:app-server-schema": "./scripts/check-app-server-schema.sh",
     "client:dev": "vite",
     "start": "node dist/src/index.js",
     "web": "node dist/src/web-index.js",

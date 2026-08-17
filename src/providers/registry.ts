@@ -1,21 +1,20 @@
-import type { ModelListResponse } from "../../generated/app-server/v2/ModelListResponse";
 import { ClaudeProviderAdapter } from "./claude-provider.js";
 import { CodexProviderAdapter, type CodexProviderClient } from "./codex-provider.js";
-import { ProviderError, type ModelProviderAdapter, type ProviderConnectionTest, type ProviderDescriptor, type ProviderLoginSpec } from "./types.js";
+import { ProviderError, type ModelProviderAdapter, type ProviderConnectionTest, type ProviderDescriptor, type ProviderLoginSpec, type ProviderModel } from "./types.js";
 export { ProviderError } from "./types.js";
 
 export class ProviderRegistry {
   private readonly adapters: readonly ModelProviderAdapter[];
 
-  constructor(codex: CodexProviderClient) {
-    this.adapters = [new CodexProviderAdapter(codex), new ClaudeProviderAdapter()];
+  constructor(codex: CodexProviderClient, adapters?: readonly ModelProviderAdapter[]) {
+    this.adapters = adapters ?? [new CodexProviderAdapter(codex), new ClaudeProviderAdapter()];
   }
 
   async list(): Promise<ProviderDescriptor[]> {
     return Promise.all(this.adapters.map((adapter) => adapter.describe()));
   }
 
-  async models(providerId: string | null): Promise<ModelListResponse> {
+  async models(providerId: string | null): Promise<ProviderModel[]> {
     return this.adapter(providerId).listModels();
   }
 
@@ -29,7 +28,7 @@ export class ProviderRegistry {
 
   assertRunnable(providerId: unknown, accountId: unknown): void {
     const adapter = this.adapter(typeof providerId === "string" ? providerId : null);
-    if (adapter.id !== "codex") {
+    if (!adapter.canRun) {
       throw new ProviderError(409, "선택한 AI 제공자는 이 단말에서 아직 실행할 수 없습니다.");
     }
     adapter.assertAccount(accountId);

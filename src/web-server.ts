@@ -21,6 +21,8 @@ import { ProjectCreationError, ProjectManager } from "./project-manager.js";
 import { ProviderError, ProviderRegistry } from "./providers/registry.js";
 import { ProviderLoginManager } from "./provider-login-manager.js";
 import { GatewayAuth, GatewayAuthError } from "./gateway-auth.js";
+import { APP_VERSION, GATEWAY_CAPABILITIES, GATEWAY_PROTOCOL_MINIMUM, GATEWAY_PROTOCOL_VERSION } from "./version.js";
+import { collectSystemDiagnostics } from "./system-diagnostics.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_EVENT_TEXT = 80_000;
@@ -215,12 +217,23 @@ async function handleApi(
   sseClients: Set<ServerResponse>,
 ): Promise<void> {
   if (request.method === "GET" && url.pathname === "/api/status") {
-    sendJson(response, 200, { ok: true, protocolVersion: 1, device: auth.device });
+    sendJson(response, 200, {
+      ok: true,
+      appVersion: APP_VERSION,
+      protocolVersion: GATEWAY_PROTOCOL_VERSION,
+      minimumClientProtocol: GATEWAY_PROTOCOL_MINIMUM,
+      device: auth.device,
+    });
     return;
   }
 
   if (request.method === "GET" && url.pathname === "/api/pairing/status") {
-    sendJson(response, 200, { ...auth.pairingStatus(), protocolVersion: 1 });
+    sendJson(response, 200, {
+      ...auth.pairingStatus(),
+      appVersion: APP_VERSION,
+      protocolVersion: GATEWAY_PROTOCOL_VERSION,
+      minimumClientProtocol: GATEWAY_PROTOCOL_MINIMUM,
+    });
     return;
   }
 
@@ -239,9 +252,19 @@ async function handleApi(
       ok: true,
       ...initialized,
       allowedWorkspaceRoots: options.paths.roots,
-      media: { maxBytes: media.maxBytes, videoModel: media.model },
+      media: {
+        maxBytes: media.maxBytes,
+        videoModel: media.model,
+        responseLanguage: media.analysisLanguage,
+        retentionHours: Math.round(media.retentionMs / 60 / 60_000),
+      },
       device: auth.device,
-      protocolVersion: 1,
+      gateway: {
+        appVersion: APP_VERSION,
+        protocolVersion: GATEWAY_PROTOCOL_VERSION,
+        minimumClientProtocol: GATEWAY_PROTOCOL_MINIMUM,
+        capabilities: GATEWAY_CAPABILITIES,
+      },
     });
     return;
   }
@@ -258,23 +281,20 @@ async function handleApi(
   if (request.method === "GET" && url.pathname === "/api/models") {
     const catalog = await providers.models(url.searchParams.get("provider"));
     sendJson(response, 200, {
-      models: catalog.data.filter((model) => !model.hidden).map((model) => ({
-        id: model.model,
-        displayName: model.displayName,
-        description: model.description,
-        isDefault: model.isDefault,
-        defaultEffort: model.defaultReasoningEffort,
-        efforts: model.supportedReasoningEfforts.map((option) => ({
-          id: option.reasoningEffort,
-          description: option.description,
-        })),
-      })),
+      models: catalog,
     });
     return;
   }
 
   if (request.method === "GET" && url.pathname === "/api/providers") {
     sendJson(response, 200, { providers: await providers.list() });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/diagnostics") {
+    sendJson(response, 200, {
+      diagnostics: await collectSystemDiagnostics(projects.list().length, projects.creationLocations().length),
+    });
     return;
   }
 
@@ -367,6 +387,12 @@ async function handleApi(
   const mediaMatch = url.pathname.match(/^\/api\/media\/([^/]+)$/);
   if (request.method === "GET" && mediaMatch) {
     sendJson(response, 200, { media: media.get(decodeURIComponent(mediaMatch[1]!)) });
+    return;
+  }
+  if (request.method === "DELETE" && mediaMatch) {
+    assertWriteOrigin(request);
+    await media.delete(decodeURIComponent(mediaMatch[1]!));
+    sendJson(response, 200, { deleted: true });
     return;
   }
 
@@ -664,7 +690,7 @@ function applyApiCors(request: IncomingMessage, response: ServerResponse): void 
   }
   if (!allowedOrigin) return;
   response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
-  response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  response.setHeader("Access-Control-Allow-Methods", "DELETE, GET, POST, OPTIONS");
   response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
   response.setHeader("Vary", "Origin");
 }

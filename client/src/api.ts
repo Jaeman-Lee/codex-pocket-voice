@@ -18,7 +18,11 @@ export interface PairingStatus {
   pairedClientCount: number;
   pairingExpiresAt: string;
   protocolVersion: number;
+  minimumClientProtocol: number;
+  appVersion: string;
 }
+
+const CLIENT_PROTOCOL_VERSION = 2;
 
 interface ApiErrorBody {
   error?: string;
@@ -99,7 +103,9 @@ export function apiUrl(path: string): string {
 }
 
 export async function pairingStatus(): Promise<PairingStatus> {
-  return publicApi<PairingStatus>("/api/pairing/status");
+  const status = await publicApi<PairingStatus>("/api/pairing/status");
+  assertCompatibleProtocol(status.protocolVersion, status.minimumClientProtocol);
+  return status;
 }
 
 export async function pairActiveDevice(code: string, label: string): Promise<DeviceInfo> {
@@ -218,6 +224,12 @@ async function publicApi<T>(path: string, options: ApiOptions = {}): Promise<T> 
     init.body = JSON.stringify(options.body);
   }
   return fetchJson<T>(path, init, false);
+}
+
+function assertCompatibleProtocol(serverProtocol: number, minimumClientProtocol: number): void {
+  if (minimumClientProtocol > CLIENT_PROTOCOL_VERSION || serverProtocol < CLIENT_PROTOCOL_VERSION) {
+    throw new Error(`앱과 Companion 프로토콜이 호환되지 않습니다. 앱 ${CLIENT_PROTOCOL_VERSION}, 서버 ${serverProtocol}`);
+  }
 }
 
 async function fetchJson<T>(path: string, init: RequestInit, authenticated: boolean): Promise<T> {

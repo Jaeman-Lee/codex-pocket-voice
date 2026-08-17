@@ -7,7 +7,6 @@
   "display": "standalone",
   "background_color": "#0b1117",
   "theme_color": "#101820",
-  "lang": "ko-KR",
   "icons": [
     {
       "src": "/icon.svg",
