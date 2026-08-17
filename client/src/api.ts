@@ -1,6 +1,6 @@
 import { isNativeApp } from "./native";
 import { secureGet, secureRemove, secureSet } from "./secure-storage";
-import type { CodexEvent, DeviceId, DeviceInfo } from "./types";
+import type { CodexEvent, DeviceId, DeviceInfo, DeviceTarget } from "./types";
 
 interface ApiOptions {
   method?: string;
@@ -33,14 +33,57 @@ export class ApiError extends Error {
 
 export class PairingRequiredError extends ApiError {}
 
-let activeDevice: DeviceId = localStorage.getItem("codex-pocket-device") === "phone" ? "phone" : "pc";
+let activeDevice: DeviceId = "pc";
+let deviceTargets: DeviceTarget[] = [];
 const tokens = new Map<DeviceId, string>();
 
 export async function initializeApiAuth(): Promise<void> {
-  for (const device of ["pc", "phone"] as const) {
-    const token = await secureGet(tokenKey(device)).catch(() => null);
-    if (token) tokens.set(device, token);
+  deviceTargets = await loadDeviceTargets();
+  const stored = localStorage.getItem("codex-pocket-device");
+  activeDevice = deviceTargets.some((target) => target.id === stored) ? stored! : deviceTargets[0]!.id;
+  for (const target of deviceTargets) {
+    const token = await secureGet(tokenKey(target.id)).catch(() => null);
+    if (token) tokens.set(target.id, token);
   }
+}
+
+export function listDeviceTargets(): DeviceTarget[] {
+  return deviceTargets.map((target) => ({ ...target }));
+}
+
+export function activeDeviceTarget(): DeviceTarget {
+  return deviceTargets.find((target) => target.id === activeDevice) ?? deviceTargets[0]!;
+}
+
+export function deviceTargetLabel(id: DeviceId): string {
+  return deviceTargets.find((target) => target.id === id)?.name ?? "실행 단말";
+}
+
+export async function addLinuxDevice(name: string, localPort: number): Promise<DeviceTarget> {
+  if (!name.trim() || name.trim().length > 60) throw new Error("Linux PC 이름을 입력해 주세요.");
+  if (!Number.isInteger(localPort) || localPort < 1024 || localPort > 65_535) {
+    throw new Error("로컬 터널 포트는 1024~65535 사이여야 합니다.");
+  }
+  const baseUrl = `http://127.0.0.1:${localPort}`;
+  if (deviceTargets.some((target) => target.baseUrl === baseUrl)) throw new Error("이미 등록된 로컬 포트입니다.");
+  const target: DeviceTarget = {
+    id: `linux-${crypto.randomUUID()}`,
+    name: name.trim(),
+    kind: "linux",
+    baseUrl,
+  };
+  deviceTargets = [...deviceTargets, target];
+  await saveDeviceTargets();
+  return { ...target };
+}
+
+export async function removeDeviceTarget(id: DeviceId): Promise<void> {
+  const target = deviceTargets.find((item) => item.id === id);
+  if (!target || target.builtIn) throw new Error("기본 실행 단말은 삭제할 수 없습니다.");
+  deviceTargets = deviceTargets.filter((item) => item.id !== id);
+  tokens.delete(id);
+  await Promise.all([saveDeviceTargets(), secureRemove(tokenKey(id))]);
+  if (activeDevice === id) activeDevice = deviceTargets[0]!.id;
 }
 
 export function setApiDevice(device: DeviceId): void {
@@ -48,8 +91,7 @@ export function setApiDevice(device: DeviceId): void {
 }
 
 function apiBase(): string {
-  if (!isNativeApp()) return "";
-  return activeDevice === "phone" ? "http://127.0.0.1:8789" : "http://127.0.0.1:8788";
+  return activeDeviceTarget().baseUrl;
 }
 
 export function apiUrl(path: string): string {
@@ -67,6 +109,10 @@ export async function pairActiveDevice(code: string, label: string): Promise<Dev
   });
   tokens.set(activeDevice, result.token);
   await secureSet(tokenKey(activeDevice), result.token);
+  deviceTargets = deviceTargets.map((target) => target.id === activeDevice
+    ? { ...target, name: result.device.name, kind: result.device.kind, remoteDeviceId: result.device.id }
+    : target);
+  await saveDeviceTargets();
   return result.device;
 }
 
@@ -185,6 +231,58 @@ async function fetchJson<T>(path: string, init: RequestInit, authenticated: bool
   }
   if (!response.ok) await throwResponseError(response, authenticated);
   return response.json() as Promise<T>;
+}
+
+async function loadDeviceTargets(): Promise<DeviceTarget[]> {
+  const defaults = defaultDeviceTargets();
+  const serialized = await secureGet("device-registry").catch(() => null);
+  if (!serialized) return defaults;
+  try {
+    const parsed = JSON.parse(serialized) as unknown;
+    if (!Array.isArray(parsed)) return defaults;
+    const saved = parsed.filter(isDeviceTarget);
+    const mergedDefaults = defaults.map((target) => {
+      const override = saved.find((item) => item.id === target.id);
+      return override ? { ...target, name: override.name, remoteDeviceId: override.remoteDeviceId } : target;
+    });
+    const custom = saved.filter((target) => !defaults.some((item) => item.id === target.id || item.baseUrl === target.baseUrl));
+    return [...mergedDefaults, ...custom.map((target) => ({ ...target, builtIn: false }))];
+  } catch {
+    return defaults;
+  }
+}
+
+async function saveDeviceTargets(): Promise<void> {
+  await secureSet("device-registry", JSON.stringify(deviceTargets));
+}
+
+function defaultDeviceTargets(): DeviceTarget[] {
+  if (!isNativeApp()) return [{ id: "pc", name: "이 Linux PC", kind: "linux", baseUrl: "", builtIn: true }];
+  return [
+    { id: "pc", name: "내 Linux PC", kind: "linux", baseUrl: "http://127.0.0.1:8788", builtIn: true },
+    { id: "phone", name: "이 스마트폰", kind: "android", baseUrl: "http://127.0.0.1:8789", builtIn: true },
+  ];
+}
+
+function isDeviceTarget(value: unknown): value is DeviceTarget {
+  if (!value || typeof value !== "object") return false;
+  const target = value as Record<string, unknown>;
+  return typeof target.id === "string" && typeof target.name === "string"
+    && (target.kind === "linux" || target.kind === "android")
+    && typeof target.baseUrl === "string" && isSafeLoopbackBase(target.baseUrl)
+    && (target.remoteDeviceId === undefined || typeof target.remoteDeviceId === "string");
+}
+
+function isSafeLoopbackBase(value: string): boolean {
+  if (value === "") return true;
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:")
+      && (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]")
+      && url.pathname === "/" && !url.username && !url.password && !url.search && !url.hash;
+  } catch {
+    return false;
+  }
 }
 
 async function throwResponseError(response: Response, authenticated: boolean): Promise<never> {

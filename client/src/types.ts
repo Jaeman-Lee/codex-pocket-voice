@@ -1,6 +1,15 @@
 export type ConnectionStatus = "pending" | "online" | "error";
-export type DeviceId = "pc" | "phone";
-export type ProviderId = "codex" | "claude";
+export type DeviceId = string;
+export type ProviderId = string;
+
+export interface DeviceTarget {
+  id: DeviceId;
+  name: string;
+  kind: "linux" | "android";
+  baseUrl: string;
+  builtIn?: boolean;
+  remoteDeviceId?: string;
+}
 
 export interface DeviceInfo {
   id: string;

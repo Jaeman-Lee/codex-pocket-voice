@@ -1,10 +1,27 @@
 import type { DeviceId } from "./types";
 import { conversationKey, type JournalConversation, type JournalQueue } from "./work-journal-model";
+import { secureGet, secureSet } from "./secure-storage";
 
 const DATABASE_NAME = "codex-pocket-work-journal";
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const CONVERSATION_STORE = "conversations";
 const QUEUE_STORE = "queues";
+const ENVELOPE_VERSION = 2;
+
+interface EncryptedEnvelope {
+  version: typeof ENVELOPE_VERSION;
+  key?: string;
+  device?: DeviceId;
+  iv: string;
+  ciphertext: string;
+}
+
+interface RawJournal {
+  loadConversation(key: string): Promise<unknown>;
+  saveConversation(value: unknown): Promise<void>;
+  loadQueue(device: DeviceId): Promise<unknown>;
+  saveQueue(value: unknown): Promise<void>;
+}
 
 export interface WorkJournal {
   loadConversation(device: DeviceId, workspace: string, threadId: string): Promise<JournalConversation | undefined>;
@@ -14,32 +31,72 @@ export interface WorkJournal {
 }
 
 export function createWorkJournal(): WorkJournal {
-  const fallback = new LocalStorageWorkJournal(window.localStorage);
-  if (!("indexedDB" in window)) return fallback;
-  return new ResilientWorkJournal(new IndexedDbWorkJournal(window.indexedDB), fallback);
+  const fallback = new LocalStorageRawJournal(window.localStorage);
+  const raw: RawJournal = "indexedDB" in window
+    ? new ResilientRawJournal(new IndexedDbRawJournal(window.indexedDB), fallback)
+    : fallback;
+  return new EncryptedWorkJournal(raw);
 }
 
-class ResilientWorkJournal implements WorkJournal {
-  constructor(private readonly primary: WorkJournal, private readonly fallback: WorkJournal) {}
+class EncryptedWorkJournal implements WorkJournal {
+  private readonly key = loadJournalKey();
+
+  constructor(private readonly raw: RawJournal) {}
 
   async loadConversation(device: DeviceId, workspace: string, threadId: string): Promise<JournalConversation | undefined> {
-    try {
-      return await this.primary.loadConversation(device, workspace, threadId)
-        ?? await this.fallback.loadConversation(device, workspace, threadId);
-    } catch {
-      return this.fallback.loadConversation(device, workspace, threadId);
+    const key = conversationKey(device, workspace, threadId);
+    const value = await this.raw.loadConversation(key);
+    if (isEnvelope(value)) {
+      const decrypted = await decryptValue(value, `conversation:${key}`, this.key);
+      return isJournalConversation(decrypted) ? decrypted : undefined;
     }
+    if (!isJournalConversation(value)) return undefined;
+    void this.saveConversation(value).catch(() => undefined);
+    return value;
   }
 
   async saveConversation(record: JournalConversation): Promise<void> {
-    try {
-      await this.primary.saveConversation(record);
-    } catch {
-      await this.fallback.saveConversation(record);
-    }
+    const envelope = await encryptValue(record, `conversation:${record.key}`, this.key);
+    await this.raw.saveConversation({ ...envelope, key: record.key });
   }
 
   async loadQueue(device: DeviceId): Promise<JournalQueue | undefined> {
+    const value = await this.raw.loadQueue(device);
+    if (isEnvelope(value)) {
+      const decrypted = await decryptValue(value, `queue:${device}`, this.key);
+      return isJournalQueue(decrypted) ? decrypted : undefined;
+    }
+    if (!isJournalQueue(value)) return undefined;
+    void this.saveQueue(value).catch(() => undefined);
+    return value;
+  }
+
+  async saveQueue(record: JournalQueue): Promise<void> {
+    const envelope = await encryptValue(record, `queue:${record.device}`, this.key);
+    await this.raw.saveQueue({ ...envelope, device: record.device });
+  }
+}
+
+class ResilientRawJournal implements RawJournal {
+  constructor(private readonly primary: RawJournal, private readonly fallback: RawJournal) {}
+
+  async loadConversation(key: string): Promise<unknown> {
+    try {
+      return await this.primary.loadConversation(key) ?? await this.fallback.loadConversation(key);
+    } catch {
+      return this.fallback.loadConversation(key);
+    }
+  }
+
+  async saveConversation(value: unknown): Promise<void> {
+    try {
+      await this.primary.saveConversation(value);
+    } catch {
+      await this.fallback.saveConversation(value);
+    }
+  }
+
+  async loadQueue(device: DeviceId): Promise<unknown> {
     try {
       return await this.primary.loadQueue(device) ?? await this.fallback.loadQueue(device);
     } catch {
@@ -47,34 +104,34 @@ class ResilientWorkJournal implements WorkJournal {
     }
   }
 
-  async saveQueue(record: JournalQueue): Promise<void> {
+  async saveQueue(value: unknown): Promise<void> {
     try {
-      await this.primary.saveQueue(record);
+      await this.primary.saveQueue(value);
     } catch {
-      await this.fallback.saveQueue(record);
+      await this.fallback.saveQueue(value);
     }
   }
 }
 
-class IndexedDbWorkJournal implements WorkJournal {
+class IndexedDbRawJournal implements RawJournal {
   private database?: Promise<IDBDatabase>;
 
   constructor(private readonly indexedDb: IDBFactory) {}
 
-  async loadConversation(device: DeviceId, workspace: string, threadId: string): Promise<JournalConversation | undefined> {
-    return this.get<JournalConversation>(CONVERSATION_STORE, conversationKey(device, workspace, threadId));
+  loadConversation(key: string): Promise<unknown> {
+    return this.get(CONVERSATION_STORE, key);
   }
 
-  saveConversation(record: JournalConversation): Promise<void> {
-    return this.put(CONVERSATION_STORE, record);
+  saveConversation(value: unknown): Promise<void> {
+    return this.put(CONVERSATION_STORE, value);
   }
 
-  async loadQueue(device: DeviceId): Promise<JournalQueue | undefined> {
-    return this.get<JournalQueue>(QUEUE_STORE, device);
+  loadQueue(device: DeviceId): Promise<unknown> {
+    return this.get(QUEUE_STORE, device);
   }
 
-  saveQueue(record: JournalQueue): Promise<void> {
-    return this.put(QUEUE_STORE, record);
+  saveQueue(value: unknown): Promise<void> {
+    return this.put(QUEUE_STORE, value);
   }
 
   private open(): Promise<IDBDatabase> {
@@ -96,11 +153,11 @@ class IndexedDbWorkJournal implements WorkJournal {
     return this.database;
   }
 
-  private async get<T>(storeName: string, key: IDBValidKey): Promise<T | undefined> {
+  private async get(storeName: string, key: IDBValidKey): Promise<unknown> {
     const database = await this.open();
     const transaction = database.transaction(storeName, "readonly");
     const request = transaction.objectStore(storeName).get(key);
-    const result = await requestResult<T | undefined>(request);
+    const result = await requestResult(request);
     await transactionDone(transaction);
     return result;
   }
@@ -113,30 +170,34 @@ class IndexedDbWorkJournal implements WorkJournal {
   }
 }
 
-class LocalStorageWorkJournal implements WorkJournal {
+class LocalStorageRawJournal implements RawJournal {
   constructor(private readonly storage: Storage) {}
 
-  async loadConversation(device: DeviceId, workspace: string, threadId: string): Promise<JournalConversation | undefined> {
-    return this.read<JournalConversation>(`conversation:${conversationKey(device, workspace, threadId)}`);
+  async loadConversation(key: string): Promise<unknown> {
+    return this.read(`conversation:${key}`);
   }
 
-  async saveConversation(record: JournalConversation): Promise<void> {
-    this.write(`conversation:${record.key}`, record);
+  async saveConversation(value: unknown): Promise<void> {
+    const key = objectString(value, "key");
+    if (!key) throw new Error("작업 저널 conversation key가 없습니다.");
+    this.write(`conversation:${key}`, value);
   }
 
-  async loadQueue(device: DeviceId): Promise<JournalQueue | undefined> {
-    return this.read<JournalQueue>(`queue:${device}`);
+  async loadQueue(device: DeviceId): Promise<unknown> {
+    return this.read(`queue:${device}`);
   }
 
-  async saveQueue(record: JournalQueue): Promise<void> {
-    this.write(`queue:${record.device}`, record);
+  async saveQueue(value: unknown): Promise<void> {
+    const device = objectString(value, "device");
+    if (!device) throw new Error("작업 저널 device key가 없습니다.");
+    this.write(`queue:${device}`, value);
   }
 
-  private read<T>(key: string): T | undefined {
+  private read(key: string): unknown {
     const value = this.storage.getItem(`codex-pocket-journal:${key}`);
     if (!value) return undefined;
     try {
-      return JSON.parse(value) as T;
+      return JSON.parse(value) as unknown;
     } catch {
       return undefined;
     }
@@ -145,6 +206,84 @@ class LocalStorageWorkJournal implements WorkJournal {
   private write(key: string, value: unknown): void {
     this.storage.setItem(`codex-pocket-journal:${key}`, JSON.stringify(value));
   }
+}
+
+async function loadJournalKey(): Promise<CryptoKey> {
+  let encoded = await secureGet("journal-master-key");
+  if (!encoded) {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    encoded = encodeBase64(bytes);
+    await secureSet("journal-master-key", encoded);
+  }
+  return crypto.subtle.importKey("raw", asArrayBuffer(decodeBase64(encoded)), "AES-GCM", false, ["encrypt", "decrypt"]);
+}
+
+async function encryptValue(value: unknown, context: string, key: Promise<CryptoKey>): Promise<EncryptedEnvelope> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(JSON.stringify(value));
+  const additionalData = new TextEncoder().encode(context);
+  const ciphertext = await crypto.subtle.encrypt({
+    name: "AES-GCM",
+    iv: asArrayBuffer(iv),
+    additionalData: asArrayBuffer(additionalData),
+  }, await key, asArrayBuffer(encoded));
+  return { version: ENVELOPE_VERSION, iv: encodeBase64(iv), ciphertext: encodeBase64(new Uint8Array(ciphertext)) };
+}
+
+async function decryptValue(value: EncryptedEnvelope, context: string, key: Promise<CryptoKey>): Promise<unknown> {
+  try {
+    const plaintext = await crypto.subtle.decrypt({
+      name: "AES-GCM",
+      iv: asArrayBuffer(decodeBase64(value.iv)),
+      additionalData: asArrayBuffer(new TextEncoder().encode(context)),
+    }, await key, asArrayBuffer(decodeBase64(value.ciphertext)));
+    return JSON.parse(new TextDecoder().decode(plaintext)) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+function isEnvelope(value: unknown): value is EncryptedEnvelope {
+  if (!value || typeof value !== "object") return false;
+  const envelope = value as Record<string, unknown>;
+  return envelope.version === ENVELOPE_VERSION && typeof envelope.iv === "string" && typeof envelope.ciphertext === "string";
+}
+
+function isJournalConversation(value: unknown): value is JournalConversation {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.key === "string" && typeof record.device === "string"
+    && typeof record.workspace === "string" && typeof record.threadId === "string"
+    && Array.isArray(record.messages) && typeof record.updatedAt === "string";
+}
+
+function isJournalQueue(value: unknown): value is JournalQueue {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.device === "string" && Array.isArray(record.prompts) && typeof record.updatedAt === "string";
+}
+
+function objectString(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "string" ? field : undefined;
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function decodeBase64(value: string): Uint8Array {
+  const binary = atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {

@@ -2,9 +2,14 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Pointer
 import {
   api,
   apiBlob,
+  activeDeviceTarget,
+  addLinuxDevice,
+  deviceTargetLabel,
+  listDeviceTargets,
   pairActiveDevice,
   pairingStatus,
   PairingRequiredError,
+  removeDeviceTarget,
   setApiDevice,
   subscribeEvents,
   uploadMedia,
@@ -26,6 +31,7 @@ import type {
   CodexEvent,
   ConnectionStatus,
   DeviceId,
+  DeviceTarget,
   HistoryItem,
   Operation,
   MediaItem,
@@ -95,9 +101,8 @@ let localId = 0;
 const newId = (prefix: string) => `${prefix}-${Date.now()}-${localId++}`;
 
 export function App() {
-  const [device, setDevice] = useState<DeviceId>(
-    () => localStorage.getItem("codex-pocket-device") === "phone" && isNativeApp() ? "phone" : "pc",
-  );
+  const [device, setDevice] = useState<DeviceId>(() => activeDeviceTarget().id);
+  const [deviceTargets, setDeviceTargets] = useState<DeviceTarget[]>(listDeviceTargets);
   const [connection, setConnection] = useState<ConnectionStatus>("pending");
   const [connectionText, setConnectionText] = useState("PC에 연결 중…");
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -142,6 +147,9 @@ export function App() {
   const [pairingCode, setPairingCode] = useState("");
   const [pairingBusy, setPairingBusy] = useState(false);
   const [authRevision, setAuthRevision] = useState(0);
+  const [showDeviceCreator, setShowDeviceCreator] = useState(false);
+  const [newDeviceName, setNewDeviceName] = useState("");
+  const [newDevicePort, setNewDevicePort] = useState("8790");
   const [journal] = useState(createWorkJournal);
 
   const transcriptRef = useRef<HTMLElement>(null);
@@ -1222,6 +1230,7 @@ export function App() {
     setPairingBusy(true);
     try {
       await pairActiveDevice(pairingCode, "Codex Pocket Android");
+      setDeviceTargets(listDeviceTargets());
       setPairing(null);
       setPairingCode("");
       initializedRef.current = false;
@@ -1231,6 +1240,31 @@ export function App() {
       showToast(errorMessage(error));
     } finally {
       setPairingBusy(false);
+    }
+  }
+
+  async function createLinuxDevice() {
+    try {
+      const target = await addLinuxDevice(newDeviceName, Number(newDevicePort));
+      setDeviceTargets(listDeviceTargets());
+      setNewDeviceName("");
+      setNewDevicePort(String(Number(newDevicePort) + 1));
+      setShowDeviceCreator(false);
+      selectDevice(target.id);
+      showToast(`${target.name}을 등록했습니다. 로컬 터널을 연결한 뒤 페어링하세요.`);
+    } catch (error) {
+      showToast(errorMessage(error));
+    }
+  }
+
+  async function deleteLinuxDevice(target: DeviceTarget) {
+    try {
+      await removeDeviceTarget(target.id);
+      if (deviceRef.current === target.id) selectDevice(listDeviceTargets()[0]!.id);
+      setDeviceTargets(listDeviceTargets());
+      showToast(`${target.name} 등록을 삭제했습니다.`);
+    } catch (error) {
+      showToast(errorMessage(error));
     }
   }
 
@@ -1307,8 +1341,7 @@ export function App() {
             aria-label="Codex 실행 단말 선택"
             onChange={(event) => selectDevice(event.target.value as DeviceId)}
           >
-            <option value="pc">내 PC</option>
-            {isNativeApp() && <option value="phone">이 스마트폰</option>}
+            {deviceTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
           </select>
         </label>
         <label>
@@ -1372,10 +1405,31 @@ export function App() {
             <label className="connection-device">
               <span>확인할 단말</span>
               <select value={device} disabled={activity.running} onChange={(event) => selectDevice(event.target.value as DeviceId)}>
-                <option value="pc">내 PC</option>
-                {isNativeApp() && <option value="phone">이 스마트폰</option>}
+                {deviceTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
               </select>
             </label>
+
+            <section className="device-manager" aria-label="실행 단말 관리">
+              <div className="device-manager-head">
+                <div><strong>Linux Companion</strong><small>여러 PC는 서로 다른 로컬 터널 포트로 등록합니다.</small></div>
+                <button type="button" onClick={() => setShowDeviceCreator((current) => !current)}>＋ PC</button>
+              </div>
+              {showDeviceCreator && (
+                <div className="device-create-row">
+                  <input value={newDeviceName} maxLength={60} placeholder="예: 작업실 PC" aria-label="Linux PC 이름" onChange={(event) => setNewDeviceName(event.target.value)} />
+                  <input value={newDevicePort} inputMode="numeric" maxLength={5} placeholder="8790" aria-label="로컬 터널 포트" onChange={(event) => setNewDevicePort(event.target.value.replace(/\D/g, ""))} />
+                  <button type="button" onClick={() => void createLinuxDevice()}>등록</button>
+                </div>
+              )}
+              <div className="device-list">
+                {deviceTargets.filter((target) => target.kind === "linux").map((target) => (
+                  <div key={target.id}>
+                    <span><strong>{target.name}</strong><small>{target.baseUrl || "현재 주소"}{target.remoteDeviceId ? ` · ${target.remoteDeviceId.slice(0, 8)}` : " · 미페어링"}</small></span>
+                    {!target.builtIn && <button type="button" className="danger" onClick={() => void deleteLinuxDevice(target)}>삭제</button>}
+                  </div>
+                ))}
+              </div>
+            </section>
 
             <div className="connection-steps" aria-label="연결 단계">
               <span>1 CLI 확인</span><span>2 브라우저 연결</span><span>3 무료 테스트</span>
@@ -1475,8 +1529,7 @@ export function App() {
             <label>
               <span>생성할 단말</span>
               <select value={device} disabled={creatingProject} onChange={(event) => selectDevice(event.target.value as DeviceId)}>
-                <option value="pc">내 PC</option>
-                {isNativeApp() && <option value="phone">이 스마트폰</option>}
+                {deviceTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
               </select>
             </label>
             <label>
@@ -1859,7 +1912,7 @@ function effortLabel(effort: string): string {
 }
 
 function deviceLabel(device: DeviceId): string {
-  return device === "phone" ? "이 스마트폰" : "내 PC";
+  return deviceTargetLabel(device);
 }
 
 function errorMessage(error: unknown): string {
