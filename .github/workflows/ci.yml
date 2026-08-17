@@ -27,4 +27,11 @@ jobs:
       - run: npm run check
       - run: npm test
       - name: Validate POSIX shell scripts
-        run: for script in scripts/*.sh; do sh -n "$script"; done
+        run: |
+          for script in scripts/*.sh; do
+            if head -n 1 "$script" | grep -q 'bash'; then
+              bash -n "$script"
+            else
+              sh -n "$script"
+            fi
+          done
