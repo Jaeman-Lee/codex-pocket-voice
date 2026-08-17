@@ -48,9 +48,13 @@ Android APK / browser PWA
 
 ## 요구 사항
 
-- PC: Node.js 20 이상, Codex CLI, Git, tmux, SSH 서버, ffmpeg/ffprobe
+- PC: **Linux 전용**, Node.js 20 이상, Codex CLI, Git, tmux, SSH 서버, ffmpeg/ffprobe
 - Android: Termux, OpenSSH, Android Chrome 권장
 - 스마트폰에서 PC로 접속 가능한 SSH 경로(Tailscale 같은 사설망 권장)
+
+PC Companion의 공식 지원 대상은 Linux 데스크톱과 서버입니다. Windows와 macOS
+네이티브 지원 및 전용 설치 프로그램은 현재와 향후 계획의 범위에 포함하지 않습니다.
+WSL·가상 머신·컨테이너는 동작할 수 있지만 공식 지원 및 검증 대상은 아닙니다.
 
 ## PC 설치
 

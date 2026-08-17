@@ -51,13 +51,18 @@ Codex Pocket UI
   ├─ RuntimeAdapter
   │    ├─ TermuxRuntime             (현재 호환 모듈)
   │    ├─ PocketRuntimeAndroid      (목표: 앱 내 스마트폰 CLI)
-  │    └─ PocketCompanionRuntime    (PC CLI)
+  │    └─ PocketCompanionRuntimeLinux (Linux PC CLI)
   └─ TransportAdapter
        ├─ SshTailscaleTransport     (현재 호환 모듈)
        └─ PocketLinkTransport       (목표: 내장 페어링·암호화 연결)
 ```
 
 `RuntimeAdapter`는 셸·Git·프로세스·CLI·작업공간을 담당하고, `TransportAdapter`는 단말 발견·인증·암호화·재연결만 담당한다. 따라서 Termux 대체 작업과 Tailscale/SSH 대체 작업을 별도 개발·테스트·배포할 수 있다. React UI나 provider 로그인 구현은 특정 런타임 또는 전송 기술에 직접 의존하지 않는다.
+
+PC Companion의 공식 실행 환경은 Linux로 한정한다. Windows/macOS용 런타임,
+설치 패키지, 프로세스 관리 및 플랫폼별 테스트는 구현하지 않는다. 다만 현재의
+`RuntimeAdapter` 경계는 유지한다. 이 경계 자체의 비용은 작고 Linux 구현의 테스트와
+교체도 쉬워지기 때문에, 다중 운영체제 지원을 약속하지 않으면서도 구조적 결합을 막는다.
 
 ### PocketLinkTransport 완료 조건
 

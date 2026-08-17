@@ -1,5 +1,17 @@
 # Roadmap
 
+## Supported PC platform
+
+The desktop/server companion targets **Linux only**. Native Windows and macOS
+packages, installers, platform-specific process management, credential stores,
+and support testing are intentionally out of scope. WSL, virtual machines, and
+containers may work but are not official support targets.
+
+Keep runtime and transport boundaries small and implementation-neutral when
+that does not add meaningful work, but do not build or test alternate operating
+system implementations. This preserves a future extension point without
+turning cross-platform support into a current deliverable.
+
 ## Phase 1 — mobile voice and compact chat UI
 
 - Replace the external Google voice dialog with in-app Android speech recognition.
@@ -57,7 +69,7 @@ Develop transport as an independently testable module with a stable interface:
 
 - `SshTailscaleTransport`: compatibility adapter for the current deployment.
 - `PocketLinkTransport`: app-managed pairing, device identity, encrypted sessions, direct LAN/P2P connection when possible, and an outbound relay fallback.
-- Store device private keys in Android Keystore or the desktop OS credential store.
+- Store device private keys in Android Keystore or a Linux-protected credential store.
 - Support QR or one-time-code pairing, device revocation, key rotation, reconnect, and explicit target identity.
 - Keep gateway and CLI services private; never expose their loopback ports directly to the public network.
 
@@ -76,7 +88,7 @@ The implementation may reuse appropriately licensed open-source components, but 
 
 ## Final definition of done
 
-- A user installs Codex Pocket on Android and Pocket Companion on each computer they want to use.
+- A user installs Codex Pocket on Android and Pocket Companion on each supported Linux computer they want to use.
 - Pairing is completed once with a QR or one-time code.
 - The user can select `this smartphone` or any paired PC and run that device's CLI against that device's real files.
 - Code, Git state, and work history persist locally and remain reviewable offline.
