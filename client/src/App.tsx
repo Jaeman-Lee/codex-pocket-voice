@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { api, apiUrl, setApiDevice, uploadMedia } from "./api";
+import {
+  api,
+  apiBlob,
+  pairActiveDevice,
+  pairingStatus,
+  PairingRequiredError,
+  setApiDevice,
+  subscribeEvents,
+  uploadMedia,
+  type PairingStatus,
+} from "./api";
 import {
   isNativeApp,
   NativeSpeech,
@@ -128,6 +138,10 @@ export function App() {
   const [loginSession, setLoginSession] = useState<ProviderLoginSession | null>(null);
   const [providerAliases, setProviderAliases] = useState<Partial<Record<ProviderId, string>>>({});
   const [journalRestored, setJournalRestored] = useState(false);
+  const [pairing, setPairing] = useState<PairingStatus | null>(null);
+  const [pairingCode, setPairingCode] = useState("");
+  const [pairingBusy, setPairingBusy] = useState(false);
+  const [authRevision, setAuthRevision] = useState(0);
   const [journal] = useState(createWorkJournal);
 
   const transcriptRef = useRef<HTMLElement>(null);
@@ -237,6 +251,14 @@ export function App() {
     setToast(text);
     toastTimerRef.current = window.setTimeout(() => setToast(""), 4_000);
   }, []);
+
+  const requestPairing = useCallback(async () => {
+    try {
+      setPairing(await pairingStatus());
+    } catch (error) {
+      showToast(errorMessage(error));
+    }
+  }, [showToast]);
 
   useEffect(() => {
     if (!loginSession || (loginSession.status !== "starting" && loginSession.status !== "waiting")) return;
@@ -349,11 +371,12 @@ export function App() {
         setThreadId(cachedThread);
         threadRef.current = cachedThread;
       }
+      if (error instanceof PairingRequiredError) void requestPairing();
       showToast(errorMessage(error));
     } finally {
       initializingRef.current = false;
     }
-  }, [loadThreads, showToast]);
+  }, [loadThreads, requestPairing, showToast]);
 
   initializeRef.current = initialize;
 
@@ -374,27 +397,21 @@ export function App() {
       }
       await initialize();
     })();
-    const stream = new EventSource(apiUrl("/api/events"));
-    stream.onopen = () => {
+    const abort = new AbortController();
+    void subscribeEvents(() => {
       setConnection("online");
       setConnectionText((current) => current.includes("복구") || current.includes("실패")
         ? `${deviceLabel(device)}와 안전하게 연결됨`
         : current);
       if (!initializedRef.current) void initializeRef.current();
-    };
-    stream.onerror = () => {
+    }, (event) => handleEventRef.current(event), abort.signal).catch((error) => {
+      if (abort.signal.aborted) return;
+      if (error instanceof PairingRequiredError) void requestPairing();
       setConnection("pending");
-      setConnectionText("연결을 복구하는 중…");
-    };
-    stream.onmessage = (message) => {
-      try {
-        handleEventRef.current(JSON.parse(message.data) as CodexEvent);
-      } catch {
-        // Ignore malformed or forward-compatible event frames.
-      }
-    };
-    return () => stream.close();
-  }, [device, initialize, showToast]);
+      setConnectionText(error instanceof PairingRequiredError ? "페어링 필요" : "연결을 복구하는 중…");
+    });
+    return () => abort.abort();
+  }, [authRevision, device, initialize, requestPairing, showToast]);
 
   useEffect(() => {
     if (isNativeApp()) return;
@@ -1200,6 +1217,23 @@ export function App() {
     voiceWasActiveRef.current = false;
   }
 
+  async function submitPairing() {
+    if (pairingBusy || pairingCode.replace(/\D/g, "").length !== 8) return;
+    setPairingBusy(true);
+    try {
+      await pairActiveDevice(pairingCode, "Codex Pocket Android");
+      setPairing(null);
+      setPairingCode("");
+      initializedRef.current = false;
+      setAuthRevision((current) => current + 1);
+      showToast("안전한 페어링이 완료되었습니다.");
+    } catch (error) {
+      showToast(errorMessage(error));
+    } finally {
+      setPairingBusy(false);
+    }
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -1239,6 +1273,30 @@ export function App() {
           <span className={`status-dot ${connection}`} aria-hidden="true" />
         </div>
       </header>
+
+      {pairing && (
+        <section className="pairing-dialog" role="dialog" aria-modal="true" aria-labelledby="pairing-title">
+          <div className="pairing-card">
+            <span className="pairing-lock" aria-hidden="true">⌁</span>
+            <h2 id="pairing-title">{pairing.device.name} 페어링</h2>
+            <p>Companion 터미널에 표시된 8자리 코드를 입력하세요. 코드는 10분 동안만 유효합니다.</p>
+            <input
+              value={pairingCode}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={9}
+              placeholder="0000 0000"
+              aria-label="8자리 페어링 코드"
+              onChange={(event) => setPairingCode(formatPairingCode(event.target.value))}
+              onKeyDown={(event) => { if (event.key === "Enter") void submitPairing(); }}
+            />
+            <button type="button" disabled={pairingBusy || pairingCode.replace(/\D/g, "").length !== 8} onClick={() => void submitPairing()}>
+              {pairingBusy ? "확인 중…" : "안전하게 연결"}
+            </button>
+            <small>장치 ID {pairing.device.id.slice(0, 8)} · 인증정보는 이 기기의 보안 저장소에 보관됩니다.</small>
+          </div>
+        </section>
+      )}
 
       <section className={`selectors${controlsCollapsed ? " collapsed" : ""}`} aria-label="작업 대상" aria-hidden={controlsCollapsed}>
         <label>
@@ -1543,7 +1601,7 @@ export function App() {
                 <article className={`attachment-card ${item.status}`} key={item.id}>
                   {item.previewUrl && <img src={item.previewUrl} alt="" />}
                   {item.kind === "video" && item.status === "ready" && item.frameCount > 0 && (
-                    <img src={apiUrl(`/api/media/${encodeURIComponent(item.id)}/frames/0`)} alt="영상 첫 대표 프레임" />
+                    <AuthorizedImage path={`/api/media/${encodeURIComponent(item.id)}/frames/0`} alt="영상 첫 대표 프레임" />
                   )}
                   <div>
                     <strong>{item.kind === "video" ? "🎬" : "🖼️"} {short(item.name, 28)}</strong>
@@ -1665,6 +1723,24 @@ function Message({ message }: { message: ChatMessage }) {
   );
 }
 
+function AuthorizedImage({ path, alt }: { path: string; alt: string }) {
+  const [source, setSource] = useState("");
+  useEffect(() => {
+    let disposed = false;
+    let objectUrl = "";
+    void apiBlob(path).then((blob) => {
+      if (disposed) return;
+      objectUrl = URL.createObjectURL(blob);
+      setSource(objectUrl);
+    }).catch(() => undefined);
+    return () => {
+      disposed = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [path]);
+  return source ? <img src={source} alt={alt} /> : null;
+}
+
 function historyMessages(thread: ThreadDetail): ChatMessage[] {
   const messages: ChatMessage[] = [];
   for (const turn of thread.turns) {
@@ -1707,6 +1783,11 @@ function joinDictation(...parts: string[]): string {
 
 function short(text: string, length: number): string {
   return text.length <= length ? text : `${text.slice(0, length - 1)}…`;
+}
+
+function formatPairingCode(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+  return digits.length > 4 ? `${digits.slice(0, 4)} ${digits.slice(4)}` : digits;
 }
 
 function workspaceName(path: string): string {

@@ -20,6 +20,7 @@ import { MediaError, MediaManager } from "./media-manager.js";
 import { ProjectCreationError, ProjectManager } from "./project-manager.js";
 import { ProviderError, ProviderRegistry } from "./providers/registry.js";
 import { ProviderLoginManager } from "./provider-login-manager.js";
+import { GatewayAuth, GatewayAuthError } from "./gateway-auth.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_EVENT_TEXT = 80_000;
@@ -52,12 +53,16 @@ export interface WebServerOptions {
   port?: number;
   media?: MediaManager;
   projects?: ProjectManager;
+  auth?: GatewayAuth;
 }
 
 export interface RunningWebServer {
   server: Server;
   host: string;
   port: number;
+  deviceId: string;
+  pairingCode: string;
+  pairingExpiresAt: string;
   close(): Promise<void>;
 }
 
@@ -111,6 +116,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   });
   await media.initialize();
   const projects = options.projects ?? await ProjectManager.fromEnvironment(options.paths);
+  const auth = options.auth ?? await GatewayAuth.create();
   const providers = new ProviderRegistry(options.client);
   const providerLogins = new ProviderLoginManager(providers);
   const unsubscribe = options.client.subscribe((event) => {
@@ -119,7 +125,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   });
 
   const server = createServer((request, response) => {
-    void handleRequest(request, response, options, media, projects, providers, providerLogins, operations, activeThreads, sseClients).catch(
+    void handleRequest(request, response, options, auth, media, projects, providers, providerLogins, operations, activeThreads, sseClients).catch(
       (error) => sendError(response, error),
     );
   });
@@ -146,6 +152,9 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     server,
     host,
     port: address.port,
+    deviceId: auth.device.id,
+    pairingCode: auth.pairingCode,
+    pairingExpiresAt: auth.pairingExpiresAt,
     async close() {
       clearInterval(heartbeat);
       providerLogins.close();
@@ -163,6 +172,7 @@ async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
   options: WebServerOptions,
+  auth: GatewayAuth,
   media: MediaManager,
   projects: ProjectManager,
   providers: ProviderRegistry,
@@ -184,7 +194,7 @@ async function handleRequest(
       response.end();
       return;
     }
-    await handleApi(request, response, url, options, media, projects, providers, providerLogins, operations, activeThreads, sseClients);
+    await handleApi(request, response, url, options, auth, media, projects, providers, providerLogins, operations, activeThreads, sseClients);
     return;
   }
   await serveStatic(request, response, url.pathname, options.staticDir);
@@ -195,6 +205,7 @@ async function handleApi(
   response: ServerResponse,
   url: URL,
   options: WebServerOptions,
+  auth: GatewayAuth,
   media: MediaManager,
   projects: ProjectManager,
   providers: ProviderRegistry,
@@ -203,6 +214,25 @@ async function handleApi(
   activeThreads: Set<string>,
   sseClients: Set<ServerResponse>,
 ): Promise<void> {
+  if (request.method === "GET" && url.pathname === "/api/status") {
+    sendJson(response, 200, { ok: true, protocolVersion: 1, device: auth.device });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/pairing/status") {
+    sendJson(response, 200, { ...auth.pairingStatus(), protocolVersion: 1 });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/pairing/claim") {
+    assertSameOrigin(request);
+    const body = await readJson(request) as { code?: unknown; label?: unknown };
+    sendJson(response, 201, await auth.claim(body.code, body.label));
+    return;
+  }
+
+  const authenticatedClient = auth.requireAuthorization(request.headers.authorization);
+
   if (request.method === "GET" && url.pathname === "/api/health") {
     const initialized = await options.client.start();
     sendJson(response, 200, {
@@ -210,14 +240,15 @@ async function handleApi(
       ...initialized,
       allowedWorkspaceRoots: options.paths.roots,
       media: { maxBytes: media.maxBytes, videoModel: media.model },
-      device: deviceInfo(),
+      device: auth.device,
+      protocolVersion: 1,
     });
     return;
   }
 
   if (request.method === "GET" && url.pathname === "/api/workspaces") {
     sendJson(response, 200, {
-      device: deviceInfo(),
+      device: auth.device,
       workspaces: projects.list(),
       creationLocations: projects.creationLocations(),
     });
@@ -285,7 +316,7 @@ async function handleApi(
     const name = requiredString(body.name, "name", 80);
     const parent = optionalString(body.parent, "parent", 4_096);
     const project = await projects.create(name, parent);
-    sendJson(response, 201, { device: deviceInfo(), project });
+    sendJson(response, 201, { device: auth.device, project });
     return;
   }
 
@@ -432,6 +463,14 @@ async function handleApi(
       await options.client.interrupt(operation.threadId, operation.turnId);
     }
     sendJson(response, 200, { operation: publicOperation(operation), interruptRequested: true });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/pairing/revoke") {
+    assertSameOrigin(request);
+    await readJson(request, true);
+    await auth.revoke(authenticatedClient.id);
+    sendJson(response, 200, { revoked: true });
     return;
   }
 
@@ -600,7 +639,7 @@ function assertSameOrigin(request: IncomingMessage): void {
 
 function assertWriteOrigin(request: IncomingMessage): void {
   const origin = request.headers.origin;
-  if (!origin) return;
+  if (!origin) throw new HttpError(403, "Origin header required for write requests");
   const host = request.headers.host;
   try {
     const parsed = new URL(origin);
@@ -626,7 +665,7 @@ function applyApiCors(request: IncomingMessage, response: ServerResponse): void 
   if (!allowedOrigin) return;
   response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
   response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
   response.setHeader("Vary", "Origin");
 }
 
@@ -664,12 +703,15 @@ function sendError(response: ServerResponse, error: unknown): void {
   }
   const status = error instanceof HttpError
     ? error.status
-    : error instanceof MediaError || error instanceof ProjectCreationError || error instanceof ProviderError
+    : error instanceof MediaError || error instanceof ProjectCreationError || error instanceof ProviderError || error instanceof GatewayAuthError
       ? error.statusCode
       : 500;
   const message = error instanceof Error ? error.message : String(error);
   if (status >= 500) process.stderr.write(`[codex-web] ${message}\n`);
-  sendJson(response, status, { error: message });
+  sendJson(response, status, {
+    error: message,
+    ...(error instanceof GatewayAuthError ? { code: error.code } : {}),
+  });
 }
 
 function broadcast(clients: Set<ServerResponse>, event: Record<string, unknown>): void {
@@ -785,14 +827,6 @@ function contentType(filename: string): string {
     default:
       return "application/octet-stream";
   }
-}
-
-function deviceInfo(): { id: string; name: string } {
-  const id = process.env.CODEX_DEVICE_ID === "phone" ? "phone" : "pc";
-  return {
-    id,
-    name: process.env.CODEX_DEVICE_NAME ?? (id === "phone" ? "이 스마트폰" : "내 PC"),
-  };
 }
 
 class HttpError extends Error {

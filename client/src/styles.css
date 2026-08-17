@@ -75,6 +75,18 @@ h1 { margin: 0; font-size: 1.05rem; letter-spacing: 0.01em; }
 .status-dot.error { background: var(--danger); }
 .status-dot.pending { animation: pulse 1.5s infinite; }
 
+.pairing-dialog { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgba(3, 8, 12, 0.9); backdrop-filter: blur(12px); }
+.pairing-card { width: min(100%, 25rem); display: grid; gap: 0.8rem; padding: 1.25rem; border: 1px solid rgba(157, 242, 213, 0.3); border-radius: 1.1rem; background: var(--surface); box-shadow: var(--shadow); text-align: center; }
+.pairing-lock { display: grid; place-items: center; width: 3rem; height: 3rem; margin: 0 auto; border-radius: 1rem; color: #06120e; background: var(--accent); font-size: 1.4rem; font-weight: 900; }
+.pairing-card h2, .pairing-card p { margin: 0; }
+.pairing-card h2 { font-size: 1.05rem; }
+.pairing-card p { color: var(--muted); font-size: 0.76rem; line-height: 1.5; }
+.pairing-card input { width: 100%; height: 3.25rem; padding: 0 0.8rem; border: 1px solid var(--line); border-radius: 0.75rem; color: var(--text); background: var(--surface-2); outline: none; text-align: center; font-size: 1.25rem; font-weight: 800; letter-spacing: 0.16em; }
+.pairing-card input:focus { border-color: var(--accent); box-shadow: 0 0 0 0.2rem rgba(157, 242, 213, 0.08); }
+.pairing-card button { height: 2.8rem; border: 0; border-radius: 0.72rem; color: #06120e; background: var(--accent); font-weight: 850; cursor: pointer; }
+.pairing-card button:disabled { opacity: 0.38; cursor: not-allowed; }
+.pairing-card small { color: var(--muted); font-size: 0.62rem; overflow-wrap: anywhere; }
+
 .selectors {
   display: grid;
   grid-template-columns: 0.72fr 0.9fr 1fr 1.3fr;

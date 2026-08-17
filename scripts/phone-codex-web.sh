@@ -24,7 +24,7 @@ LOG_FILE="$STATE_DIR/server.log"
 URL="http://127.0.0.1:$PORT"
 
 server_running() {
-    curl -fsS --max-time 2 "$URL/api/health" >/dev/null 2>&1
+    curl -fsS --max-time 2 "$URL/api/status" >/dev/null 2>&1
 }
 
 saved_pid_running() {

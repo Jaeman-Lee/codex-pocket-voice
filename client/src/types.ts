@@ -3,7 +3,8 @@ export type DeviceId = "pc" | "phone";
 export type ProviderId = "codex" | "claude";
 
 export interface DeviceInfo {
-  id: DeviceId;
+  id: string;
+  kind: "linux" | "android";
   name: string;
 }
 export type OperationStatus = "running" | "completed" | "interrupted" | "failed";
