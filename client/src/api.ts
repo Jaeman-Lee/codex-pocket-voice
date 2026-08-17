@@ -196,7 +196,7 @@ export function uploadMedia<T>(file: File, onProgress: (percentage: number) => v
       if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
     };
     request.onerror = () => reject(new Error(
-      `첨부 파일을 ${activeDevice === "phone" ? "스마트폰 Codex" : "PC"}로 보내지 못했습니다. 연결을 확인하세요.`,
+      "첨부 파일을 Linux PC로 보내지 못했습니다. PC 연결을 확인하세요.",
     ));
     request.onload = () => {
       const response = (request.response ?? {}) as UploadResponse<T>;
@@ -237,9 +237,7 @@ async function fetchJson<T>(path: string, init: RequestInit, authenticated: bool
   try {
     response = await fetch(apiUrl(path), init);
   } catch {
-    throw new Error(activeDevice === "phone"
-      ? "스마트폰 Codex 서버에 연결할 수 없습니다. 스마트폰 런타임 상태를 확인하세요."
-      : "Linux PC Companion에 연결할 수 없습니다. PC와 연결 상태를 확인하세요.");
+    throw new Error("Linux PC Companion에 연결할 수 없습니다. PC와 연결 상태를 확인하세요.");
   }
   if (!response.ok) await throwResponseError(response, authenticated);
   return response.json() as Promise<T>;
@@ -252,7 +250,7 @@ async function loadDeviceTargets(): Promise<DeviceTarget[]> {
   try {
     const parsed = JSON.parse(serialized) as unknown;
     if (!Array.isArray(parsed)) return defaults;
-    const saved = parsed.filter(isDeviceTarget);
+    const saved = parsed.filter(isDeviceTarget).filter((target) => target.kind === "linux");
     const mergedDefaults = defaults.map((target) => {
       const override = saved.find((item) => item.id === target.id);
       return override ? { ...target, name: override.name, remoteDeviceId: override.remoteDeviceId } : target;
@@ -270,10 +268,7 @@ async function saveDeviceTargets(): Promise<void> {
 
 function defaultDeviceTargets(): DeviceTarget[] {
   if (!isNativeApp()) return [{ id: "pc", name: "이 Linux PC", kind: "linux", baseUrl: "", builtIn: true }];
-  return [
-    { id: "pc", name: "내 Linux PC", kind: "linux", baseUrl: "http://127.0.0.1:8788", builtIn: true },
-    { id: "phone", name: "이 스마트폰", kind: "android", baseUrl: "http://127.0.0.1:8789", builtIn: true },
-  ];
+  return [{ id: "pc", name: "내 Linux PC", kind: "linux", baseUrl: "http://127.0.0.1:8788", builtIn: true }];
 }
 
 function isDeviceTarget(value: unknown): value is DeviceTarget {

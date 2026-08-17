@@ -4,4 +4,3 @@
 # separate Termux:Boot add-on with this same script.
 termux-wake-lock >/dev/null 2>&1 || true
 pc-codex-web start >/dev/null 2>&1 || true
-phone-codex-web start >/dev/null 2>&1 || true

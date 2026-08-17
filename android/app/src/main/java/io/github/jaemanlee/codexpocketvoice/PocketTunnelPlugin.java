@@ -58,14 +58,9 @@ public class PocketTunnelPlugin extends Plugin {
                 "/data/data/com.termux/files/usr/bin/pc-codex-web",
                 new String[] { "start" }
             );
-            startTermuxCommand(
-                "/data/data/com.termux/files/usr/bin/phone-codex-web",
-                new String[] { "start" }
-            );
             JSObject result = new JSObject();
             result.put("scheduled", true);
             result.put("pc", true);
-            result.put("phone", true);
             call.resolve(result);
         } catch (SecurityException error) {
             call.reject("Termux 명령 권한이 없습니다. 앱 설정의 추가 권한을 확인해 주세요.", error);

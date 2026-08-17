@@ -2,16 +2,16 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-스마트폰에서 한국어로 말하고, PC 또는 스마트폰의 Codex CLI가 실제 프로젝트를 수정하게 만드는 React 기반 모바일 인터페이스입니다. Android 앱과 설치형 PWA를 지원하며 별도의 Whisper·Realtime API 비용이 들지 않습니다.
+스마트폰에서 한국어로 말하고, Linux PC의 Codex CLI가 실제 프로젝트를 수정하게 만드는 React 기반 모바일 인터페이스입니다. Android 앱과 설치형 PWA를 지원하며 별도의 Whisper·Realtime API 비용이 들지 않습니다. 스마트폰은 UI·음성 입력·암호화 연결만 담당하고 Codex 실행과 미디어 처리는 PC에서 수행합니다.
 
 > Codex 모델 사용량은 사용자의 Codex 계정과 플랜 정책을 따릅니다. 이 프로젝트는 OpenAI의 공식 제품이 아닙니다.
 
 ## 핵심 기능
 
 - 시스템 언어 기반 Android·웹 받아쓰기와 한국어/영어 UI, 별도 음성 언어 선택
-- PC와 스마트폰의 여러 Git 프로젝트·기존 Codex 대화 선택
-- 실행 단말을 골라 새 Git 프로젝트 생성
-- 각 단말이 제공하는 Codex 모델과 지원 추론 성능을 실시간 조회·선택
+- 여러 Linux PC의 Git 프로젝트·기존 Codex 대화 선택
+- 실행할 PC를 골라 새 Git 프로젝트 생성
+- 각 PC가 제공하는 Codex 모델과 지원 추론 성능을 실시간 조회·선택
 - 실행 중에도 다음 프롬프트와 첨부를 대기열에 추가해 순차 실행
 - 단말·프로젝트·대화별 로컬 작업 저널과 오프라인 프롬프트 대기열
 - Codex·Claude Code 등을 독립 어댑터로 확장할 수 있는 AI 제공자 모듈
@@ -34,24 +34,23 @@ Android APK / browser PWA
   ├─ React mobile UI
   ├─ Android native / Web speech recognition (ko-KR)
   ├─ Android TTS
-  ├─ PC 선택 → http://127.0.0.1:8788
-  │                 │ background SSH port forwarding
-  │                 ▼
-  │              PC 127.0.0.1:8787
-  └─ 스마트폰 선택 → Termux 127.0.0.1:8789
+  └─ PC 선택 → http://127.0.0.1:8788
+                    │ background SSH port forwarding
+                    ▼
+                 PC 127.0.0.1:8787
 
-각 단말의 Codex Pocket web gateway
+Linux PC의 Codex Pocket web gateway
        ├─ ffmpeg → Qwen3-VL 4B (local Ollama, video frames)
        └─ codex app-server (text + selected images)
             └─ 선택하거나 새로 만든 Git workspace
 ```
 
-두 웹 서버와 Codex app-server는 각 단말의 loopback에만 노출됩니다. PC 서버는 스마트폰에서 SSH 터널을 통해서만 접근합니다.
+웹 서버와 Codex app-server는 PC의 loopback에만 노출되며 스마트폰에서는 SSH 터널을 통해서만 접근합니다.
 
 ## 요구 사항
 
 - PC: **Linux 전용**, Node.js 20 이상, Codex CLI, Git, tmux, SSH 서버, ffmpeg/ffprobe
-- Android: Termux, OpenSSH, Android Chrome 권장
+- Android: Termux, OpenSSH, Android Chrome 권장. Codex CLI와 로컬 AI 모델은 설치하지 않습니다.
 - 스마트폰에서 PC로 접속 가능한 SSH 경로(Tailscale 같은 사설망 권장)
 
 PC Companion의 공식 지원 대상은 Linux 데스크톱과 서버입니다. Windows와 macOS
@@ -170,14 +169,7 @@ APK는 React 화면을 앱 안에 포함하고, 실행될 때 Termux에 SSH 터�
 ./scripts/setup-android-app.sh
 ```
 
-이 설정은 `pc-codex-web`과 `phone-codex-web`을 함께 설치합니다. 스마트폰 쪽은 기본적으로
-`~/codex` 아래 Git 저장소를 찾아 `127.0.0.1:8789`에서 실행하며 다음 값으로 바꿀 수 있습니다.
-
-```sh
-export PHONE_PROJECTS_HOME=/private/phone/projects
-export PHONE_CODEX_ROOTS=/project/a:/project/b
-export CODEX_PHONE_WEB_PORT=8789
-```
+이 설정은 `pc-codex-web`만 설치합니다. 과거 버전의 `phone-codex-web`이 실행 중이면 중지하고 실행 링크를 제거해 스마트폰에서 Node.js·Codex 프로세스가 자동으로 다시 뜨지 않게 합니다.
 
 Android Studio가 설치된 PC에서 APK 프로젝트를 동기화하고 빌드합니다.
 
@@ -190,7 +182,7 @@ npm run android:debug
 
 F-Droid/GitHub판 Termux는 설치 후 Android의 앱 정보 → 권한(또는 추가 권한)에서 **Termux 명령 실행**을 허용합니다. Google Play판 Termux는 이 외부 명령 서비스를 제공하지 않는 대신 Termux:Boot가 본체에 통합되어 있으므로, `setup-android-app.sh`가 `~/.termux/boot` 시작 스크립트와 15분 간격 자가복구 작업을 등록합니다. 두 방식 모두 Termux가 강제로 종료되거나 배터리 최적화로 중지되면 Android 설정에서 Termux의 배터리 제한을 해제해야 할 수 있습니다.
 
-앱의 **실행 단말**에서 `내 PC` 또는 `이 스마트폰`을 선택할 수 있습니다. 프로젝트 옆 `＋`는 선택한 단말의 허용된 생성 위치에 폴더를 만들고 `git init --initial-branch=main`을 수행합니다. 모델과 성능 선택지는 단말의 Codex 카탈로그에서 읽으므로, 계정이나 CLI 버전에서 실제 지원하는 항목만 표시됩니다.
+앱의 **실행 단말**에서 연결된 Linux PC를 선택할 수 있습니다. 프로젝트 옆 `＋`는 선택한 PC의 허용된 생성 위치에 폴더를 만들고 `git init --initial-branch=main`을 수행합니다. 모델과 성능 선택지는 PC의 Codex 카탈로그에서 읽으므로, 계정이나 CLI 버전에서 실제 지원하는 항목만 표시됩니다.
 
 상단 `◎` 버튼의 **AI 연결 센터**는 선택한 단말에서 Codex·Claude Code CLI 설치와 로그인 상태를 확인하고, 공식 설치 안내·브라우저 로그인·비용 없는 연결 테스트를 한 화면에 표시합니다. 계정 별명만 선택적으로 이 스마트폰에 저장하며 비밀번호나 API 키는 앱에 입력하거나 저장하지 않습니다. 연결 테스트는 로그인 상태와 모델 카탈로그만 읽고 AI 프롬프트를 전송하지 않습니다.
 
@@ -198,7 +190,7 @@ F-Droid/GitHub판 Termux는 설치 후 Android의 앱 정보 → 권한(또는 �
 
 Codex 작업 중에도 입력·음성·첨부를 계속 사용할 수 있습니다. 이때 전송 버튼은 **대기열 +**로 바뀌며, 현재 작업이 끝나면 예약한 요청을 같은 프로젝트와 대화에서 순서대로 실행합니다. 각 예약 항목은 추가 당시의 모델·성능·네트워크 설정을 유지하며 시작 전 취소할 수 있습니다.
 
-v1.7부터 대화와 예약 프롬프트를 AES-GCM으로 암호화해 버전된 `WorkJournal` 저장소에 기록합니다. Android 암호화 키는 Keystore가 보호하며 기존 v1 평문 기록은 읽을 때 자동으로 암호화 형식으로 이전됩니다. PC 또는 스마트폰 CLI가 오프라인이어도 마지막 대화를 열람하고 요청을 예약할 수 있으며, 요청은 다른 단말로 넘기지 않고 원래 대상이 다시 연결된 뒤 실행됩니다.
+v1.7부터 대화와 예약 프롬프트를 AES-GCM으로 암호화해 버전된 `WorkJournal` 저장소에 기록합니다. Android 암호화 키는 Keystore가 보호하며 기존 v1 평문 기록은 읽을 때 자동으로 암호화 형식으로 이전됩니다. PC가 오프라인이어도 마지막 대화를 열람하고 요청을 예약할 수 있으며, 요청은 선택한 PC가 다시 연결된 뒤 실행됩니다.
 
 GitHub Actions의 APK는 저장소 비밀값에 보관된 고정 키로 서명됩니다. 1.2 이전 임시 디버그 APK는
 실행마다 서명이 달랐고 일부 Android 사용자 영역에 이전 서명이 남을 수 있어, 1.2.1부터 충돌 없는
@@ -209,7 +201,7 @@ GitHub Actions의 APK는 저장소 비밀값에 보관된 고정 키로 서명�
 
 현재 APK는 SSH 키를 앱에 복제하지 않고 기존 Termux SSH 설정을 사용합니다. Termux 없이 동작하는 네이티브 SSH 단계와 보안 설계는 [Android 앱 구조](docs/android-architecture.md)에 정리했습니다.
 
-향후 사용자별 SSH·네트워크·경로 정보를 온보딩 화면에서 설정하는 작업과, Termux·Tailscale이 담당하는 실행·보안 연결 기능을 독립 모듈로 내재화하는 최종 목표는 [로드맵](docs/roadmap.md)에 정리했습니다. 최종 버전에서도 PC와 스마트폰은 각각 실제 로컬 프로젝트와 CLI를 실행하는 동등한 개발 단말입니다. 실제 사용자 정보나 비밀키는 공개 저장소에 저장하지 않습니다.
+향후 사용자별 SSH·네트워크·경로 정보를 온보딩 화면에서 설정하는 작업과, Termux·Tailscale이 담당하는 보안 연결 기능을 독립 모듈로 내재화하는 최종 목표는 [로드맵](docs/roadmap.md)에 정리했습니다. 실제 프로젝트와 CLI는 Linux PC에만 두고 스마트폰은 저부하 클라이언트로 유지합니다. 실제 사용자 정보나 비밀키는 공개 저장소에 저장하지 않습니다.
 
 ## 보안 모델
 

@@ -38,9 +38,9 @@ Termux가 전혀 필요 없는 버전은 별도 보안 단계로 진행합니다
 
 현재 Termux 연동형은 이미 사용 중인 검증된 SSH 설정과 키를 재사용하므로 첫 APK 버전에 더 안전하고 구현 범위도 작습니다.
 
-## 목표 아키텍처: 연결과 실행의 독립 모듈화
+## 목표 아키텍처: 스마트폰은 저부하 클라이언트
 
-최종 목표는 스마트폰을 PC의 원격 입력기로 축소하는 것이 아니다. PC와 스마트폰이 각각 자기 로컬 프로젝트와 CLI를 실행하며, 앱은 두 실행 대상을 같은 수준으로 선택할 수 있어야 한다.
+스마트폰의 응답성과 배터리를 보호하기 위해 실제 프로젝트, CLI, 빌드, 테스트와 미디어 분석은 Linux PC에서만 실행합니다. 스마트폰은 화면, 음성 인식, 암호화된 작업 저널과 전송만 담당합니다.
 
 ```text
 Codex Pocket UI
@@ -49,15 +49,13 @@ Codex Pocket UI
   │    ├─ Codex
   │    └─ Claude Code
   ├─ RuntimeAdapter
-  │    ├─ TermuxRuntime             (현재 호환 모듈)
-  │    ├─ PocketRuntimeAndroid      (목표: 앱 내 스마트폰 CLI)
   │    └─ PocketCompanionRuntimeLinux (Linux PC CLI)
   └─ TransportAdapter
        ├─ SshTailscaleTransport     (현재 호환 모듈)
        └─ PocketLinkTransport       (목표: 내장 페어링·암호화 연결)
 ```
 
-`RuntimeAdapter`는 셸·Git·프로세스·CLI·작업공간을 담당하고, `TransportAdapter`는 단말 발견·인증·암호화·재연결만 담당한다. 따라서 Termux 대체 작업과 Tailscale/SSH 대체 작업을 별도 개발·테스트·배포할 수 있다. React UI나 provider 로그인 구현은 특정 런타임 또는 전송 기술에 직접 의존하지 않는다.
+`RuntimeAdapter`는 Linux PC의 셸·Git·프로세스·CLI·작업공간을 담당하고, `TransportAdapter`는 단말 발견·인증·암호화·재연결만 담당합니다. Termux는 현재 SSH 전송을 시작하는 데만 쓰며 Android에서 Codex나 Node.js 게이트웨이를 실행하지 않습니다.
 
 PC Companion의 공식 실행 환경은 Linux로 한정한다. Windows/macOS용 런타임,
 설치 패키지, 프로세스 관리 및 플랫폼별 테스트는 구현하지 않는다. 다만 현재의
@@ -72,12 +70,12 @@ PC Companion의 공식 실행 환경은 Linux로 한정한다. Windows/macOS용 
 - 장치 해제, 키 교체, 장치 이름 확인, 재연결, 중간자 공격 방지 테스트를 제공한다.
 - 사용자는 Tailscale, IP, SSH 키, 포트를 입력하지 않아도 된다.
 
-### PocketRuntimeAndroid 완료 조건
+### Android 저부하 완료 조건
 
-- PC 연결 없이 스마트폰의 실제 프로젝트를 생성·수정·테스트하고 Git 기록을 유지한다.
+- Android에서 Codex, Node.js 웹 게이트웨이, Git 작업, ffmpeg, Ollama와 모델 가중치를 실행하지 않는다.
+- PC가 오프라인이면 요청을 암호화된 대기열에 두고 폰에서 대체 실행하지 않는다.
 - 앱이 종료되거나 Android가 백그라운드 프로세스를 회수해도 작업 상태를 복구한다.
-- Codex·Claude Code 등 provider CLI의 설치, 계정 연결, 버전 확인과 업데이트를 독립 어댑터로 관리한다.
-- 프로젝트 경로와 명령 권한을 제한하며 provider 자격 증명을 WebView나 일반 localStorage에 노출하지 않는다.
-- Termux는 필수가 아닌 호환·전환용 런타임으로 남는다.
+- 장시간 연결에서 CPU·메모리·배터리 사용량을 측정하고 회귀 테스트한다.
+- Termux는 네이티브 전송 모듈이 완성될 때까지만 SSH 호환 계층으로 남는다.
 
 구현 세부 단계와 최종 완료 기준은 [로드맵](roadmap.md)에 기록한다.

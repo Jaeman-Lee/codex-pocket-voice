@@ -34,34 +34,34 @@ Remove environment-specific assumptions from the installation flow and expose th
 
 Configuration must remain local to the user's device, avoid source-control commits, validate paths and ports, and redact credentials and identifying network details from logs and support exports. Prefer Android-protected storage for app-owned secrets. The setup UI should explain when a setting belongs to the Android app, Termux, or the PC.
 
-## Product invariant — both devices are real coding targets
+## Product invariant — the phone stays a lightweight client
 
-Codex Pocket must never become only a remote chat screen. The PC and the smartphone are equal, first-class execution targets:
+Codex Pocket intentionally runs development workloads on Linux PCs so Android remains responsive:
 
-- Each device connects to its own Codex, Claude Code, or future CLI account.
-- Each device can create and modify real local projects, run commands and tests, and retain Git state.
-- Prompts, responses, command events, diffs, attachments, and queue state are stored locally for offline review.
-- Work queued while a target is offline resumes only after that target reconnects; it must not silently move to another device or a cloud runner.
+- Each Linux PC connects to its own Codex, Claude Code, or future CLI account.
+- Linux PCs create and modify real local projects, run commands and tests, process media, and retain Git state.
+- Android handles the UI, speech recognition, encrypted connection state, offline history, and prompt queues without starting a local Codex or Node.js gateway.
+- Work queued while a PC is offline resumes only after that PC reconnects; it must not silently move to another PC or a cloud runner.
 - An optional Pocket account pairs devices and syncs encrypted metadata. It does not replace the CLI or become the owner of project files.
 
-Model inference can still require internet access, but project files and completed work records must remain available on the device that performed the work.
+Model inference can still require internet access, but project files and execution records remain on the PC that performed the work. The phone keeps only the encrypted client-side journal needed for review and queueing.
 
 ## Phase 3 — durable local work journal
 
 Implementation status: v1.6 introduces the versioned `WorkJournal` boundary, IndexedDB persistence with a localStorage fallback, offline conversation restore, and target-bound prompt queue recovery. Native Android SQLite, full event/diff journaling, retention controls, and reconciliation migrations remain in progress.
 
 - Add an app-owned SQLite work journal for conversations, queued prompts, command events, diffs, attachments, and target metadata.
-- Make project history and completed results readable while PC, phone CLI, or network connectivity is unavailable.
+- Make project history and completed results readable while the PC or network connectivity is unavailable.
 - Reconcile the local journal with each CLI thread store after reconnection without duplicating turns.
-- Clearly distinguish `saved locally`, `queued`, `running on phone`, `running on PC`, and `synced` states.
+- Clearly distinguish `saved on phone`, `queued for PC`, `running on PC`, and `synced` states.
 - Provide export, retention, and delete controls without placing private content in the public repository.
 
-## Phase 4 — first-class smartphone development runtime
+## Phase 4 — first-class remote PC workflow
 
-- Keep the phone CLI runner independent from the PC runner.
-- Add phone project creation, file browsing, diff review, test output, Git status, and recovery from interrupted background work.
-- Treat the current Termux integration as the first `RuntimeAdapter`, not as permanent application architecture.
-- Automate compatible Termux setup and health recovery while the embedded runtime is being developed.
+- Add PC project creation, file browsing, diff review, test output, Git status, and recovery from interrupted background work.
+- Keep every resource-intensive process, including Codex, Node.js, ffmpeg, and Ollama, off Android.
+- Measure Android CPU, memory, battery, and background wake time as release gates.
+- Make offline and reconnect states explicit without starting a fallback phone runtime.
 
 ## Phase 5 — embedded secure device transport
 
@@ -75,14 +75,14 @@ Develop transport as an independently testable module with a stable interface:
 
 The end-state UX must not require users to install, configure, or understand Tailscale, SSH keys, IP addresses, or port forwarding. Tailscale and SSH remain optional compatibility transports.
 
-## Phase 6 — embedded Android CLI runtime
+## Phase 6 — lightweight native Android transport
 
-Develop the functions currently supplied by Termux as a separate runtime module rather than coupling them to the React UI:
+Replace the remaining Termux transport dependency without embedding a development runtime:
 
-- `TermuxRuntime`: maintained compatibility adapter.
-- `PocketRuntimeAndroid`: app-owned foreground execution service, process supervisor, PTY, workspace filesystem, Git, shell toolchain, CLI lifecycle, logs, and safe update channel.
-- Provider adapters remain separate from the runtime so Codex, Claude Code, and future CLIs can be installed, authenticated, updated, tested, and removed independently.
-- Runtime permissions, workspace roots, command policy, and credentials must have native security boundaries and auditable tests.
+- `SshTailscaleTransport`: maintained compatibility adapter through Termux.
+- `PocketLinkTransport`: app-owned pairing, encrypted connection, reconnect, and notification transport.
+- Provider adapters and all CLI lifecycle management remain in the Linux Companion.
+- The Android service must enforce a small memory/CPU budget and must never download or execute Codex, Node.js, Git, ffmpeg, Ollama, or model weights.
 
 The implementation may reuse appropriately licensed open-source components, but must not copy Termux or Tailscale credentials, identity, or configuration into the application.
 
@@ -90,7 +90,8 @@ The implementation may reuse appropriately licensed open-source components, but 
 
 - A user installs Codex Pocket on Android and Pocket Companion on each supported Linux computer they want to use.
 - Pairing is completed once with a QR or one-time code.
-- The user can select `this smartphone` or any paired PC and run that device's CLI against that device's real files.
-- Code, Git state, and work history persist locally and remain reviewable offline.
+- The user can select any paired Linux PC and run that PC's CLI against that PC's real files.
+- Code and Git state persist on the selected PC; encrypted conversation history remains reviewable on the phone while offline.
 - Termux and Tailscale are not required installations; their adapters remain available for migration and advanced users.
+- No Codex, Node.js gateway, media model, or project build runs on Android.
 - No provider password, API key, SSH private key, device private key, or personal network value is committed to source control or stored in plaintext UI storage.

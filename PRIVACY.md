@@ -1,7 +1,8 @@
 # Privacy
 
 Codex Pocket Voice does not operate an application account service and does not
-collect analytics. Project files stay on the selected Android or Linux device.
+collect analytics. Project files and AI execution stay on the selected Linux PC;
+the Android app stores only client state needed to display and queue that work.
 
 The app stores the following locally:
 
@@ -10,12 +11,13 @@ The app stores the following locally:
 - encrypted conversation summaries and queued prompts;
 - uploaded media and generated frames on the target device for the configured
   retention period;
-- CLI-owned session and authentication data managed by Codex or Claude Code.
+- CLI-owned session and authentication data managed by Codex or Claude Code on
+  the selected Linux PC.
 
 Model inference follows the selected CLI provider's account and privacy terms.
-Optional local Ollama video analysis stays on the target Linux PC, while the
+Optional local Ollama video analysis runs on the target Linux PC, while the
 resulting summary and selected frames may be included in a later Codex request.
 
 Android application backup is disabled. Uninstalling the app removes app-owned
-Android data; CLI files, projects, Termux data, and Linux Companion state must be
-removed separately by their owner.
+Android data; CLI files, projects, uploaded media, Termux tunnel configuration,
+and Linux Companion state must be removed separately by their owner.
