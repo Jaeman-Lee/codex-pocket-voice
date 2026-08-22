@@ -84,8 +84,13 @@ function validateProjectName(value: string): string {
 }
 
 function runGitInit(cwd: string): Promise<void> {
+  return runGit(cwd, ["init", "--quiet"])
+    .then(() => runGit(cwd, ["symbolic-ref", "HEAD", "refs/heads/main"]));
+}
+
+function runGit(cwd: string, args: string[]): Promise<void> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn("git", ["init", "--initial-branch=main"], {
+    const child = spawn("git", args, {
       cwd,
       stdio: ["ignore", "ignore", "pipe"],
     });
@@ -94,7 +99,7 @@ function runGitInit(cwd: string): Promise<void> {
     child.once("error", reject);
     child.once("exit", (code) => {
       if (code === 0) resolvePromise();
-      else reject(new Error(`Git 저장소 초기화 실패${stderr.trim() ? `: ${stderr.trim().slice(-500)}` : ""}`));
+      else reject(new Error(`Git 명령 실패 (${args.join(" ")})${stderr.trim() ? `: ${stderr.trim().slice(-500)}` : ""}`));
     });
   });
 }

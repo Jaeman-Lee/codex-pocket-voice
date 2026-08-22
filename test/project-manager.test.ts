@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -16,6 +16,7 @@ test("ProjectManager creates a git project only inside configured roots", async 
   assert.equal(created.name, "새-프로젝트");
   assert.equal(created.gitInitialized, true);
   assert.equal((await stat(join(created.path, ".git"))).isDirectory(), true);
+  assert.equal((await readFile(join(created.path, ".git", "HEAD"), "utf8")).trim(), "ref: refs/heads/main");
   assert.equal(paths.isAllowed(created.path), true);
 
   await assert.rejects(

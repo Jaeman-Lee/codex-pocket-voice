@@ -1,4 +1,4 @@
-export const APP_VERSION = "1.7.3";
+export const APP_VERSION = "1.7.4";
 export const GATEWAY_PROTOCOL_VERSION = 2;
 export const GATEWAY_PROTOCOL_MINIMUM = 2;
 
