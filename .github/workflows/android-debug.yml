@@ -50,7 +50,10 @@ jobs:
 
       - name: Read application version
         id: app
-        run: echo "version=$(node -p 'require(\"./package.json\").version')" >> "$GITHUB_OUTPUT"
+        run: |
+          version=$(node -p "JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version")
+          test -n "$version"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
       - name: Build unsigned release APK
         run: npm run android:sync && cd android && ./gradlew assembleRelease

@@ -22,7 +22,8 @@
     "web": "node dist/src/web-index.js",
     "web:dev": "node --import tsx src/web-index.ts",
     "test": "npm run build:client && node --import tsx --test test/*.test.ts",
-    "test:integration": "node --import tsx --test test/integration/*.test.ts"
+    "test:integration": "node --import tsx --test test/integration/*.test.ts",
+    "release:check": "./scripts/release-check.sh"
   },
   "dependencies": {
     "@capacitor/core": "8.5.0",

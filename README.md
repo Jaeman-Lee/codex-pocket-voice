@@ -2,6 +2,10 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+현재 정식 배포는 `v1.6.0`이며 `1.7.4`는 현장 테스트 중인 candidate입니다. 실제 배포
+상태는 [Deployment inventory](docs/deployment-inventory.md), 변경 이력은
+[Changelog](CHANGELOG.md), 출시 절차는 [Release process](docs/release-process.md)를 참고하세요.
+
 스마트폰에서 한국어로 말하고, Linux PC의 Codex CLI가 실제 프로젝트를 수정하게 만드는 React 기반 모바일 인터페이스입니다. Android 앱과 설치형 PWA를 지원하며 별도의 Whisper·Realtime API 비용이 들지 않습니다. 스마트폰은 UI·음성 입력·암호화 연결만 담당하고 Codex 실행과 미디어 처리는 PC에서 수행합니다.
 
 > Codex 모델 사용량은 사용자의 Codex 계정과 플랜 정책을 따릅니다. 이 프로젝트는 OpenAI의 공식 제품이 아닙니다.
