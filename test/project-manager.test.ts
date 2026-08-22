@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -26,4 +26,14 @@ test("ProjectManager creates a git project only inside configured roots", async 
     projects.create("another", join(parent, "not-allowed")),
     (error: unknown) => error instanceof ProjectCreationError && error.statusCode === 400,
   );
+});
+
+test("ProjectManager creates a configured project location when it is missing", async (t) => {
+  const sandbox = await mkdtemp(join(tmpdir(), "codex-project-location-"));
+  t.after(() => rm(sandbox, { recursive: true, force: true }));
+  const creationRoot = join(sandbox, "workspace");
+  const paths = await PathPolicy.fromEnvironment(sandbox);
+  const projects = await ProjectManager.fromEnvironment(paths, creationRoot);
+
+  assert.deepEqual(projects.creationLocations(), [{ path: await realpath(creationRoot), name: "workspace" }]);
 });

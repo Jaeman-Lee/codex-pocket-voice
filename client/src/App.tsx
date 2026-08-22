@@ -138,6 +138,7 @@ export function App() {
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectParent, setNewProjectParent] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
+  const [projectCreatorError, setProjectCreatorError] = useState("");
   const [promptQueue, setPromptQueue] = useState<QueuedPrompt[]>([]);
   const [showConnectionCenter, setShowConnectionCenter] = useState(false);
   const [testingProvider, setTestingProvider] = useState<ProviderId | null>(null);
@@ -1125,7 +1126,16 @@ export function App() {
 
   async function createProject() {
     const name = newProjectName.trim();
-    if (!name || creatingProject) return;
+    if (creatingProject) return;
+    if (!name) {
+      setProjectCreatorError("프로젝트 이름을 입력해 주세요.");
+      return;
+    }
+    if (creationLocations.length === 0) {
+      setProjectCreatorError("PC에 프로젝트 생성 위치가 없습니다. Linux Companion을 업데이트한 뒤 다시 연결해 주세요.");
+      return;
+    }
+    setProjectCreatorError("");
     setCreatingProject(true);
     try {
       const data = await api<{ project: Workspace }>("/api/projects", {
@@ -1138,7 +1148,9 @@ export function App() {
       await selectWorkspace(data.project.path);
       showToast(`${deviceLabel(deviceRef.current)}에 ${data.project.name} 프로젝트를 만들었습니다.`);
     } catch (error) {
-      showToast(errorMessage(error));
+      const message = errorMessage(error);
+      setProjectCreatorError(message);
+      showToast(message);
     } finally {
       setCreatingProject(false);
     }
@@ -1422,9 +1434,14 @@ export function App() {
             <button
               className="icon-button"
               type="button"
-              disabled={activity.running || controlsCollapsed || creationLocations.length === 0}
+              disabled={activity.running || controlsCollapsed}
               aria-label={`${deviceLabel(device)}에 새 프로젝트 만들기`}
-              onClick={() => setShowProjectCreator(true)}
+              onClick={() => {
+                setProjectCreatorError(creationLocations.length === 0
+                  ? "PC에 프로젝트 생성 위치가 없습니다. Linux Companion을 업데이트한 뒤 다시 연결해 주세요."
+                  : "");
+                setShowProjectCreator(true);
+              }}
             >＋</button>
           </div>
         </label>
@@ -1635,13 +1652,17 @@ export function App() {
                 placeholder="예: my-new-app"
                 autoFocus
                 disabled={creatingProject}
-                onChange={(event) => setNewProjectName(event.target.value)}
+                onChange={(event) => {
+                  setNewProjectName(event.target.value);
+                  if (projectCreatorError) setProjectCreatorError("");
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") void createProject();
                 }}
               />
             </label>
-            <button className="create-project-button" type="button" disabled={creatingProject || !newProjectName.trim() || creationLocations.length === 0} onClick={() => void createProject()}>
+            {projectCreatorError && <p className="project-dialog-error" role="alert">{projectCreatorError}</p>}
+            <button className="create-project-button" type="button" disabled={creatingProject} onClick={() => void createProject()}>
               {creatingProject ? "만드는 중…" : `${deviceLabel(device)}에 만들기`}
             </button>
           </div>

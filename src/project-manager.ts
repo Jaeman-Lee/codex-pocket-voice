@@ -30,6 +30,7 @@ export class ProjectManager {
   ): Promise<ProjectManager> {
     const roots: string[] = [];
     for (const candidate of value?.split(delimiter).filter(Boolean) ?? []) {
+      await mkdir(resolve(candidate), { recursive: true, mode: 0o700 }).catch(() => undefined);
       const canonical = await realpath(resolve(candidate)).catch(() => null);
       if (!canonical) continue;
       const info = await stat(canonical).catch(() => null);

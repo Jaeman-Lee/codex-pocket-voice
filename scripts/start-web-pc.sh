@@ -3,6 +3,7 @@ set -eu
 
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 projects_home=${CODEX_PROJECTS_HOME:-"$HOME/workspace"}
+mkdir -p -- "$projects_home"
 
 if [ -z "${CODEX_VOICE_ROOTS:-}" ] && [ -d "$projects_home" ]; then
   CODEX_VOICE_ROOTS=$(find "$projects_home" -maxdepth 7 -type d -name .git -printf '%h\n' 2>/dev/null | sort -u | paste -sd ':' -)
