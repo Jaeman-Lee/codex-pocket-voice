@@ -145,9 +145,9 @@ select {
 .create-project-button { height: 2.8rem; border: 0; border-radius: 0.72rem; color: #06120e; background: var(--accent); font-weight: 800; cursor: pointer; }
 .create-project-button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.connection-center { position: fixed; z-index: 30; inset: 0; display: grid; justify-items: center; overflow-y: auto; padding: max(0.75rem, env(safe-area-inset-top)) 0.75rem max(0.75rem, env(safe-area-inset-bottom)); background: rgba(3, 8, 12, 0.82); backdrop-filter: blur(10px); }
-.connection-center-sheet { width: min(100%, 42rem); margin: auto 0; padding: 1rem; border: 1px solid var(--line); border-radius: 1.15rem; background: var(--surface); box-shadow: var(--shadow); }
-.connection-center-head { display: flex; align-items: flex-start; gap: 1rem; }
+.connection-center { position: fixed; z-index: 30; inset: 0; display: grid; grid-template-rows: minmax(0, 1fr); justify-items: center; min-height: 0; overflow: hidden; padding: max(0.75rem, env(safe-area-inset-top)) 0.75rem max(0.75rem, env(safe-area-inset-bottom)); background: rgba(3, 8, 12, 0.82); backdrop-filter: blur(10px); }
+.connection-center-sheet { align-self: center; width: min(100%, 42rem); max-width: 100%; max-height: 100%; min-width: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; padding: 1rem; border: 1px solid var(--line); border-radius: 1.15rem; background: var(--surface); box-shadow: var(--shadow); }
+.connection-center-head { position: sticky; z-index: 2; top: -1rem; display: flex; align-items: flex-start; gap: 1rem; margin: -1rem -1rem 0; padding: 1rem; border-bottom: 1px solid transparent; background: var(--surface); }
 .connection-center-head > div { flex: 1; min-width: 0; }
 .connection-center-head strong, .connection-center-head small { display: block; }
 .connection-center-head strong { font-size: 1.08rem; }
@@ -399,6 +399,9 @@ textarea::placeholder { color: #6f8285; }
   .preference-grid { grid-template-columns: 1fr; }
   .device-create-row { grid-template-columns: minmax(0, 1fr) 5rem; }
   .device-create-row button { grid-column: 1 / -1; }
+  .connection-center { padding: max(0.4rem, env(safe-area-inset-top)) 0.4rem max(0.4rem, env(safe-area-inset-bottom)); }
+  .connection-center-sheet { align-self: stretch; padding: 0.8rem; border-radius: 0.9rem; }
+  .connection-center-head { top: -0.8rem; margin: -0.8rem -0.8rem 0; padding: 0.8rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {
