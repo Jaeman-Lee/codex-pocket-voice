@@ -7,8 +7,8 @@
 Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 저널·전송 계층을 확장하는
 호환 불가능한 v2 작업이므로 `breaking`으로 분류하고 `2.0.0`/Android `versionCode 20000`으로
 올린다. 구현 대상은 `feature/v2-control-plane` 브랜치이다. 아직 2.0 APK를 현장 전달하지 않으며
-1.8.1을 current v1 기준선, 1.7.4를 기존 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
-때 1.8.1을 rollback 세트로 승격한다.
+1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
+때도 1.8.1 rollback을 보존한다.
 
 - Codex 실행·취소·stream event를 Provider 공통 runtime 계약 뒤로 이동했다.
 - Provider capability를 streaming, 승인, workspace 읽기·쓰기, 명령 실행과 사용량 기록까지 확장했다.
@@ -20,7 +20,20 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   허용하고, 만료되거나 오프라인인 요청을 자동 승인하지 않는다.
 - 세션 인계를 프로젝트·대화별로 격리하고, 다른 프로젝트의 인계 세션이 현재 프로젝트처럼 보이던
   문제를 수정했다. v1 단일 handoff 상태는 손실 없이 다중 상태로 마이그레이션한다.
+- Codex 원본 notification과 OpenAI SSE를 `output.delta`, `tool.started`, `workspace.diff`,
+  `usage.updated` 등 공통 이벤트로 즉시 정규화하고 기존 Codex 모바일 이벤트 호환은 유지한다.
+- 공식 OpenAI JavaScript SDK로 server-only API key, `0600` key 파일, 명시적 모델 허용 목록,
+  `store:false` chat-only streaming, 이미지 입력, 사용량·중단·timeout과 오류 redaction을 구현했다.
+- 공개 검사는 실제 유료 AI 요청 없이 가짜 OpenAI stream과 Models 목록만 사용한다. OpenAI API
+  모드의 workspace 읽기·쓰기·명령·대화 재개는 Tool Broker와 durable journal 전까지 비활성화한다.
 - 이 기준선은 CI·개발용이며 v1.8.1 설치본이나 실행 중인 Companion을 교체하지 않는다.
+
+## 1.8.2 hotfix candidate — project-scoped session handoff
+
+Update decision: 다른 프로젝트의 인계 세션과 실행이 현재 프로젝트의 세션 종료·반납 대상으로
+보이는 버그 수정이므로 `patch`/`1.8.2`, Android `versionCode 10802`로 분류했다. 서명 APK는
+hotfix PR #4의 Actions 후보로 준비했으며, 1.8.1을 rollback으로 보존한다. 설치와 Companion
+재시작은 사용자 확인 전에는 수행하지 않는다.
 
 ## 1.8.1 patch candidate — mobile viewport containment
 
@@ -69,7 +82,8 @@ Candidate build history:
 | 1.7.3 | `c6b0440` | CI only | 연결 센터 모바일 레이아웃 수정 |
 | 1.7.4 | `91f27b4` | superseded field build | 구형 Git 프로젝트 생성 호환 |
 | 1.8.0 | `5c4d0bb` | superseded candidate | 교차 기기 세션 인계와 순차 배포 호환 |
-| 1.8.1 | `c5563ec` | current CI candidate | 스마트폰 뷰포트 수용과 조절 가능한 WebView |
+| 1.8.1 | `c5563ec` | rollback candidate | 스마트폰 뷰포트 수용과 조절 가능한 WebView |
+| 1.8.2 | `d76e478` | current install candidate | 프로젝트별 세션 인계와 종료 대상 격리 |
 
 ## 1.6.0 — 2026-08-16
 

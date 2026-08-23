@@ -50,6 +50,7 @@ export interface WebServerOptions {
   projects?: ProjectManager;
   auth?: GatewayAuth;
   handoffs?: SessionHandoffStore;
+  providers?: ProviderRegistry;
 }
 
 export interface RunningWebServer {
@@ -67,6 +68,7 @@ interface RunBody {
   prompt?: unknown;
   cwd?: unknown;
   threadId?: unknown;
+  conversationId?: unknown;
   networkAccess?: unknown;
   model?: unknown;
   effort?: unknown;
@@ -100,7 +102,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   const handoffs = options.handoffs ?? await SessionHandoffStore.create(
     process.env.CODEX_POCKET_HANDOFF_STATE ?? join(dirname(auth.stateFile), "session-handoff.json"),
   );
-  const providers = new ProviderRegistry(options.client);
+  const providers = options.providers ?? new ProviderRegistry(options.client);
   const providerLogins = new ProviderLoginManager(providers);
   const runs = new RunCoordinator(providers, {
     assertWorkspace: (cwd) => options.paths.assertAllowed(cwd),
@@ -483,10 +485,18 @@ async function handleApi(
     const provider = optionalString(body.provider, "provider", 40) ?? "codex";
     const accountId = optionalString(body.accountId, "accountId", 100);
     const threadId = optionalString(body.threadId, "threadId", 200);
+    const requestedConversationId = optionalString(body.conversationId, "conversationId", 200);
+    if (threadId && provider !== "codex") {
+      throw new HttpError(409, "threadId is reserved for Codex conversations; use conversationId for this provider");
+    }
+    if (threadId && requestedConversationId && threadId !== requestedConversationId) {
+      throw new HttpError(400, "threadId and conversationId must identify the same Codex conversation");
+    }
+    const conversationId = requestedConversationId ?? threadId;
     const requestedCwd = optionalString(body.cwd, "cwd", 4_096);
     let cwd: string;
-    if (threadId) {
-      const existing = await options.client.readThread(threadId, false);
+    if (conversationId && provider === "codex") {
+      const existing = await options.client.readThread(conversationId, false);
       options.paths.assertAllowed(existing.thread.cwd);
       cwd = await options.paths.resolveWorkspace(requestedCwd ?? existing.thread.cwd);
     } else {
@@ -508,7 +518,7 @@ async function handleApi(
       accountId,
       prompt,
       input: {
-        conversationId: threadId,
+        conversationId,
         cwd,
         prompt: `${prompt}${attachmentInput.promptContext}`,
         imagePaths: attachmentInput.imagePaths,
@@ -559,66 +569,113 @@ async function handleApi(
 }
 
 function sanitizeNotification(notification: ProviderEvent): Record<string, unknown> | null {
-  const params = isRecord(notification.params) ? notification.params : {};
   const threadId = notification.conversationId;
-  if (!threadId) return null;
+  if (notification.providerId !== "codex") return sanitizeCommonProviderEvent(notification);
 
-  switch (notification.method) {
-    case "item/agentMessage/delta":
+  switch (notification.kind) {
+    case "output.delta":
       return {
         type: "codex",
         providerId: notification.providerId,
-        method: notification.method,
-        params: pick(params, ["threadId", "turnId", "itemId", "delta"]),
-      };
-    case "turn/diff/updated":
-      return {
-        type: "codex",
-        providerId: notification.providerId,
-        method: notification.method,
-        params: { ...pick(params, ["threadId", "turnId"]), diff: truncateText(params.diff) },
-      };
-    case "turn/started":
-    case "turn/completed":
-      return {
-        type: "codex",
-        providerId: notification.providerId,
-        method: notification.method,
+        method: "item/agentMessage/delta",
         params: {
           threadId,
-          turnId: isRecord(params.turn) && typeof params.turn.id === "string" ? params.turn.id : undefined,
-          status: isRecord(params.turn) ? params.turn.status : undefined,
+          turnId: notification.runId,
+          itemId: notification.itemId,
+          delta: notification.delta,
         },
       };
-    case "item/started":
-    case "item/completed": {
-      const item = isRecord(params.item) ? params.item : {};
+    case "workspace.diff":
       return {
         type: "codex",
         providerId: notification.providerId,
-        method: notification.method,
+        method: "turn/diff/updated",
+        params: { threadId, turnId: notification.runId, diff: truncateText(notification.diff) },
+      };
+    case "run.started":
+    case "run.completed":
+      return {
+        type: "codex",
+        providerId: notification.providerId,
+        method: notification.kind === "run.started" ? "turn/started" : "turn/completed",
         params: {
-          ...pick(params, ["threadId", "turnId"]),
+          threadId,
+          turnId: notification.runId,
+          status: notification.status,
+        },
+      };
+    case "tool.started":
+    case "tool.completed": {
+      const item = notification.tool;
+      return {
+        type: "codex",
+        providerId: notification.providerId,
+        method: notification.kind === "tool.started" ? "item/started" : "item/completed",
+        params: {
+          threadId,
+          turnId: notification.runId,
           item: {
             type: item.type,
             id: item.id,
             command: truncateText(item.command, 4_000),
             status: item.status,
-            paths: Array.isArray(item.changes)
-              ? item.changes
-                  .filter(isRecord)
-                  .map((change) => change.path)
-                  .filter((path): path is string => typeof path === "string")
-              : undefined,
+            paths: item.paths,
           },
         },
       };
     }
-    case "error":
+    case "run.failed":
+      return {
+        type: "codex",
+        providerId: notification.providerId,
+        method: "error",
+        params: { threadId, turnId: notification.runId, message: truncateText(notification.message, 4_000) },
+      };
     case "warning":
-      return { type: "codex", providerId: notification.providerId, method: notification.method, params };
+      return {
+        type: "codex",
+        providerId: notification.providerId,
+        method: "warning",
+        params: { threadId, turnId: notification.runId, message: truncateText(notification.message, 4_000) },
+      };
     default:
       return null;
+  }
+}
+
+function sanitizeCommonProviderEvent(notification: ProviderEvent): Record<string, unknown> {
+  const base = {
+    type: "provider",
+    providerId: notification.providerId,
+    conversationId: notification.conversationId,
+    runId: notification.runId,
+    eventId: notification.eventId,
+    sequence: notification.sequence,
+    kind: notification.kind,
+  };
+  switch (notification.kind) {
+    case "output.delta":
+      return { ...base, delta: truncateText(notification.delta) };
+    case "workspace.diff":
+      return { ...base, diff: truncateText(notification.diff) };
+    case "tool.started":
+    case "tool.completed":
+      return {
+        ...base,
+        tool: {
+          ...notification.tool,
+          command: truncateText(notification.tool.command, 4_000),
+          paths: notification.tool.paths?.slice(0, 200),
+        },
+      };
+    case "usage.updated":
+      return { ...base, usage: notification.usage };
+    case "run.started":
+    case "run.completed":
+      return { ...base, status: notification.status };
+    case "run.failed":
+    case "warning":
+      return { ...base, message: truncateText(notification.message, 4_000) };
   }
 }
 
@@ -853,10 +910,6 @@ function isLoopbackName(host: string): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function pick(source: Record<string, unknown>, keys: string[]): Record<string, unknown> {
-  return Object.fromEntries(keys.filter((key) => source[key] !== undefined).map((key) => [key, source[key]]));
 }
 
 function truncateText(value: unknown, limit = MAX_EVENT_TEXT): string | undefined {

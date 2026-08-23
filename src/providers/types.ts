@@ -26,15 +26,40 @@ export interface ProviderRun {
   completion: Promise<ProviderRunCompletion>;
 }
 
-export interface ProviderEvent {
+interface ProviderEventBase {
   providerId: ProviderId;
-  conversationId?: string;
+  conversationId: string;
   runId?: string;
   eventId?: string;
   sequence?: number;
-  method: string;
-  params?: unknown;
 }
+
+export interface ProviderUsage {
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  totalTokens?: number;
+}
+
+export interface ProviderToolSummary {
+  type: string;
+  id?: string;
+  command?: string;
+  status?: string;
+  paths?: string[];
+}
+
+export type ProviderEvent = ProviderEventBase & (
+  | { kind: "run.started"; status?: string }
+  | { kind: "output.delta"; delta: string; itemId?: string }
+  | { kind: "workspace.diff"; diff: string }
+  | { kind: "tool.started" | "tool.completed"; tool: ProviderToolSummary }
+  | { kind: "usage.updated"; usage: ProviderUsage }
+  | { kind: "run.completed"; status: ProviderRunStatus }
+  | { kind: "run.failed"; message: string }
+  | { kind: "warning"; message: string }
+);
 
 export interface ProviderRuntime {
   startRun(input: ProviderRunInput): Promise<ProviderRun>;

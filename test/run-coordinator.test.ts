@@ -33,13 +33,14 @@ test("RunCoordinator owns lifecycle state and forwards only active provider even
     providerId: "fake",
     conversationId: "conversation-1",
     runId: "run-1",
-    method: "output.delta",
-    params: { delta: "working" },
+    kind: "output.delta",
+    delta: "working",
   });
   providers.emit({
     providerId: "fake",
     conversationId: "another-conversation",
-    method: "output.delta",
+    kind: "output.delta",
+    delta: "ignored",
   });
   assert.equal(events.filter((event) => event.type === "provider").length, 1);
 
@@ -50,7 +51,8 @@ test("RunCoordinator owns lifecycle state and forwards only active provider even
   providers.emit({
     providerId: "fake",
     conversationId: "conversation-1",
-    method: "output.delta",
+    kind: "output.delta",
+    delta: "too late",
   });
   assert.equal(events.filter((event) => event.type === "provider").length, 1);
   coordinator.close();

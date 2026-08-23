@@ -9,11 +9,12 @@ import { ProviderRegistry } from "../src/providers/registry.js";
 test("provider runtime normalizes Codex runs, events, completion, and cancellation", async () => {
   const client = new FakeCodexProviderClient();
   const registry = new ProviderRegistry(client, [new CodexProviderAdapter(client)]);
-  const events: Array<{ providerId: string; conversationId?: string; method: string }> = [];
+  const events: Array<{ providerId: string; conversationId: string; kind: string; delta?: string }> = [];
   const unsubscribe = registry.subscribe((event) => events.push({
     providerId: event.providerId,
     conversationId: event.conversationId,
-    method: event.method,
+    kind: event.kind,
+    delta: event.kind === "output.delta" ? event.delta : undefined,
   }));
 
   const run = await registry.startRun("codex", "cli-default", {
@@ -34,7 +35,8 @@ test("provider runtime normalizes Codex runs, events, completion, and cancellati
   assert.deepEqual(events, [{
     providerId: "codex",
     conversationId: "thread-runtime",
-    method: "item/agentMessage/delta",
+    kind: "output.delta",
+    delta: "working",
   }]);
 
   client.finish("completed");

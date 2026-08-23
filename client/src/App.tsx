@@ -177,6 +177,7 @@ export function App() {
   const workspaceRef = useRef("");
   const deviceRef = useRef<DeviceId>(device);
   const threadRef = useRef("");
+  const providerRef = useRef<ProviderId>("codex");
   const ttsRef = useRef(tts);
   const liveMessageIdRef = useRef<string | null>(null);
   const liveTextRef = useRef("");
@@ -350,7 +351,7 @@ export function App() {
     if (initializingRef.current) return;
     initializingRef.current = true;
     try {
-      const [health, workspaceData, providerData, modelData, runData] = await Promise.all([
+      const [health, workspaceData, providerData, codexModelData, runData] = await Promise.all([
         api<{ userAgent: string; device: { name: string } }>("/api/health"),
         api<WorkspaceResponse>("/api/workspaces"),
         api<ProviderResponse>("/api/providers"),
@@ -362,24 +363,35 @@ export function App() {
       setConnection("online");
       setWorkspaces(workspaceData.workspaces);
       setCreationLocations(workspaceData.creationLocations);
-      setModels(modelData.models);
       setProviders(providerData.providers);
       const storedProvider = localStorage.getItem(storageKey("provider", deviceRef.current));
-      const selectedProvider = providerData.providers.find((item) => item.id === storedProvider && item.available)
+      let selectedProvider = providerData.providers.find((item) => item.id === storedProvider && item.available)
         ?? providerData.providers.find((item) => item.id === "codex")
         ?? providerData.providers.find((item) => item.available);
-      setProvider(selectedProvider?.id ?? "codex");
+      let selectedModelData = codexModelData;
+      if (selectedProvider && selectedProvider.id !== "codex") {
+        try {
+          selectedModelData = await api<ModelResponse>(`/api/models?provider=${encodeURIComponent(selectedProvider.id)}`);
+        } catch {
+          selectedProvider = providerData.providers.find((item) => item.id === "codex") ?? selectedProvider;
+          selectedModelData = codexModelData;
+        }
+      }
+      const selectedProviderId = selectedProvider?.id ?? "codex";
+      setProvider(selectedProviderId);
+      providerRef.current = selectedProviderId;
+      setModels(selectedModelData.models);
       const storedAccount = localStorage.getItem(storageKey("account", deviceRef.current));
       const selectedAccount = selectedProvider?.accounts.find((item) => item.id === storedAccount)
         ?? selectedProvider?.accounts.find((item) => item.connected)
         ?? selectedProvider?.accounts[0];
       setAccountId(selectedAccount?.id ?? "cli-default");
       const storedModel = localStorage.getItem(storageKey("model", deviceRef.current)) ?? "";
-      const selectedModel = modelData.models.some((item) => item.id === storedModel) ? storedModel : "";
+      const selectedModel = selectedModelData.models.some((item) => item.id === storedModel) ? storedModel : "";
       setModel(selectedModel);
-      const selectedModelInfo = modelData.models.find((item) => item.id === selectedModel)
-        ?? modelData.models.find((item) => item.isDefault)
-        ?? modelData.models[0];
+      const selectedModelInfo = selectedModelData.models.find((item) => item.id === selectedModel)
+        ?? selectedModelData.models.find((item) => item.isDefault)
+        ?? selectedModelData.models[0];
       const storedEffort = localStorage.getItem(storageKey("effort", deviceRef.current)) ?? "";
       const selectedEffort = selectedModelInfo?.efforts.some((item) => item.id === storedEffort)
         ? storedEffort
@@ -397,9 +409,16 @@ export function App() {
           : (workspaceData.workspaces[0]?.path ?? "");
       setWorkspace(selected);
       workspaceRef.current = selected;
-      await loadThreads(selected, true, localStorage.getItem(storageKey("thread", deviceRef.current)) ?? "");
-      await loadProjectHandoff(selected);
-      if (threadRef.current) {
+      if (selectedProviderId === "codex") {
+        await loadThreads(selected, true, localStorage.getItem(storageKey("thread", deviceRef.current)) ?? "");
+        await loadProjectHandoff(selected);
+      } else {
+        setThreads([]);
+        setThreadId("");
+        threadRef.current = "";
+        setHandoff(null);
+      }
+      if (selectedProviderId === "codex" && threadRef.current) {
         try {
           const data = await api<{ thread: ThreadDetail }>(`/api/threads/${encodeURIComponent(threadRef.current)}`);
           const restored = historyMessages(data.thread);
@@ -410,7 +429,9 @@ export function App() {
           // The local work journal effect restores the last saved copy.
         }
       }
-      const activeOperation = runData.operations.find((item) => item.threadId === threadRef.current);
+      const activeOperation = runData.operations.find((item) => (item.providerId ?? "codex") === selectedProviderId
+        && item.cwd === selected
+        && (selectedProviderId !== "codex" || item.threadId === threadRef.current));
       if (activeOperation) handleOperationEvent("started", activeOperation);
       initializedRef.current = true;
       if (!onboardingShownRef.current && localStorage.getItem("codex-pocket-onboarding-complete") !== "true") {
@@ -623,6 +644,17 @@ export function App() {
     for (const fileChange of result.fileChanges ?? []) {
       for (const change of fileChange.changes ?? []) lines.push(`${change.kind}: ${change.path}`);
     }
+    if (result.usage) {
+      const usage = result.usage;
+      lines.push([
+        "사용량",
+        usage.inputTokens == null ? null : `입력 ${usage.inputTokens.toLocaleString()}`,
+        usage.cachedInputTokens == null ? null : `캐시 ${usage.cachedInputTokens.toLocaleString()}`,
+        usage.outputTokens == null ? null : `출력 ${usage.outputTokens.toLocaleString()}`,
+        usage.reasoningTokens == null ? null : `추론 ${usage.reasoningTokens.toLocaleString()}`,
+        usage.totalTokens == null ? null : `합계 ${usage.totalTokens.toLocaleString()}`,
+      ].filter(Boolean).join(" · "));
+    }
     if (latestDiffRef.current) lines.push(`\n--- diff ---\n${latestDiffRef.current}`);
     return lines.join("\n");
   }
@@ -684,8 +716,10 @@ export function App() {
   }
 
   function handleOperationEvent(action: string, nextOperation: Operation) {
+    const operationProvider = nextOperation.providerId ?? "codex";
     if (action === "started" && !operationRef.current) {
-      if (nextOperation.cwd !== workspaceRef.current || nextOperation.threadId !== threadRef.current) return;
+      if (nextOperation.cwd !== workspaceRef.current || operationProvider !== providerRef.current) return;
+      if (operationProvider === "codex" && nextOperation.threadId !== threadRef.current) return;
       operationRef.current = nextOperation;
       setOperation(nextOperation);
       ensureLiveMessage();
@@ -706,7 +740,7 @@ export function App() {
         localStorage.setItem(storageKey("thread", deviceRef.current), result.threadId);
       }
       if (ttsRef.current && result.finalResponse) speak(result.finalResponse);
-      void loadThreads(workspaceRef.current, true, result.threadId);
+      if (operationProvider === "codex") void loadThreads(workspaceRef.current, true, result.threadId);
       startNextQueuedPrompt(result.threadId ?? threadRef.current);
     } else if (action === "failed") {
       finishLiveMessage(`작업 실패: ${nextOperation.error || "알 수 없는 오류"}`, true);
@@ -739,7 +773,34 @@ export function App() {
       return;
     }
     const current = operationRef.current;
-    if (event.type !== "codex" || !current) return;
+    if (!current) return;
+    if (event.type === "provider") {
+      if (event.providerId !== current.providerId
+        || event.conversationId !== current.conversationId
+        || (event.runId && event.runId !== current.runId)) return;
+      switch (event.kind) {
+        case "output.delta":
+          liveTextRef.current += event.delta ?? "";
+          replaceMessage(ensureLiveMessage(), { text: liveTextRef.current });
+          setRunning("AI가 답변을 작성하고 있습니다…");
+          break;
+        case "tool.started":
+          setRunning("도구를 실행하고 있습니다…", event.tool?.command ?? event.tool?.paths?.join("\n"));
+          break;
+        case "tool.completed":
+          setRunning(`도구 완료 · ${event.tool?.status || "처리됨"}`, event.tool?.command);
+          break;
+        case "workspace.diff":
+          latestDiffRef.current = event.diff ?? "";
+          setRunning("변경 내용을 검토하고 있습니다…");
+          break;
+        case "run.failed":
+          showToast(event.message || "AI 처리 중 오류가 발생했습니다.");
+          break;
+      }
+      return;
+    }
+    if (event.type !== "codex") return;
     const params = event.params ?? {};
     const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
     if (turnId && turnId !== current.turnId) return;
@@ -922,7 +983,7 @@ export function App() {
           requestId: queued.id,
           prompt: queued.text,
           cwd: queued.cwd,
-          threadId: queued.threadId || continuedThreadId || undefined,
+          threadId: queued.provider === "codex" ? queued.threadId || continuedThreadId || undefined : undefined,
           networkAccess: queued.networkAccess,
           model: queued.model || undefined,
           effort: queued.effort || undefined,
@@ -1161,6 +1222,7 @@ export function App() {
     setModels([]);
     setProviders([]);
     setProvider("codex");
+    providerRef.current = "codex";
     setAccountId("cli-default");
     setModel("");
     setEffort("");
@@ -1193,6 +1255,7 @@ export function App() {
       return;
     }
     setProvider(nextProvider);
+    providerRef.current = nextProvider;
     localStorage.setItem(storageKey("provider", deviceRef.current), nextProvider);
     const nextAccount = info.accounts.find((item) => item.connected) ?? info.accounts[0];
     setAccountId(nextAccount?.id ?? "");
@@ -1201,6 +1264,22 @@ export function App() {
     setModels(modelData.models);
     setModel("");
     setEffort("");
+    setThreadId("");
+    threadRef.current = "";
+    setMessages([]);
+    messagesRef.current = [];
+    setJournalRestored(false);
+    setHandoff(null);
+    if (nextProvider === "codex") {
+      await loadThreads(
+        workspaceRef.current,
+        true,
+        localStorage.getItem(storageKey("thread", deviceRef.current)) ?? "",
+      );
+      await loadProjectHandoff(workspaceRef.current);
+    } else {
+      setThreads([]);
+    }
   }
 
   function selectAccount(nextAccount: string) {
@@ -2088,11 +2167,11 @@ function Message({ message }: { message: ChatMessage }) {
   return (
     <article className={`message ${message.role}${message.pending ? " pending" : ""}${message.error ? " error" : ""}`}>
       <div className="bubble">
-        <div className="message-label">{message.role === "user" ? "나" : "Codex"}</div>
+        <div className="message-label">{message.role === "user" ? "나" : "AI"}</div>
         <p className="message-text">{message.text}</p>
         {message.details && (
           <details className="details">
-            <summary>변경 파일과 명령 보기</summary>
+            <summary>작업 세부정보 보기</summary>
             <pre>{message.details}</pre>
           </details>
         )}

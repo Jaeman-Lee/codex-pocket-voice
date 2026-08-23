@@ -28,6 +28,7 @@
   "dependencies": {
     "@capacitor/core": "8.5.0",
     "@modelcontextprotocol/sdk": "1.30.0",
+    "openai": "6.49.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "zod": "4.4.3"

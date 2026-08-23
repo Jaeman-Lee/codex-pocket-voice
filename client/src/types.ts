@@ -139,6 +139,13 @@ export interface RunResult {
   finalResponse?: string;
   commands?: Array<{ command: string; status: string; exitCode?: number | null }>;
   fileChanges?: Array<{ changes?: Array<{ kind: string; path: string }> }>;
+  usage?: {
+    inputTokens?: number;
+    cachedInputTokens?: number;
+    outputTokens?: number;
+    reasoningTokens?: number;
+    totalTokens?: number;
+  };
 }
 
 export interface Operation {
@@ -146,8 +153,8 @@ export interface Operation {
   providerId?: ProviderId;
   conversationId?: string;
   runId?: string;
-  threadId: string;
-  turnId: string;
+  threadId?: string;
+  turnId?: string;
   cwd: string;
   prompt: string;
   status: OperationStatus;
@@ -225,5 +232,21 @@ export interface CodexEvent {
   handoff?: SessionHandoff;
   method?: string;
   params?: Record<string, unknown>;
+  conversationId?: string;
+  runId?: string;
+  kind?: "run.started" | "output.delta" | "workspace.diff" | "tool.started" | "tool.completed"
+    | "usage.updated" | "run.completed" | "run.failed" | "warning";
+  delta?: string;
+  diff?: string;
+  message?: string;
+  status?: string;
+  tool?: { type?: string; id?: string; command?: string; status?: string; paths?: string[] };
+  usage?: {
+    inputTokens?: number;
+    cachedInputTokens?: number;
+    outputTokens?: number;
+    reasoningTokens?: number;
+    totalTokens?: number;
+  };
   media?: MediaItem;
 }

@@ -1,9 +1,9 @@
 # Codex Pocket Voice v2 실행 계획
 
-- 상태: 제안 기준선
-- 마지막 검토: 2026-08-23 KST
+- 상태: 구현 중
+- 마지막 검토: 2026-08-24 KST
 
-이 문서는 `1.8.1`을 v1 기능 동결 기준선으로 두고, v2를 구현하기 위한 제품·아키텍처·보안·검증
+이 문서는 `1.8.1`을 v1 rollback 기준선으로 두고, v2를 구현하기 위한 제품·아키텍처·보안·검증
 계획을 정의한다. 이 문서 자체는 배포 가능한 코드 변경이 아니므로 SemVer와 APK를 변경하지 않는다.
 
 ## 1. 업데이트 결정 게이트
@@ -13,16 +13,16 @@
 | 변경 분류 | `breaking` — 제공자 실행 계약, Gateway 프로토콜, 작업 저널과 전송 계층을 함께 확장한다. |
 | 목표 버전 | `2.0.0` |
 | 구현 브랜치 | `feature/v2-control-plane` |
-| v1 정책 | `1.8.1` 기능 동결. 보안, 데이터 유실, 연결 불능만 `1.8.x` hotfix 후보로 다룬다. |
-| APK 정책 | 2.0 현장 설치 전에는 1.8.1을 current로 유지한다. 2.0 candidate를 설치할 때는 1.8.1을 rollback 세트로 보존한다. |
+| v1 정책 | `1.8.2` hotfix 후보까지만 유지하고 1.8.1을 검증된 rollback으로 보존한다. 보안, 데이터 유실, 연결 불능만 추가 `1.8.x` hotfix로 다룬다. |
+| APK 정책 | 2.0 현장 설치 전에는 1.8.2를 current 후보, 1.8.1을 rollback으로 유지한다. 2.0 candidate를 설치할 때도 1.8.1 rollback을 보존한다. |
 | Companion 정책 | 1.x와 2.x 기능 협상을 지원하고, 2.0 검증 중 1.8.1 Companion 복구 지점을 유지한다. |
 
 ### 구현 진행 상황
 
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
-| Phase A | 진행 중 | Provider runtime·RunCoordinator, Tool/Approval 계약, protocol 2–3 호환과 프로젝트별 session scope 구현 |
-| Phase B | 대기 | OpenAI Responses API |
+| Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환 구현; UI 상태 모듈 분리 잔여 |
+| Phase B | 진행 중 | OpenAI chat-only streaming·이미지·사용량·중단, server-only key와 redaction 구현; 도구·durable replay 잔여 |
 | Phase C | 대기 | OpenRouter |
 | Phase D | 대기 | 모바일 운영판과 SQLite journal |
 | Phase E | 대기 | PocketLink와 출시 강화 |
@@ -375,7 +375,7 @@ SSE 부분 전달, Provider stream 중단과 폰 프로세스 회수 뒤에도 `
 
 기준 확인일은 2026-08-23이다. 구현을 시작할 때 API 동작과 개인정보 정책을 다시 확인한다.
 
-- [OpenAI Responses API — response 생성, 함수 도구와 streaming](https://developers.openai.com/api/reference/typescript/resources/beta/subresources/responses/methods/create)
+- [OpenAI Responses API — response 생성, 함수 도구와 streaming](https://developers.openai.com/api/reference/cli/resources/responses/methods/create)
 - [OpenAI API 데이터 보존과 `store` 정책](https://developers.openai.com/api/docs/guides/your-data#default-usage-policies-by-endpoint)
 - [OpenAI API key 보안 권고](https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety)
 - [OpenRouter tool/function calling](https://openrouter.ai/docs/guides/features/tool-calling)

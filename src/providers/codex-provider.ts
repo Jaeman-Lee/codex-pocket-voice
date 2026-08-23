@@ -135,19 +135,79 @@ export class CodexProviderAdapter implements ModelProviderAdapter, ProviderRunti
     return this.client.subscribe((event) => {
       const params = isRecord(event.params) ? event.params : {};
       const turn = isRecord(params.turn) ? params.turn : {};
-      listener({
+      const conversationId = typeof params.threadId === "string" ? params.threadId : undefined;
+      if (!conversationId) return;
+      const normalized = normalizeCodexEvent(event.method, params, {
         providerId: this.id,
-        conversationId: typeof params.threadId === "string" ? params.threadId : undefined,
+        conversationId,
         runId: typeof params.turnId === "string"
           ? params.turnId
           : typeof turn.id === "string"
             ? turn.id
             : undefined,
-        method: event.method,
-        params: event.params,
       });
+      if (normalized) listener(normalized);
     });
   }
+}
+
+function normalizeCodexEvent(
+  method: string,
+  params: Record<string, unknown>,
+  base: Pick<ProviderEvent, "providerId" | "conversationId" | "runId">,
+): ProviderEvent | null {
+  switch (method) {
+    case "item/agentMessage/delta":
+      return {
+        ...base,
+        kind: "output.delta",
+        delta: typeof params.delta === "string" ? params.delta : "",
+        itemId: typeof params.itemId === "string" ? params.itemId : undefined,
+      };
+    case "turn/diff/updated":
+      return { ...base, kind: "workspace.diff", diff: typeof params.diff === "string" ? params.diff : "" };
+    case "turn/started":
+      return { ...base, kind: "run.started", status: turnStatus(params) };
+    case "turn/completed":
+      return { ...base, kind: "run.completed", status: providerRunStatus(turnStatus(params) ?? "failed") };
+    case "item/started":
+    case "item/completed": {
+      const item = isRecord(params.item) ? params.item : {};
+      return {
+        ...base,
+        kind: method === "item/started" ? "tool.started" : "tool.completed",
+        tool: {
+          type: typeof item.type === "string" ? item.type : "unknown",
+          id: typeof item.id === "string" ? item.id : undefined,
+          command: typeof item.command === "string" ? item.command : undefined,
+          status: typeof item.status === "string" ? item.status : undefined,
+          paths: Array.isArray(item.changes)
+            ? item.changes
+                .filter(isRecord)
+                .map((change) => change.path)
+                .filter((path): path is string => typeof path === "string")
+            : undefined,
+        },
+      };
+    }
+    case "error":
+      return { ...base, kind: "run.failed", message: eventMessage(params, "Codex 처리 중 오류가 발생했습니다.") };
+    case "warning":
+      return { ...base, kind: "warning", message: eventMessage(params, "Codex 경고가 발생했습니다.") };
+    default:
+      return null;
+  }
+}
+
+function turnStatus(params: Record<string, unknown>): string | undefined {
+  const turn = isRecord(params.turn) ? params.turn : {};
+  return typeof turn.status === "string" ? turn.status : undefined;
+}
+
+function eventMessage(params: Record<string, unknown>, fallback: string): string {
+  if (typeof params.message === "string") return params.message;
+  const error = isRecord(params.error) ? params.error : {};
+  return typeof error.message === "string" ? error.message : fallback;
 }
 
 function providerRunStatus(status: string): ProviderRunStatus {
