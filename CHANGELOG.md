@@ -2,9 +2,20 @@
 
 이 문서는 사용자가 설치할 수 있는 배포판과 개발 중 CI 산출물을 구분한다.
 
-## 1.7.4 candidate — field testing
+## 1.8.0 candidate — validation
 
 GitHub Release나 Git tag로 확정하지 않은 현재 시험 기준선이다.
+
+- 현재 기기의 Codex thread를 삭제하지 않고 다른 기기에 반납하는 UX를 추가했다.
+- 실행 중인 PC 작업은 반납 후에도 계속되며, 다른 페어링 기기가 같은 run과 thread에 다시 붙는다.
+- Companion이 최근 인계 위치를 권한 `0600` 메타데이터로 7일간 보존한다. 프롬프트 본문과 인증정보는 기록하지 않는다.
+- 이 기기에만 남은 프롬프트 대기열이 있으면 반납을 차단해 요청 유실을 막는다.
+- 앱 재연결 시 선택 중인 thread의 활성 run을 찾아 실시간 상태를 복원한다.
+- Codex app-server 생성 바인딩을 `codex-cli 0.148.1` 기준으로 갱신했다.
+
+## 1.7.4 candidate — superseded field baseline
+
+GitHub Release나 Git tag로 확정하지 않은 이전 시험 기준선이다.
 
 - Android를 음성·화면·암호화 연결에 집중한 저부하 Linux 클라이언트로 정리했다.
 - 여러 Linux Companion 등록, 일회용 코드 페어링, Android Keystore 토큰 보호를 추가했다.
@@ -23,7 +34,8 @@ Candidate build history:
 | 1.7.1 | `d4de07a` | CI only | Android 저부하 클라이언트 고정 |
 | 1.7.2 | `2a3348c` | superseded field build | 프로젝트 생성 오류 표시 |
 | 1.7.3 | `c6b0440` | CI only | 연결 센터 모바일 레이아웃 수정 |
-| 1.7.4 | `91f27b4` | current field candidate | 구형 Git 프로젝트 생성 호환 |
+| 1.7.4 | `91f27b4` | superseded field build | 구형 Git 프로젝트 생성 호환 |
+| 1.8.0 | `61fe113` | current candidate | 교차 기기 세션 반납·인계 |
 
 ## 1.6.0 — 2026-08-16
 

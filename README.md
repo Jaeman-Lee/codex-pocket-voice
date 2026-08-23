@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-현재 정식 배포는 `v1.6.0`이며 `1.7.4`는 현장 테스트 중인 candidate입니다. 실제 배포
+현재 정식 배포는 `v1.6.0`이며 `1.8.0`는 교차 기기 세션 인계를 검증 중인 candidate입니다. 실제 배포
 상태는 [Deployment inventory](docs/deployment-inventory.md), 변경 이력은
 [Changelog](CHANGELOG.md), 출시 절차는 [Release process](docs/release-process.md)를 참고하세요.
 
