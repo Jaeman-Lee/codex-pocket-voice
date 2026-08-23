@@ -3,19 +3,12 @@ import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { basename, dirname, extname, join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { InitializeResponse } from "../generated/app-server/InitializeResponse";
-import type { ModelListResponse } from "../generated/app-server/v2/ModelListResponse";
-import type { Thread } from "../generated/app-server/v2/Thread";
 import type { ThreadListResponse } from "../generated/app-server/v2/ThreadListResponse";
 import type { ThreadReadResponse } from "../generated/app-server/v2/ThreadReadResponse";
-import type { Turn } from "../generated/app-server/v2/Turn";
-import type {
-  AppServerNotification,
-  BeginTurnResult,
-  RunTurnOptions,
-} from "./app-server-client.js";
+import type { CodexProviderClient } from "./providers/codex-provider.js";
+import type { ProviderEvent, ProviderRun } from "./providers/types.js";
 import { PathPolicy } from "./path-policy.js";
-import { compactThread, presentThread, summarizeTurn } from "./result.js";
+import { compactThread, presentThread } from "./result.js";
 import { MediaError, MediaManager } from "./media-manager.js";
 import { ProjectCreationError, ProjectManager } from "./project-manager.js";
 import { ProviderError, ProviderRegistry } from "./providers/registry.js";
@@ -38,14 +31,9 @@ const STATIC_FILES = new Map([
   ["/icon.svg", "icon.svg"],
 ]);
 
-export interface WebCodexClient {
-  start(): Promise<InitializeResponse>;
-  listModels(): Promise<ModelListResponse>;
+export interface WebCodexClient extends CodexProviderClient {
   listThreads(limit?: number, searchTerm?: string): Promise<ThreadListResponse>;
   readThread(threadId: string, includeTurns?: boolean): Promise<ThreadReadResponse>;
-  beginTurn(options: RunTurnOptions): Promise<BeginTurnResult>;
-  interrupt(threadId: string, turnId: string): Promise<void>;
-  subscribe(listener: (notification: AppServerNotification) => void): () => void;
 }
 
 export interface WebServerOptions {
@@ -74,6 +62,7 @@ type OperationStatus = "running" | "completed" | "interrupted" | "failed";
 
 interface Operation {
   id: string;
+  providerId: string;
   threadId: string;
   turnId: string;
   cwd: string;
@@ -126,7 +115,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   );
   const providers = new ProviderRegistry(options.client);
   const providerLogins = new ProviderLoginManager(providers);
-  const unsubscribe = options.client.subscribe((event) => {
+  const unsubscribe = providers.subscribe((event) => {
     const forwarded = sanitizeNotification(event, activeThreads);
     if (forwarded) broadcast(sseClients, forwarded);
   });
@@ -477,9 +466,8 @@ async function handleApi(
     assertSameOrigin(request);
     const body = (await readJson(request)) as RunBody;
     const prompt = requiredString(body.prompt, "prompt", 100_000);
-    const provider = optionalString(body.provider, "provider", 40);
+    const provider = optionalString(body.provider, "provider", 40) ?? "codex";
     const accountId = optionalString(body.accountId, "accountId", 100);
-    providers.assertRunnable(provider, accountId);
     const threadId = optionalString(body.threadId, "threadId", 200);
     const requestedCwd = optionalString(body.cwd, "cwd", 4_096);
     let cwd: string;
@@ -501,8 +489,8 @@ async function handleApi(
     const timeoutSeconds = optionalInteger(body.timeoutSeconds, 30, 3600, 900, "timeoutSeconds");
     const attachmentIds = optionalStringArray(body.attachments, "attachments", 4, 200);
     const attachmentInput = media.resolveForTurn(attachmentIds);
-    const begun = await options.client.beginTurn({
-      threadId,
+    const begun = await providers.startRun(provider, accountId, {
+      conversationId: threadId,
       cwd,
       prompt: `${prompt}${attachmentInput.promptContext}`,
       imagePaths: attachmentInput.imagePaths,
@@ -511,13 +499,14 @@ async function handleApi(
       effort,
       timeoutMs: timeoutSeconds * 1_000,
     });
-    options.paths.assertAllowed(begun.thread.cwd);
+    options.paths.assertAllowed(begun.cwd);
 
     const operation: Operation = {
       id: randomUUID(),
-      threadId: begun.thread.id,
-      turnId: begun.turn.id,
-      cwd,
+      providerId: begun.providerId,
+      threadId: begun.conversationId,
+      turnId: begun.runId,
+      cwd: begun.cwd,
       prompt,
       status: "running",
       startedAt: new Date().toISOString(),
@@ -547,7 +536,7 @@ async function handleApi(
     if (!operation) throw new HttpError(404, "Operation not found");
     options.paths.assertAllowed(operation.cwd);
     if (operation.status === "running") {
-      await options.client.interrupt(operation.threadId, operation.turnId);
+      await providers.cancelRun(operation.providerId, operation.threadId, operation.turnId);
     }
     sendJson(response, 200, { operation: publicOperation(operation), interruptRequested: true });
     return;
@@ -566,16 +555,16 @@ async function handleApi(
 
 async function settleOperation(
   operation: Operation,
-  begun: BeginTurnResult,
+  begun: ProviderRun,
   operations: Map<string, Operation>,
   activeThreads: Set<string>,
   clients: Set<ServerResponse>,
 ): Promise<void> {
   try {
-    const turn = await begun.completion;
-    operation.status = turn.status === "interrupted" ? "interrupted" : turn.status === "completed" ? "completed" : "failed";
+    const completed = await begun.completion;
+    operation.status = completed.status;
     operation.completedAt = new Date().toISOString();
-    operation.result = summarizeTurn(begun.thread, turn);
+    operation.result = completed.result;
     broadcast(clients, { type: "operation", action: "completed", operation: publicOperation(operation) });
   } catch (error) {
     operation.status = "failed";
@@ -590,7 +579,7 @@ async function settleOperation(
 }
 
 function sanitizeNotification(
-  notification: AppServerNotification,
+  notification: ProviderEvent,
   activeThreads: Set<string>,
 ): Record<string, unknown> | null {
   const params = isRecord(notification.params) ? notification.params : {};
@@ -601,12 +590,14 @@ function sanitizeNotification(
     case "item/agentMessage/delta":
       return {
         type: "codex",
+        providerId: notification.providerId,
         method: notification.method,
         params: pick(params, ["threadId", "turnId", "itemId", "delta"]),
       };
     case "turn/diff/updated":
       return {
         type: "codex",
+        providerId: notification.providerId,
         method: notification.method,
         params: { ...pick(params, ["threadId", "turnId"]), diff: truncateText(params.diff) },
       };
@@ -614,6 +605,7 @@ function sanitizeNotification(
     case "turn/completed":
       return {
         type: "codex",
+        providerId: notification.providerId,
         method: notification.method,
         params: {
           threadId,
@@ -626,6 +618,7 @@ function sanitizeNotification(
       const item = isRecord(params.item) ? params.item : {};
       return {
         type: "codex",
+        providerId: notification.providerId,
         method: notification.method,
         params: {
           ...pick(params, ["threadId", "turnId"]),
@@ -646,7 +639,7 @@ function sanitizeNotification(
     }
     case "error":
     case "warning":
-      return { type: "codex", method: notification.method, params };
+      return { type: "codex", providerId: notification.providerId, method: notification.method, params };
     default:
       return null;
   }

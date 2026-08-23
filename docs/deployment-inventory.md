@@ -7,6 +7,20 @@ Last verified: 2026-08-23 KST
 
 ## Current candidate and deployed baseline
 
+V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저널과 Gateway protocol을
+확장하므로 `breaking`/`2.0.0`으로 분류한다. 대상은 `feature/v2-control-plane` 브랜치이며 첫
+단계에서는 Codex 실행을 공통 runtime 뒤로 옮기되 운영 중인 v1.8.1 설치와 Companion을 교체하지
+않는다. 2.0 APK는 현장 전달 전까지 CI-only artifact로 취급한다. v1.8.1을 current v1 기준선,
+1.7.4를 기존 rollback 세트로 유지하고, 첫 2.0 candidate를 설치할 때 1.8.1을 rollback으로 둔다.
+
+| V2 development component | Version / revision | State |
+| --- | --- | --- |
+| Source version | `2.0.0` / Android `versionCode 20000` | development only; not field installed |
+| Target branch | `feature/v2-control-plane` | Provider runtime foundation in progress |
+| Gateway protocol | maximum 3, minimum 2 | v1 rollout compatibility retained |
+| Current v1 APK | 1.8.1 | preserved; no replacement authorized |
+| Existing rollback APK | 1.7.4 | preserved until the first 2.0 field candidate |
+
 Update decision: `1.8.0`은 새 교차 기기 세션 흐름과 Companion API를 추가하므로
 `feature`/minor 변경이다. Draft feature PR에서 유지하고 현장 승인 전에는 `main`에 병합하지
 않는다. `1.8.0`은 최초 feature candidate였으며, 아래의 `1.8.1` viewport patch가

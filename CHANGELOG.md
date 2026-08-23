@@ -2,6 +2,20 @@
 
 이 문서는 사용자가 설치할 수 있는 배포판과 개발 중 CI 산출물을 구분한다.
 
+## 2.0.0 development — provider runtime foundation
+
+Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 저널·전송 계층을 확장하는
+호환 불가능한 v2 작업이므로 `breaking`으로 분류하고 `2.0.0`/Android `versionCode 20000`으로
+올린다. 구현 대상은 `feature/v2-control-plane` 브랜치이다. 아직 2.0 APK를 현장 전달하지 않으며
+1.8.1을 current v1 기준선, 1.7.4를 기존 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
+때 1.8.1을 rollback 세트로 승격한다.
+
+- Codex 실행·취소·stream event를 Provider 공통 runtime 계약 뒤로 이동했다.
+- Provider capability를 streaming, 승인, workspace 읽기·쓰기, 명령 실행과 사용량 기록까지 확장했다.
+- Gateway protocol 3을 추가하면서 protocol 2 Companion과 클라이언트가 공존할 수 있는 범위 협상을
+  유지했다.
+- 이 기준선은 CI·개발용이며 v1.8.1 설치본이나 실행 중인 Companion을 교체하지 않는다.
+
 ## 1.8.1 patch candidate — mobile viewport containment
 
 Update decision: 스마트폰 화면을 넘는 레이아웃을 고치는 버그 수정이므로

@@ -2,9 +2,10 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-현재 정식 배포는 `v1.6.0`이며 `1.8.0`는 교차 기기 세션 인계를 검증 중인 candidate입니다. 실제 배포
-상태는 [Deployment inventory](docs/deployment-inventory.md), 변경 이력은
-[Changelog](CHANGELOG.md), 출시 절차는 [Release process](docs/release-process.md)를 참고하세요.
+현재 정식 배포는 `v1.6.0`이며 `1.8.1`은 v1 기능 동결 기준선입니다. `2.0.0` 소스는
+`feature/v2-control-plane`에서 개발 중이며 아직 설치용 candidate가 아닙니다. 실제 배포 상태는
+[Deployment inventory](docs/deployment-inventory.md), 변경 이력은 [Changelog](CHANGELOG.md),
+출시 절차는 [Release process](docs/release-process.md)를 참고하세요.
 
 개발 원본은 페어링된 Linux PC의 Git 작업공간입니다. Android/Termux는 APK 설치, 음성·UI
 실기기 테스트, 연결 복구와 롤백 파일 관리를 담당하는 경량 클라이언트로 유지합니다.

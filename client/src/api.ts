@@ -1,4 +1,5 @@
 import { isNativeApp } from "./native";
+import { assertCompatibleProtocol } from "./protocol";
 import { secureGet, secureRemove, secureSet } from "./secure-storage";
 import type { CodexEvent, DeviceId, DeviceInfo, DeviceTarget } from "./types";
 
@@ -21,8 +22,6 @@ export interface PairingStatus {
   minimumClientProtocol: number;
   appVersion: string;
 }
-
-const CLIENT_PROTOCOL_VERSION = 2;
 
 interface ApiErrorBody {
   error?: string;
@@ -224,12 +223,6 @@ async function publicApi<T>(path: string, options: ApiOptions = {}): Promise<T> 
     init.body = JSON.stringify(options.body);
   }
   return fetchJson<T>(path, init, false);
-}
-
-function assertCompatibleProtocol(serverProtocol: number, minimumClientProtocol: number): void {
-  if (minimumClientProtocol > CLIENT_PROTOCOL_VERSION || serverProtocol < CLIENT_PROTOCOL_VERSION) {
-    throw new Error(`앱과 Companion 프로토콜이 호환되지 않습니다. 앱 ${CLIENT_PROTOCOL_VERSION}, 서버 ${serverProtocol}`);
-  }
 }
 
 async function fetchJson<T>(path: string, init: RequestInit, authenticated: boolean): Promise<T> {

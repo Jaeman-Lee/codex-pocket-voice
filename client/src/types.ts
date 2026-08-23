@@ -59,6 +59,12 @@ export interface ProviderOption {
     resume: boolean;
     models: boolean;
     attachments: boolean;
+    streaming?: boolean;
+    approvals?: boolean;
+    workspaceRead?: boolean;
+    workspaceWrite?: boolean;
+    commandExecution?: boolean;
+    usageAccounting?: boolean;
   };
   installGuide: {
     summary: string;
@@ -137,6 +143,7 @@ export interface RunResult {
 
 export interface Operation {
   id: string;
+  providerId?: ProviderId;
   threadId: string;
   turnId: string;
   cwd: string;
@@ -209,6 +216,7 @@ export interface QueuedPrompt {
 
 export interface CodexEvent {
   type: string;
+  providerId?: ProviderId;
   action?: string;
   operation?: Operation;
   handoff?: SessionHandoff;

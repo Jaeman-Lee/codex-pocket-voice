@@ -77,6 +77,8 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(providerData.providers[0].status, "connected");
   assert.equal(providerData.providers[0].installed, true);
   assert.equal(providerData.providers[0].canLogin, true);
+  assert.equal(providerData.providers[0].capabilities.streaming, true);
+  assert.equal(providerData.providers[0].capabilities.approvals, false);
   const providerTest = await jsonFetch(`${base}/api/providers/codex/test`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
@@ -151,6 +153,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
     }),
   });
   assert.equal(started.operation.status, "running");
+  assert.equal(started.operation.providerId, "codex");
   assert.equal(fake.lastRun?.cwd, cwd);
   assert.equal(fake.lastRun?.networkAccess, false);
   assert.equal(fake.lastRun?.model, "test-codex");

@@ -1,15 +1,33 @@
 import type { InitializeResponse } from "../../generated/app-server/InitializeResponse";
 import type { ModelListResponse } from "../../generated/app-server/v2/ModelListResponse";
-import { ProviderError, type ModelProviderAdapter, type ProviderConnectionTest, type ProviderDescriptor, type ProviderLoginSpec, type ProviderModel } from "./types.js";
+import type { AppServerNotification, BeginTurnResult, RunTurnOptions } from "../app-server-client.js";
+import { summarizeTurn } from "../result.js";
+import {
+  ProviderError,
+  type ModelProviderAdapter,
+  type ProviderConnectionTest,
+  type ProviderDescriptor,
+  type ProviderEvent,
+  type ProviderLoginSpec,
+  type ProviderModel,
+  type ProviderRun,
+  type ProviderRunInput,
+  type ProviderRunStatus,
+  type ProviderRuntime,
+} from "./types.js";
 
 export interface CodexProviderClient {
   start(): Promise<InitializeResponse>;
   listModels(): Promise<ModelListResponse>;
+  beginTurn(options: RunTurnOptions): Promise<BeginTurnResult>;
+  interrupt(threadId: string, turnId: string): Promise<void>;
+  subscribe(listener: (notification: AppServerNotification) => void): () => void;
 }
 
-export class CodexProviderAdapter implements ModelProviderAdapter {
+export class CodexProviderAdapter implements ModelProviderAdapter, ProviderRuntime {
   readonly id = "codex" as const;
   readonly canRun = true;
+  readonly runtime: ProviderRuntime = this;
 
   constructor(private readonly client: CodexProviderClient) {}
 
@@ -31,7 +49,18 @@ export class CodexProviderAdapter implements ModelProviderAdapter {
       version: initialized.userAgent,
       canLogin: true,
       canTest: true,
-      capabilities: { run: true, resume: true, models: true, attachments: true },
+      capabilities: {
+        run: true,
+        resume: true,
+        models: true,
+        attachments: true,
+        streaming: true,
+        approvals: false,
+        workspaceRead: true,
+        workspaceWrite: true,
+        commandExecution: true,
+        usageAccounting: false,
+      },
       installGuide: {
         summary: "Linux 공식 설치 스크립트",
         command: "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
@@ -74,4 +103,44 @@ export class CodexProviderAdapter implements ModelProviderAdapter {
   async loginSpec(): Promise<ProviderLoginSpec> {
     return { command: process.env.CODEX_BIN ?? "codex", args: ["login", "--device-auth"] };
   }
+
+  async startRun(input: ProviderRunInput): Promise<ProviderRun> {
+    const begun = await this.client.beginTurn({
+      threadId: input.conversationId,
+      cwd: input.cwd,
+      prompt: input.prompt,
+      imagePaths: input.imagePaths,
+      networkAccess: input.networkAccess,
+      model: input.model,
+      effort: input.effort,
+      timeoutMs: input.timeoutMs,
+    });
+    return {
+      providerId: this.id,
+      conversationId: begun.thread.id,
+      runId: begun.turn.id,
+      cwd: begun.thread.cwd,
+      completion: begun.completion.then((turn) => ({
+        status: providerRunStatus(turn.status),
+        result: summarizeTurn(begun.thread, turn),
+      })),
+    };
+  }
+
+  cancelRun(conversationId: string, runId: string): Promise<void> {
+    return this.client.interrupt(conversationId, runId);
+  }
+
+  subscribe(listener: (event: ProviderEvent) => void): () => void {
+    return this.client.subscribe((event) => listener({
+      providerId: this.id,
+      method: event.method,
+      params: event.params,
+    }));
+  }
+}
+
+function providerRunStatus(status: string): ProviderRunStatus {
+  if (status === "completed" || status === "interrupted") return status;
+  return "failed";
 }

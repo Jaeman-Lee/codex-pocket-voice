@@ -17,6 +17,16 @@
 | APK 정책 | 2.0 현장 설치 전에는 1.8.1을 current로 유지한다. 2.0 candidate를 설치할 때는 1.8.1을 rollback 세트로 보존한다. |
 | Companion 정책 | 1.x와 2.x 기능 협상을 지원하고, 2.0 검증 중 1.8.1 Companion 복구 지점을 유지한다. |
 
+### 구현 진행 상황
+
+| 단계 | 상태 | 현재 결과 |
+| --- | --- | --- |
+| Phase A | 진행 중 | Provider runtime 계약, Codex adapter와 protocol 2–3 범위 호환 기반 구현 |
+| Phase B | 대기 | OpenAI Responses API |
+| Phase C | 대기 | OpenRouter |
+| Phase D | 대기 | 모바일 운영판과 SQLite journal |
+| Phase E | 대기 | PocketLink와 출시 강화 |
+
 ## 2. 제품 정의
 
 v2의 제품 한 문장은 다음과 같다.

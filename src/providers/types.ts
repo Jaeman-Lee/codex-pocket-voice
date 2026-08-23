@@ -1,5 +1,43 @@
 export type ProviderId = string;
 
+export type ProviderRunStatus = "completed" | "interrupted" | "failed";
+
+export interface ProviderRunInput {
+  conversationId?: string;
+  cwd: string;
+  prompt: string;
+  imagePaths?: string[];
+  networkAccess?: boolean;
+  model?: string;
+  effort?: string;
+  timeoutMs?: number;
+}
+
+export interface ProviderRunCompletion {
+  status: ProviderRunStatus;
+  result: Record<string, unknown>;
+}
+
+export interface ProviderRun {
+  providerId: ProviderId;
+  conversationId: string;
+  runId: string;
+  cwd: string;
+  completion: Promise<ProviderRunCompletion>;
+}
+
+export interface ProviderEvent {
+  providerId: ProviderId;
+  method: string;
+  params?: unknown;
+}
+
+export interface ProviderRuntime {
+  startRun(input: ProviderRunInput): Promise<ProviderRun>;
+  cancelRun(conversationId: string, runId: string): Promise<void>;
+  subscribe(listener: (event: ProviderEvent) => void): () => void;
+}
+
 export interface ProviderModel {
   id: string;
   displayName: string;
@@ -32,6 +70,12 @@ export interface ProviderDescriptor {
     resume: boolean;
     models: boolean;
     attachments: boolean;
+    streaming: boolean;
+    approvals: boolean;
+    workspaceRead: boolean;
+    workspaceWrite: boolean;
+    commandExecution: boolean;
+    usageAccounting: boolean;
   };
   installGuide: {
     summary: string;
@@ -55,6 +99,7 @@ export interface ProviderLoginSpec {
 export interface ModelProviderAdapter {
   readonly id: ProviderId;
   readonly canRun: boolean;
+  readonly runtime?: ProviderRuntime;
   describe(): Promise<ProviderDescriptor>;
   listModels(): Promise<ProviderModel[]>;
   assertAccount(accountId: unknown): void;
