@@ -13,4 +13,5 @@ export const GATEWAY_CAPABILITIES = {
   eventReplay: true,
   approvalBroker: true,
   usageAccounting: true,
+  journalManagement: true,
 } as const;

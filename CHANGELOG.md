@@ -80,6 +80,11 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 - Gateway는 Codex run 시작, 세션 반납과 이어받기에서 thread의 실제 cwd가 선택한 workspace와 같거나
   그 하위인지 다시 검사한다. 오래된 클라이언트 상태나 잘못된 thread ID가 다른 프로젝트의 실행·인계로
   연결되면 409로 거절한다.
+- 작업 대시보드에 Companion journal의 7일/500 operation/2,000 event 보존 정책을 표시하고,
+  현재 workspace의 복호화된 operation·event만 16 MiB 이하 JSON으로 내보내는 기능을 추가했다.
+  삭제는 정확한 전체 프로젝트 경로와 영향 범위를 다시 보여 준 뒤 두 번째 터치에서만 수행하며,
+  실행·승인 중이거나 미확인 `unknown` 작업이 있으면 409로 차단한다. 프로젝트 파일과 Android의
+  암호화 conversation·queue journal은 삭제 대상이 아니다.
 - 이 기준선은 CI·개발용이며 v1.8.1 설치본이나 실행 중인 Companion을 교체하지 않는다.
 
 ## 1.8.2 hotfix candidate — project-scoped session handoff

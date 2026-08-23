@@ -61,6 +61,7 @@ export interface RunStateStore {
   load(): RestoredRunState;
   saveOperation(operation: RunOperation, idempotency?: RunIdempotencyRecord): void;
   deleteOperation(operationId: string): void;
+  deleteOperations(operationIds: readonly string[]): void;
 }
 
 export type RunCoordinatorEvent =
@@ -236,6 +237,23 @@ export class RunCoordinator {
     return cloneOperation(operation);
   }
 
+  deleteWorkspaceHistory(workspace: string): { deletedOperationIds: string[] } {
+    this.cleanup();
+    const matching = [...this.operations.values()].filter((operation) => operation.cwd === workspace);
+    const protectedOperation = matching.find((operation) => operation.status === "running"
+      || (operation.status === "unknown" && !operation.acknowledgedAt));
+    if (protectedOperation) {
+      throw new RunCoordinatorError(
+        409,
+        "실행 중이거나 아직 확인하지 않은 작업이 있어 이 프로젝트 기록을 삭제할 수 없습니다.",
+      );
+    }
+    const deletedOperationIds = matching.map((operation) => operation.id);
+    this.stateStore?.deleteOperations(deletedOperationIds);
+    for (const operationId of deletedOperationIds) this.removeOperation(operationId, false);
+    return { deletedOperationIds };
+  }
+
   close(): void {
     this.closed = true;
     this.unsubscribeProvider();
@@ -374,10 +392,10 @@ export class RunCoordinator {
     }
   }
 
-  private removeOperation(operationId: string): void {
+  private removeOperation(operationId: string, persist = true): void {
     this.operations.delete(operationId);
     this.idempotencyByOperation.delete(operationId);
-    this.stateStore?.deleteOperation(operationId);
+    if (persist) this.stateStore?.deleteOperation(operationId);
     for (const [key, entry] of this.idempotency) {
       if (entry.operationId === operationId) this.idempotency.delete(key);
     }

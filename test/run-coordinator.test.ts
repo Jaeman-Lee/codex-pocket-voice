@@ -140,6 +140,60 @@ test("RunCoordinator cancels a provider run that escapes the allowed workspace",
   coordinator.close();
 });
 
+test("RunCoordinator deletes only terminal workspace history and protects active or unknown work", async () => {
+  const providers = new FakeRunProviders();
+  const coordinator = new RunCoordinator(providers, { createId: () => "operation-delete" });
+  const running = await coordinator.start({
+    providerId: "fake",
+    prompt: "keep while active",
+    input: { cwd: process.cwd(), prompt: "keep while active" },
+  });
+  assert.throws(
+    () => coordinator.deleteWorkspaceHistory(process.cwd()),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  providers.complete(0, { status: "completed", result: { finalResponse: "done" } });
+  await waitFor(() => coordinator.get(running.id)?.status === "completed");
+  assert.deepEqual(coordinator.deleteWorkspaceHistory(process.cwd()), {
+    deletedOperationIds: [running.id],
+  });
+  assert.deepEqual(coordinator.list(), []);
+  coordinator.close();
+
+  const deleted: string[] = [];
+  const unknown = {
+    ...running,
+    id: "operation-unknown",
+    status: "unknown" as const,
+    completedAt: new Date().toISOString(),
+  };
+  const otherWorkspace = {
+    ...unknown,
+    id: "operation-other-workspace",
+    cwd: "/another/workspace",
+    status: "completed" as const,
+  };
+  const restoredCoordinator = new RunCoordinator(new FakeRunProviders(), {
+    stateStore: {
+      load: () => ({ operations: [unknown, otherWorkspace], idempotency: [] }),
+      saveOperation: () => undefined,
+      deleteOperation: (operationId) => deleted.push(operationId),
+      deleteOperations: (operationIds) => deleted.push(...operationIds),
+    },
+  });
+  assert.throws(
+    () => restoredCoordinator.deleteWorkspaceHistory(process.cwd()),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  restoredCoordinator.acknowledge(unknown.id);
+  assert.deepEqual(restoredCoordinator.deleteWorkspaceHistory(process.cwd()), {
+    deletedOperationIds: [unknown.id],
+  });
+  assert.deepEqual(deleted, [unknown.id]);
+  assert.deepEqual(restoredCoordinator.list().map((operation) => operation.id), [otherWorkspace.id]);
+  restoredCoordinator.close();
+});
+
 class FakeRunProviders implements RunProviderRegistry {
   readonly starts: Array<{ providerId: unknown; accountId: unknown; input: ProviderRunInput }> = [];
   readonly cancellations: Array<[unknown, string, string]> = [];

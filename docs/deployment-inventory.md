@@ -16,7 +16,7 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | V2 development component | Version / revision | State |
 | --- | --- | --- |
 | Source version | `2.0.0` / Android `versionCode 20000` | development only; not field installed |
-| Target branch | `feature/v2-control-plane` | OpenAI/OpenRouter approved single-file replacement and isolated npm verification, encrypted journals, dashboard, approval inbox and live branch/worktree identity implemented; model eval and broader patch workflow next |
+| Target branch | `feature/v2-control-plane` | approved API tools, encrypted journals, workspace JSON export/protected delete, dashboard, approval inbox and live branch/worktree identity implemented; model eval and broader patch workflow next |
 | Gateway protocol | maximum 3, minimum 2 | v1 rollout compatibility retained |
 | Codex app-server schema | `codex-cli 0.149.0` | generated bindings and no-model real integration verified |
 | Current v1 APK | 1.8.2 candidate | signed APK/checksum/SBOM prepared from hotfix PR #4; install not performed |
@@ -24,8 +24,8 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | OpenAI API milestone | official SDK 6.49.0 | fake stateless tool-loop/SSE/Models tests only; no API key configured and no paid request sent |
 | OpenRouter milestone | Chat Completions + Models HTTP API | fake strict-routing/tool-loop/SSE tests only; no API key configured and no paid request sent |
 | Android journal milestone | app-owned SQLite schema 1 | encrypted snapshot migration and rollback mirror implemented; CI-only, no device migration performed |
-| Companion event journal | encrypted SQLite schema 1 | operation/idempotency restore, SSE cursor replay, unknown recovery and durable acknowledgement implemented; no field restart performed |
-| Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation and touch-only approve/decline implemented; no field APK handed off |
+| Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, policy summary, bounded workspace JSON export and protected delete implemented; no field restart performed |
+| Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation, touch-only approvals and two-touch history deletion implemented; no field APK handed off |
 | Approved API tools | SHA-bound text replace + probed sandbox verifier | existing file only; check/test/build only; arbitrary command, create/delete/rename and network blocked |
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
 
@@ -66,6 +66,14 @@ Workspace identity checkpoint decision: 프로젝트·세션의 현재 branch/wo
 thread 검증을 추가하는 v2 기능이므로 분류와 버전은 `breaking`/`2.0.0`, Android `versionCode 20000`,
 대상 브랜치는 `feature/v2-control-plane`을 유지한다. 이 변경도 CI-only이며 새 APK를 전달·설치하거나
 실행 중인 Companion을 재시작하지 않는다. current v1 후보 1.8.2와 rollback 1.8.1을 그대로 보존한다.
+
+Companion journal management checkpoint decision: 프로젝트별 실행 기록 내보내기와 삭제를
+추가하는 v2 기능이므로 기존 `breaking`/`2.0.0`, Android `versionCode 20000`,
+`feature/v2-control-plane` 결정을 유지한다. 내보내기는 paired 클라이언트에 해당 workspace의
+복호화된 기록만 JSON으로 전달하고 16 MiB로 제한한다. 삭제는 두 번의 화면 터치와 정확한 경로 확인
+후에만 수행하고 active/미확인 작업을 보호한다. 프로젝트 파일과 Android local journal은 바꾸지 않는다.
+이 checkpoint도 CI-only이며 APK를 전달·설치하거나 실행 중인 Companion을 재시작하지 않는다.
+current 1.8.2 후보와 rollback 1.8.1을 보존한다.
 
 Update decision: `1.8.0`은 새 교차 기기 세션 흐름과 Companion API를 추가하므로
 `feature`/minor 변경이다. Draft feature PR에서 유지하고 현장 승인 전에는 `main`에 병합하지

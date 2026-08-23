@@ -3,9 +3,10 @@ import {
   activeApprovals,
   groupOperations,
   operationCounts,
+  type OperationGroup,
 } from "./operations-state";
 import { workspaceIdentityFor, workspaceIdentityLabel } from "./workspace-identity";
-import type { ApprovalItem, Operation, Workspace, WorkspaceIdentity } from "./types";
+import type { ApprovalItem, JournalPolicy, Operation, Workspace, WorkspaceIdentity } from "./types";
 
 interface OperationsDashboardProps {
   deviceName: string;
@@ -14,14 +15,20 @@ interface OperationsDashboardProps {
   workspaces: Workspace[];
   queuedCount: number;
   decidingApprovalId: string | null;
+  journalPolicy: JournalPolicy | null;
+  exportingWorkspace: string | null;
+  deletingWorkspace: string | null;
   onClose(): void;
   onRefresh(): void;
   onOpenOperation(operation: Operation): void;
   onDecision(approval: ApprovalItem, decision: "approved" | "declined"): void;
+  onExportWorkspace(workspace: string): Promise<void>;
+  onDeleteWorkspaceHistory(workspace: string): Promise<void>;
 }
 
 export function OperationsDashboard(props: OperationsDashboardProps) {
   const [now, setNow] = useState(Date.now());
+  const [confirmingWorkspace, setConfirmingWorkspace] = useState<string | null>(null);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 15_000);
     return () => window.clearInterval(timer);
@@ -29,6 +36,12 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
   const approvals = useMemo(() => activeApprovals(props.approvals, now), [now, props.approvals]);
   const counts = useMemo(() => operationCounts(props.operations, approvals), [approvals, props.operations]);
   const groups = useMemo(() => groupOperations(props.operations, approvals), [approvals, props.operations]);
+  useEffect(() => {
+    const confirmingGroup = groups.find((group) => group.cwd === confirmingWorkspace);
+    if (confirmingWorkspace && (!confirmingGroup || deletionProtected(confirmingGroup))) {
+      setConfirmingWorkspace(null);
+    }
+  }, [confirmingWorkspace, groups]);
 
   return (
     <section className="operations-dashboard" role="dialog" aria-modal="true" aria-labelledby="operations-title">
@@ -72,35 +85,122 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
         <section className="workspace-operations" aria-labelledby="workspace-operations-title">
           <div className="dashboard-section-title">
             <strong id="workspace-operations-title">프로젝트 작업</strong>
-            <span>최근 작업 {props.operations.length}건</span>
+            <span>{journalPolicyLabel(props.operations.length, props.journalPolicy)}</span>
           </div>
           {groups.length === 0 ? (
             <p className="dashboard-empty">아직 기록된 작업이 없습니다.</p>
           ) : groups.map((group) => (
-            <section className="operation-group" key={group.cwd}>
-              <header>
-                <strong>
-                  {group.name}
-                  <em>{workspaceIdentityLabel(workspaceIdentityFor(props.workspaces, group.cwd))}</em>
-                </strong>
-                <small title={group.cwd}>{group.cwd}</small>
-              </header>
-              <div className="operation-list">
-                {group.operations.slice(0, 12).map((operation) => (
-                  <OperationCard
-                    key={operation.id}
-                    operation={operation}
-                    identity={operation.workspaceIdentity ?? workspaceIdentityFor(props.workspaces, operation.cwd)}
-                    waiting={approvals.some((item) => item.operationId === operation.id)}
-                    now={now}
-                    onOpen={props.onOpenOperation}
-                  />
-                ))}
-              </div>
-            </section>
+            <WorkspaceOperationGroup
+              key={group.cwd}
+              group={group}
+              workspaces={props.workspaces}
+              approvals={approvals}
+              now={now}
+              journalManagement={props.journalPolicy !== null}
+              confirmingDelete={confirmingWorkspace === group.cwd}
+              exportingWorkspace={props.exportingWorkspace}
+              deletingWorkspace={props.deletingWorkspace}
+              onOpenOperation={props.onOpenOperation}
+              onConfirmDelete={(confirming) => setConfirmingWorkspace(confirming ? group.cwd : null)}
+              onExportWorkspace={props.onExportWorkspace}
+              onDeleteWorkspaceHistory={props.onDeleteWorkspaceHistory}
+            />
           ))}
         </section>
       </div>
+    </section>
+  );
+}
+
+function WorkspaceOperationGroup({
+  group,
+  workspaces,
+  approvals,
+  now,
+  journalManagement,
+  confirmingDelete,
+  exportingWorkspace,
+  deletingWorkspace,
+  onOpenOperation,
+  onConfirmDelete,
+  onExportWorkspace,
+  onDeleteWorkspaceHistory,
+}: {
+  group: OperationGroup;
+  workspaces: Workspace[];
+  approvals: ApprovalItem[];
+  now: number;
+  journalManagement: boolean;
+  confirmingDelete: boolean;
+  exportingWorkspace: string | null;
+  deletingWorkspace: string | null;
+  onOpenOperation(operation: Operation): void;
+  onConfirmDelete(confirming: boolean): void;
+  onExportWorkspace(workspace: string): Promise<void>;
+  onDeleteWorkspaceHistory(workspace: string): Promise<void>;
+}) {
+  const protectedHistory = deletionProtected(group);
+  const busy = exportingWorkspace !== null || deletingWorkspace !== null;
+  return (
+    <section className="operation-group">
+      <header>
+        <strong>
+          {group.name}
+          <em>{workspaceIdentityLabel(workspaceIdentityFor(workspaces, group.cwd))}</em>
+        </strong>
+        <small title={group.cwd}>{group.cwd}</small>
+      </header>
+      <div className="operation-list">
+        {group.operations.slice(0, 12).map((operation) => (
+          <OperationCard
+            key={operation.id}
+            operation={operation}
+            identity={operation.workspaceIdentity ?? workspaceIdentityFor(workspaces, operation.cwd)}
+            waiting={approvals.some((item) => item.operationId === operation.id)}
+            now={now}
+            onOpen={onOpenOperation}
+          />
+        ))}
+      </div>
+      {journalManagement && (
+        <div className="journal-controls">
+          <div className="journal-actions">
+            <button type="button" disabled={busy} onClick={() => void onExportWorkspace(group.cwd)}>
+              {exportingWorkspace === group.cwd ? "내보내는 중…" : "JSON 내보내기"}
+            </button>
+            <button
+              type="button"
+              className="journal-delete-entry"
+              disabled={busy || protectedHistory}
+              onClick={() => onConfirmDelete(!confirmingDelete)}
+            >
+              기록 삭제
+            </button>
+          </div>
+          <small className="journal-export-note">내보낸 JSON에는 프로젝트 경로·프롬프트·결과가 포함되므로 안전하게 보관하세요.</small>
+          {protectedHistory && (
+            <small className="journal-protected">실행·승인·확인 필요 작업을 먼저 끝내야 기록을 삭제할 수 있습니다.</small>
+          )}
+          {confirmingDelete && !protectedHistory && (
+            <div className="journal-delete-confirm" role="group" aria-label="Companion 실행 기록 삭제 확인">
+              <strong>이 프로젝트의 Companion 실행 기록을 삭제할까요?</strong>
+              <code title={group.cwd}>{group.cwd}</code>
+              <p>프로젝트 파일과 휴대폰의 암호화된 대화·대기열은 삭제되지 않습니다. 필요한 기록은 먼저 JSON으로 내보내세요.</p>
+              <div>
+                <button type="button" disabled={busy} onClick={() => onConfirmDelete(false)}>취소</button>
+                <button
+                  type="button"
+                  className="confirm-delete"
+                  disabled={busy}
+                  onClick={() => void onDeleteWorkspaceHistory(group.cwd)}
+                >
+                  {deletingWorkspace === group.cwd ? "삭제 중…" : "확인하고 기록 삭제"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -229,4 +329,17 @@ function short(value: string, maximum: number): string {
 
 function workspaceName(value: string): string {
   return value.split(/[\\/]/).filter(Boolean).at(-1) ?? value;
+}
+
+function journalPolicyLabel(operationCount: number, policy: JournalPolicy | null): string {
+  if (!policy) return `최근 작업 ${operationCount}건`;
+  const days = policy.retentionMs / (24 * 60 * 60_000);
+  const retention = Number.isInteger(days) ? `${days}일` : `${Math.round(policy.retentionMs / 3_600_000)}시간`;
+  const exportMiB = policy.maxExportBytes / (1024 * 1024);
+  return `최근 작업 ${operationCount}건 · 보존 ${retention} · 작업 ${policy.maxOperations.toLocaleString()} · 이벤트 ${policy.maxEvents.toLocaleString()} · 내보내기 ${exportMiB.toLocaleString()} MiB`;
+}
+
+function deletionProtected(group: OperationGroup): boolean {
+  return group.approvals.length > 0 || group.operations.some((operation) =>
+    operation.status === "running" || (operation.status === "unknown" && !operation.acknowledgedAt));
 }

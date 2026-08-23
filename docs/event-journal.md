@@ -39,12 +39,21 @@ key를 잃으면 기존 payload를 복구하지 못하므로 DB와 key는 함께
   따라서 앱이나 Companion을 다시 열어도 이미 확인한 `unknown` 작업이 queue를 다시 막지 않는다.
 
 기본 retention은 7일, 최대 500 operation과 2,000 event다. 오래된 terminal operation 삭제 시 관련
-event도 함께 삭제한다. 실행 중 operation은 retention 정리 대상에서 제외된다. 사용자 설정,
-암호화 export와 범위별 delete UI는 아직 비활성화되어 있다.
+event도 함께 삭제한다. 실행 중 operation은 retention 정리 대상에서 제외된다. 작업 대시보드는
+이 정책을 표시하고, paired 클라이언트가 선택한 workspace의 operation과 event를 최대
+16 MiB JSON으로 내보낼 수 있다. 내보낸 파일은 복호화된 평문이며 프로젝트 경로,
+prompt와 결과가 포함되므로 사용자가 안전한 위치에 보관해야 한다.
+
+workspace 기록 삭제는 화면에서 정확한 전체 경로와 영향 범위를 다시 본 뒤 두 번째 터치로만
+실행된다. 해당 workspace에 실행·승인 중인 operation이나 사용자가 아직 확인하지 않은
+`unknown` operation이 있으면 Gateway가 409로 거절한다. 삭제는 Companion의 operation, idempotency
+기록과 연관 event만 제거하며 실제 프로젝트 파일, Android의 conversation과 queue journal은 바꾸지
+않는다. retention 사용자 설정과 pin/archive는 아직 구현하지 않았다.
 
 ## 검사 범위
 
 자동 테스트는 private directory와 DB/key/WAL 권한, symlink·hard link 차단, 평문
 prompt·workspace·event·idempotency 비노출, ciphertext와 metadata tamper 감지, retention gap과 cursor
-reset, 중복 cursor 제거, idempotent retry, `running → unknown` 재시작 복구와 durable acknowledgement를
+reset, 중복 cursor 제거, idempotent retry, `running → unknown` 재시작 복구, durable acknowledgement,
+workspace 경계 내보내기·응답 크기 상한과 active/unknown 삭제 보호를
 가짜 Provider로 검증한다. 공개 CI는 실제 Provider 요청이나 사용자 데이터를 사용하지 않는다.

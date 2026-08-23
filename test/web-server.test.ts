@@ -272,6 +272,29 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(activeRuns.operations[0].model, "test-codex");
   assert.equal(activeRuns.operations[0].effort, "high");
   assert.equal(activeRuns.operations[0].networkAccess, false);
+  const journalPolicy = await jsonFetch(
+    `${base}/api/journal/policy?workspace=${encodeURIComponent(cwd)}`,
+    { headers: authorized() },
+  );
+  assert.equal(journalPolicy.policy.retentionMs, 7 * 24 * 60 * 60_000);
+  assert.equal(journalPolicy.summary.operationCount, 1);
+  const journalExportResponse = await fetch(
+    `${base}/api/journal/export?workspace=${encodeURIComponent(cwd)}`,
+    { headers: authorized() },
+  );
+  assert.equal(journalExportResponse.status, 200);
+  assert.match(journalExportResponse.headers.get("content-disposition") ?? "", /attachment/);
+  assert.equal(journalExportResponse.headers.get("cache-control"), "no-store");
+  assert.equal(journalExportResponse.headers.get("x-content-type-options"), "nosniff");
+  const journalExport = await journalExportResponse.json() as any;
+  assert.equal(journalExport.workspace, cwd);
+  assert.equal(journalExport.operations[0].id, operationId);
+  const activeDelete = await fetch(`${base}/api/journal/workspace`, {
+    method: "DELETE",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ workspace: cwd, confirm: "delete-companion-history" }),
+  });
+  assert.equal(activeDelete.status, 409);
   const mismatchedHandoff = await fetch(`${base}/api/session/handoff`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
@@ -346,6 +369,26 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.match(replayText, /"type":"approval"/);
   assert.match(replayText, /"action":"resolved"/);
   assert.match(replayText, /"latestCursor":\d+/);
+
+  const missingDeleteConfirmation = await fetch(`${base}/api/journal/workspace`, {
+    method: "DELETE",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ workspace: cwd }),
+  });
+  assert.equal(missingDeleteConfirmation.status, 400);
+  const deletedHistory = await jsonFetch(`${base}/api/journal/workspace`, {
+    method: "DELETE",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ workspace: cwd, confirm: "delete-companion-history" }),
+  });
+  assert.equal(deletedHistory.deletedOperations, 1);
+  assert.ok(deletedHistory.deletedEvents >= 1);
+  assert.deepEqual((await jsonFetch(`${base}/api/runs`, { headers: authorized() })).operations, []);
+  const emptyJournal = await jsonFetch(
+    `${base}/api/journal/policy?workspace=${encodeURIComponent(cwd)}`,
+    { headers: authorized() },
+  );
+  assert.deepEqual(emptyJournal.summary, { operationCount: 0, eventCount: 0 });
 });
 
 test("gateway restart persists unknown-operation acknowledgement and replays it", async (t) => {

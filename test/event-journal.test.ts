@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { EventJournal } from "../src/event-journal.js";
+import { EventJournal, EventJournalExportError } from "../src/event-journal.js";
 import {
   RunCoordinator,
   type RunProviderRegistry,
@@ -128,6 +128,19 @@ test("event journal detects retention gaps, resets foreign cursors, and rejects 
   const reset = journal.replayAfter(999);
   assert.equal(reset.journalReset, true);
   assert.deepEqual(reset.events.map((event) => event.event.value), [3, 4]);
+  assert.deepEqual(journal.workspaceSummary("/workspace/a"), {
+    operationCount: 1,
+    eventCount: 2,
+    oldestEventAt: gap.events[0]!.createdAt,
+    newestEventAt: gap.events[1]!.createdAt,
+  });
+  const exported = journal.exportWorkspace("/workspace/a");
+  assert.equal(exported.version, 1);
+  assert.equal(exported.workspace, "/workspace/a");
+  assert.equal(exported.policy.maxEvents, 2);
+  assert.equal(exported.operations[0]?.id, "operation-retained");
+  assert.deepEqual(exported.events.map((event) => event.event.value), [3, 4]);
+  assert.deepEqual(journal.workspaceSummary("/workspace/another"), { operationCount: 0, eventCount: 0 });
   journal.close();
 
   const raw = new Database(databaseFile);
@@ -136,6 +149,22 @@ test("event journal detects retention gaps, resets foreign cursors, and rejects 
   const reopened = await EventJournal.create(databaseFile);
   assert.throws(() => reopened.replayAfter(0), /cannot be authenticated|malformed/);
   reopened.close();
+});
+
+test("workspace journal export enforces the configured response size cap", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-pocket-event-export-cap-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const journal = await EventJournal.create(join(directory, "events.sqlite3"), { maxExportBytes: 700 });
+  journal.saveOperation({
+    ...operation("operation-export-cap", "completed"),
+    prompt: "private-export-value".repeat(40),
+  });
+  assert.equal(journal.policy().maxExportBytes, 700);
+  assert.throws(
+    () => journal.exportWorkspace("/workspace/a"),
+    (error: unknown) => error instanceof EventJournalExportError && error.statusCode === 413,
+  );
+  journal.close();
 });
 
 test("event journal rejects a permissive or symlinked key file", async (t) => {

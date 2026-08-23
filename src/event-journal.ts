@@ -16,6 +16,7 @@ const DEFAULT_MAX_OPERATIONS = 500;
 const DEFAULT_MAX_EVENTS = 2_000;
 const MAX_OPERATION_BYTES = 4 * 1024 * 1024;
 const MAX_EVENT_BYTES = 128 * 1024;
+const DEFAULT_MAX_EXPORT_BYTES = 16 * 1024 * 1024;
 
 interface StoredOperationPayload {
   operation: RunOperation;
@@ -60,7 +61,41 @@ export interface EventJournalOptions {
   retentionMs?: number;
   maxOperations?: number;
   maxEvents?: number;
+  maxExportBytes?: number;
   createId?: () => string;
+}
+
+export class EventJournalExportError extends Error {
+  readonly statusCode = 413;
+
+  constructor() {
+    super("Workspace journal export exceeds the safe size limit");
+    this.name = "EventJournalExportError";
+  }
+}
+
+export interface EventJournalPolicy {
+  retentionMs: number;
+  maxOperations: number;
+  maxEvents: number;
+  maxExportBytes: number;
+}
+
+export interface WorkspaceJournalSummary {
+  operationCount: number;
+  eventCount: number;
+  oldestEventAt?: string;
+  newestEventAt?: string;
+}
+
+export interface WorkspaceJournalExport {
+  version: 1;
+  exportedAt: string;
+  workspace: string;
+  policy: EventJournalPolicy;
+  summary: WorkspaceJournalSummary;
+  operations: RunOperation[];
+  events: JournalReplayEvent[];
 }
 
 export class EventJournal implements RunStateStore {
@@ -73,6 +108,7 @@ export class EventJournal implements RunStateStore {
     private readonly retentionMs: number,
     private readonly maxOperations: number,
     private readonly maxEvents: number,
+    private readonly maxExportBytes: number,
     private readonly createId: () => string,
   ) {}
 
@@ -83,6 +119,7 @@ export class EventJournal implements RunStateStore {
     const retentionMs = positiveInteger(options.retentionMs ?? DEFAULT_RETENTION_MS, "retentionMs");
     const maxOperations = positiveInteger(options.maxOperations ?? DEFAULT_MAX_OPERATIONS, "maxOperations");
     const maxEvents = positiveInteger(options.maxEvents ?? DEFAULT_MAX_EVENTS, "maxEvents");
+    const maxExportBytes = positiveInteger(options.maxExportBytes ?? DEFAULT_MAX_EXPORT_BYTES, "maxExportBytes");
     await mkdir(dirname(resolvedDatabaseFile), { recursive: true, mode: 0o700 });
     await assertPrivateDirectory(dirname(resolvedDatabaseFile), "Event journal database directory");
     await assertSafeExistingFile(resolvedDatabaseFile, "Event journal database");
@@ -107,6 +144,7 @@ export class EventJournal implements RunStateStore {
         retentionMs,
         maxOperations,
         maxEvents,
+        maxExportBytes,
         options.createId ?? randomUUID,
       );
     } catch (error) {
@@ -194,6 +232,14 @@ export class EventJournal implements RunStateStore {
     this.database.prepare("DELETE FROM operations WHERE id = ?").run(operationId);
   }
 
+  deleteOperations(operationIds: readonly string[]): void {
+    if (operationIds.length === 0) return;
+    const statement = this.database.prepare("DELETE FROM operations WHERE id = ?");
+    this.database.transaction((ids: readonly string[]) => {
+      for (const operationId of ids) statement.run(operationId);
+    })(operationIds);
+  }
+
   appendEvent(operationId: string, cwd: string, event: Record<string, unknown>): JournalReplayEvent {
     const serialized = JSON.stringify(event);
     if (Buffer.byteLength(serialized) > MAX_EVENT_BYTES) {
@@ -257,6 +303,94 @@ export class EventJournal implements RunStateStore {
   latestCursor(): number {
     const row = this.database.prepare("SELECT COALESCE(MAX(cursor), 0) AS cursor FROM events").get() as { cursor: number };
     return row.cursor;
+  }
+
+  policy(): EventJournalPolicy {
+    return {
+      retentionMs: this.retentionMs,
+      maxOperations: this.maxOperations,
+      maxEvents: this.maxEvents,
+      maxExportBytes: this.maxExportBytes,
+    };
+  }
+
+  workspaceSummary(cwd: string): WorkspaceJournalSummary {
+    this.cleanup();
+    const row = this.database.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM operations WHERE workspace_index = ?) AS operation_count,
+        COUNT(*) AS event_count,
+        MIN(created_at) AS oldest_event_at,
+        MAX(created_at) AS newest_event_at
+      FROM events
+      WHERE workspace_index = ?
+    `).get(this.workspaceIndex(cwd), this.workspaceIndex(cwd)) as {
+      operation_count: number;
+      event_count: number;
+      oldest_event_at: number | null;
+      newest_event_at: number | null;
+    };
+    return {
+      operationCount: row.operation_count,
+      eventCount: row.event_count,
+      ...(row.oldest_event_at !== null ? { oldestEventAt: new Date(row.oldest_event_at).toISOString() } : {}),
+      ...(row.newest_event_at !== null ? { newestEventAt: new Date(row.newest_event_at).toISOString() } : {}),
+    };
+  }
+
+  exportWorkspace(cwd: string): WorkspaceJournalExport {
+    this.cleanup();
+    const workspaceIndex = this.workspaceIndex(cwd);
+    const operationRows = this.database.prepare(`
+      SELECT id, workspace_index, status, started_at, completed_at, envelope
+      FROM operations
+      WHERE workspace_index = ?
+      ORDER BY started_at ASC
+    `).all(workspaceIndex) as OperationRow[];
+    const eventRows = this.database.prepare(`
+      SELECT cursor, event_id, operation_id, workspace_index, created_at, envelope
+      FROM events
+      WHERE workspace_index = ?
+      ORDER BY cursor ASC
+    `).all(workspaceIndex) as EventRow[];
+    let exportedBytes = 0;
+    const operations = operationRows.map((row) => {
+      const payload = this.open<StoredOperationPayload>(operationAad(row), row.envelope, MAX_OPERATION_BYTES);
+      assertStoredOperation(payload, row.id);
+      assertOperationMetadata(payload.operation, row, workspaceIndex);
+      exportedBytes = addExportBytes(exportedBytes, payload.operation, this.maxExportBytes);
+      return structuredClone(payload.operation);
+    });
+    const events = eventRows.map((row) => {
+      const item: JournalReplayEvent = {
+        cursor: row.cursor,
+        eventId: row.event_id,
+        createdAt: new Date(row.created_at).toISOString(),
+        event: this.open<Record<string, unknown>>(eventAad(row), row.envelope, MAX_EVENT_BYTES),
+      };
+      exportedBytes = addExportBytes(exportedBytes, item, this.maxExportBytes);
+      return item;
+    });
+    const exported: WorkspaceJournalExport = {
+      version: 1,
+      exportedAt: new Date(this.now()).toISOString(),
+      workspace: cwd,
+      policy: this.policy(),
+      summary: this.workspaceSummary(cwd),
+      operations,
+      events,
+    };
+    addExportBytes(exportedBytes, {
+      version: exported.version,
+      exportedAt: exported.exportedAt,
+      workspace: exported.workspace,
+      policy: exported.policy,
+      summary: exported.summary,
+    }, this.maxExportBytes);
+    if (Buffer.byteLength(`${JSON.stringify(exported, null, 2)}\n`) > this.maxExportBytes) {
+      throw new EventJournalExportError();
+    }
+    return exported;
   }
 
   close(): void {
@@ -449,6 +583,12 @@ function positiveInteger(value: number, name: string): number {
 function safeEpochMilliseconds(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error(`Event journal ${name} is invalid`);
   return value;
+}
+
+function addExportBytes(current: number, value: unknown, maximum: number): number {
+  const next = current + Buffer.byteLength(JSON.stringify(value));
+  if (next > maximum) throw new EventJournalExportError();
+  return next;
 }
 
 function assertStoredOperation(value: StoredOperationPayload, expectedId: string): void {

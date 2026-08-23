@@ -2,7 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-현재 정식 배포는 `v1.6.0`이며 `1.8.1`은 v1 기능 동결 기준선입니다. `2.0.0` 소스는
+현재 정식 배포는 `v1.6.0`이며 `1.8.2`는 current v1 현장 후보, `1.8.1`은 검증된
+rollback 기준선입니다. `2.0.0` 소스는
 `feature/v2-control-plane`에서 개발 중이며 아직 설치용 candidate가 아닙니다. 실제 배포 상태는
 [Deployment inventory](docs/deployment-inventory.md), 변경 이력은 [Changelog](CHANGELOG.md),
 출시 절차는 [Release process](docs/release-process.md)를 참고하세요.
@@ -22,7 +23,7 @@
 - 각 PC가 제공하는 Codex 모델과 지원 추론 성능을 실시간 조회·선택
 - 실행 중에도 다음 프롬프트와 첨부를 대기열에 추가해 순차 실행
 - 단말·프로젝트·대화별 로컬 작업 저널과 오프라인 프롬프트 대기열
-- 암호화 Companion event journal과 SSE cursor 기반 네트워크·프로세스 재연결 복구
+- 암호화 Companion event journal과 SSE cursor 기반 네트워크·프로세스 재연결 복구, 프로젝트별 JSON 내보내기·2단계 기록 삭제
 - PC·프로젝트·Git branch/worktree별 실행 상태와 비용을 모아 보는 작업 대시보드, 만료·터치 전용 승인함
 - OpenAI/OpenRouter에서 SHA-256 경쟁 검사를 거친 기존 텍스트 파일 교체와 격리된 npm check/test/build
 - Codex·Claude Code 등을 독립 어댑터로 확장할 수 있는 AI 제공자 모듈

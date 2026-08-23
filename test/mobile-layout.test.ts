@@ -19,6 +19,8 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   const sheet = css.match(/\.operations-sheet \{([^}]+)\}/)?.[1] ?? "";
   const details = css.match(/\.approval-card pre \{([^}]+)\}/)?.[1] ?? "";
   const handoffPath = css.match(/\.handoff-summary code \{([^}]+)\}/)?.[1] ?? "";
+  const journalConfirm = css.match(/\.journal-delete-confirm \{([^}]+)\}/)?.[1] ?? "";
+  const journalPath = css.match(/\.journal-delete-confirm > code \{([^}]+)\}/)?.[1] ?? "";
 
   assert.match(overlay, /grid-template-rows:\s*minmax\(0,\s*1fr\)/);
   assert.match(overlay, /overflow:\s*hidden/);
@@ -31,6 +33,10 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   assert.match(details, /overflow-wrap:\s*anywhere/);
   assert.match(handoffPath, /min-width:\s*0/);
   assert.match(handoffPath, /overflow-wrap:\s*anywhere/);
+  assert.match(journalConfirm, /max-width:\s*100%/);
+  assert.match(journalConfirm, /overflow:\s*hidden/);
+  assert.match(journalPath, /overflow:\s*auto/);
+  assert.match(journalPath, /white-space:\s*pre-wrap/);
 });
 
 test("the app shell cannot grow beyond a narrow mobile viewport", async () => {

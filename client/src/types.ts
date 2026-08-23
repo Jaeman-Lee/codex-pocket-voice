@@ -43,6 +43,13 @@ export interface WorkspaceResponse {
   creationLocations: Workspace[];
 }
 
+export interface JournalPolicy {
+  retentionMs: number;
+  maxOperations: number;
+  maxEvents: number;
+  maxExportBytes: number;
+}
+
 export interface ModelOption {
   id: string;
   displayName: string;
@@ -281,6 +288,9 @@ export interface CodexEvent {
   reason?: "database_reset" | "retention_gap" | "persistence_failure";
   latestCursor?: number;
   journalCursor?: number;
+  workspace?: string;
+  deletedOperations?: number;
+  deletedEvents?: number;
   replayed?: number;
   handoffId?: string;
   operation?: Operation;

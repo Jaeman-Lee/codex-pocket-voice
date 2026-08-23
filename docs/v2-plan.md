@@ -24,7 +24,7 @@
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환, operation UI 상태 모듈 구현; 나머지 App 상태 분리 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 읽기 도구, SHA-bound 단일 파일 교체와 격리 npm 검증 구현; 다중 파일 patch·durable multi-turn 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
-| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 live branch/worktree identity 구현; pin/archive·export/delete 잔여 |
+| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, live branch/worktree identity, workspace export/protected delete 구현; 사용자 retention 설정·pin/archive·native 알림 잔여 |
 | Phase E | 대기 | PocketLink와 출시 강화 |
 
 ## 2. 제품 정의
@@ -240,6 +240,10 @@ key 파일을 둔다. SSE는 `Last-Event-ID` 이후 event를 재전송하며 단
 기록하고 중복 cursor를 버린다. retention gap이나 DB 재생성은 snapshot 재조회 신호를 보내며,
 Companion 재시작 전에 `running`이던 operation은 `unknown`으로 전환하고 사용자 확인 전 queue를 멈춘다.
 확인 결과는 operation에 암호화해 저장하고 `acknowledged` event로 다른 기기에도 전파한다.
+paired 클라이언트는 선택한 workspace의 operation·event를 복호화된 JSON으로 내보내되 응답을
+16 MiB로 제한하고 캐시하지 않는다. 작업 대시보드는 정확한 전체 경로와 영향을 다시 보여 준 뒤
+두 번째 터치에서만 Companion 기록을 삭제한다. active 작업과 미확인 `unknown`은 삭제를 차단하며,
+프로젝트 파일과 Android conversation·queue journal은 영향을 받지 않는다.
 
 ## 10. 모바일 운영 경험
 
@@ -334,7 +338,7 @@ same-origin 터치 approve/decline, 만료와 replay 완료 뒤 snapshot 재동�
 ahead/behind와 linked worktree를 수집한다. 대시보드와 세션 반납 검토 화면은 전체 경로와 이 identity를
 표시하고 run 시작 시점 snapshot은 암호화 event journal에 함께 보존한다. Gateway는 run/release/claim의
 thread cwd가 선택한 workspace와 다르면 409로 차단한다.
-사용자 retention 설정, export/delete, pin/archive와 native 알림 deep link는 다음 단계다.
+사용자 retention 설정, pin/archive와 native 알림 deep link는 다음 단계다.
 
 완료 조건: 여러 프로젝트 run을 동시에 추적하고 앱 종료·네트워크 전환 후 정확한 상태로 복구한다.
 

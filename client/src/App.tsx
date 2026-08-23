@@ -41,6 +41,7 @@ import type {
   DeviceId,
   DeviceTarget,
   HistoryItem,
+  JournalPolicy,
   Operation,
   MediaItem,
   ModelOption,
@@ -172,6 +173,9 @@ export function App() {
   const [approvalInbox, setApprovalInbox] = useState<ApprovalItem[]>([]);
   const [showOperationsDashboard, setShowOperationsDashboard] = useState(false);
   const [decidingApprovalId, setDecidingApprovalId] = useState<string | null>(null);
+  const [journalPolicy, setJournalPolicy] = useState<JournalPolicy | null>(null);
+  const [exportingWorkspace, setExportingWorkspace] = useState<string | null>(null);
+  const [deletingWorkspace, setDeletingWorkspace] = useState<string | null>(null);
   const [journal] = useState(createWorkJournal);
   const tr = (key: MessageKey) => translate(uiLanguage, key);
   const selectedWorkspaceIdentity = workspaceIdentityFor(workspaces, workspace);
@@ -363,7 +367,7 @@ export function App() {
     if (initializingRef.current) return;
     initializingRef.current = true;
     try {
-      const [health, workspaceData, providerData, codexModelData, runData, approvalData] = await Promise.all([
+      const [health, workspaceData, providerData, codexModelData, runData, approvalData, journalData] = await Promise.all([
         api<{ userAgent: string; device: { name: string } }>("/api/health"),
         api<WorkspaceResponse>("/api/workspaces"),
         api<ProviderResponse>("/api/providers"),
@@ -372,6 +376,8 @@ export function App() {
           .catch(() => ({ operations: [] })),
         api<{ approvals: ApprovalItem[] }>("/api/approvals")
           .catch(() => ({ approvals: [] })),
+        api<{ policy: JournalPolicy }>("/api/journal/policy")
+          .catch(() => ({ policy: null })),
       ]);
       setConnectionText(`${health.device.name} · ${health.userAgent}`);
       setConnection("online");
@@ -380,6 +386,7 @@ export function App() {
       setProviders(providerData.providers);
       setOperationSnapshots(runData.operations);
       setApprovalInbox(activeApprovals(approvalData.approvals));
+      setJournalPolicy(journalData.policy);
       const storedProvider = localStorage.getItem(storageKey("provider", deviceRef.current));
       let selectedProvider = providerData.providers.find((item) => item.id === storedProvider && item.available)
         ?? providerData.providers.find((item) => item.id === "codex")
@@ -760,16 +767,19 @@ export function App() {
   async function refreshOperationalSnapshot(silent = false) {
     const requestedDevice = deviceRef.current;
     try {
-      const [runData, approvalData, workspaceData] = await Promise.all([
+      const [runData, approvalData, workspaceData, journalData] = await Promise.all([
         api<{ operations: Operation[] }>("/api/runs"),
         api<{ approvals: ApprovalItem[] }>("/api/approvals"),
         api<WorkspaceResponse>("/api/workspaces"),
+        api<{ policy: JournalPolicy }>("/api/journal/policy")
+          .catch(() => ({ policy: null })),
       ]);
       if (deviceRef.current !== requestedDevice) return;
       setOperationSnapshots(runData.operations);
       setApprovalInbox(activeApprovals(approvalData.approvals));
       setWorkspaces(workspaceData.workspaces);
       setCreationLocations(workspaceData.creationLocations);
+      setJournalPolicy(journalData.policy);
       if (!silent) showToast("프로젝트 작업 상태를 새로 확인했습니다.");
     } catch (error) {
       if (!silent && deviceRef.current === requestedDevice) showToast(errorMessage(error));
@@ -863,6 +873,18 @@ export function App() {
     if (event.type === "journal" && event.action === "replay_complete") {
       replayingEventsRef.current = false;
       void refreshOperationalSnapshot(true);
+      return;
+    }
+    if (event.type === "journal" && event.action === "history_deleted" && event.workspace) {
+      setOperationSnapshots((current) => current.filter((item) => item.cwd !== event.workspace));
+      setApprovalInbox((current) => current.filter((item) => item.cwd !== event.workspace));
+      const current = operationRef.current;
+      if (current?.cwd === event.workspace && current.status !== "running"
+        && (current.status !== "unknown" || current.acknowledgedAt)) {
+        operationRef.current = null;
+        setOperation(null);
+        stopRunning();
+      }
       return;
     }
     if (event.type === "journal" && event.action === "reset") {
@@ -1417,6 +1439,9 @@ export function App() {
     setApprovalInbox([]);
     setShowOperationsDashboard(false);
     setDecidingApprovalId(null);
+    setJournalPolicy(null);
+    setExportingWorkspace(null);
+    setDeletingWorkspace(null);
     replayingEventsRef.current = false;
   }
 
@@ -1794,6 +1819,53 @@ export function App() {
     }
   }
 
+  async function exportCompanionJournal(targetWorkspace: string) {
+    if (exportingWorkspace || deletingWorkspace) return;
+    setExportingWorkspace(targetWorkspace);
+    let objectUrl = "";
+    try {
+      const blob = await apiBlob(`/api/journal/export?workspace=${encodeURIComponent(targetWorkspace)}`);
+      objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `codex-pocket-${safeFilename(workspaceName(targetWorkspace))}-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      showToast("이 프로젝트의 Companion 실행 기록을 JSON으로 내보냈습니다.");
+    } catch (error) {
+      showToast(errorMessage(error));
+    } finally {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      setExportingWorkspace(null);
+    }
+  }
+
+  async function deleteCompanionJournal(targetWorkspace: string) {
+    if (deletingWorkspace || exportingWorkspace) return;
+    setDeletingWorkspace(targetWorkspace);
+    try {
+      const data = await api<{ deletedOperations: number; deletedEvents: number }>("/api/journal/workspace", {
+        method: "DELETE",
+        body: { workspace: targetWorkspace, confirm: "delete-companion-history" },
+      });
+      setOperationSnapshots((current) => current.filter((item) => item.cwd !== targetWorkspace));
+      setApprovalInbox((current) => current.filter((item) => item.cwd !== targetWorkspace));
+      const current = operationRef.current;
+      if (current?.cwd === targetWorkspace && current.status !== "running"
+        && (current.status !== "unknown" || current.acknowledgedAt)) {
+        operationRef.current = null;
+        setOperation(null);
+        stopRunning();
+      }
+      showToast(`Companion 기록 ${data.deletedOperations}건과 이벤트 ${data.deletedEvents}건을 삭제했습니다.`);
+    } catch (error) {
+      showToast(errorMessage(error));
+    } finally {
+      setDeletingWorkspace(null);
+    }
+  }
+
   function openOperationFromDashboard(nextOperation: Operation) {
     const nextProvider = nextOperation.providerId ?? "codex";
     const nextThread = nextProvider === "codex"
@@ -1941,10 +2013,15 @@ export function App() {
           workspaces={workspaces}
           queuedCount={promptQueue.length}
           decidingApprovalId={decidingApprovalId}
+          journalPolicy={journalPolicy}
+          exportingWorkspace={exportingWorkspace}
+          deletingWorkspace={deletingWorkspace}
           onClose={() => setShowOperationsDashboard(false)}
           onRefresh={() => void refreshOperationalSnapshot(false)}
           onOpenOperation={openOperationFromDashboard}
           onDecision={(approval, decision) => void decideApproval(approval, decision)}
+          onExportWorkspace={exportCompanionJournal}
+          onDeleteWorkspaceHistory={deleteCompanionJournal}
         />
       )}
 
@@ -2590,6 +2667,11 @@ function formatPairingCode(value: string): string {
 
 function workspaceName(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+}
+
+function safeFilename(value: string): string {
+  const normalized = value.normalize("NFKC").replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^-+|-+$/g, "");
+  return normalized.slice(0, 80) || "workspace";
 }
 
 function statusMessage(status: Operation["status"]): string {

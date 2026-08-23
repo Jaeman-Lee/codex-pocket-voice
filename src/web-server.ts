@@ -27,7 +27,7 @@ import { createReadOnlyWorkspaceTools } from "./read-only-tools.js";
 import { createWorkspaceChangeTools } from "./workspace-change-tools.js";
 import { createWorkspaceExecutionTools } from "./workspace-execution-tools.js";
 import { LocalToolBroker } from "./tool-broker.js";
-import { EventJournal, type JournalReplayEvent } from "./event-journal.js";
+import { EventJournal, EventJournalExportError, type JournalReplayEvent } from "./event-journal.js";
 import {
   RunCoordinator,
   RunCoordinatorError,
@@ -581,6 +581,44 @@ async function handleApi(
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/journal/policy") {
+    const requestedWorkspace = url.searchParams.get("workspace");
+    const workspace = requestedWorkspace ? await options.paths.resolveWorkspace(requestedWorkspace) : undefined;
+    sendJson(response, 200, {
+      policy: journal.policy(),
+      ...(workspace ? { workspace, summary: journal.workspaceSummary(workspace) } : {}),
+    });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/journal/export") {
+    const workspace = await options.paths.resolveWorkspace(
+      requiredString(url.searchParams.get("workspace"), "workspace", 4_096),
+    );
+    sendJsonDownload(response, journal.exportWorkspace(workspace), `codex-pocket-journal-${Date.now()}.json`);
+    return;
+  }
+
+  if (request.method === "DELETE" && url.pathname === "/api/journal/workspace") {
+    assertSameOrigin(request);
+    const body = await readJson(request) as { workspace?: unknown; confirm?: unknown };
+    const workspace = await options.paths.resolveWorkspace(requiredString(body.workspace, "workspace", 4_096));
+    if (body.confirm !== "delete-companion-history") {
+      throw new HttpError(400, "Explicit journal deletion confirmation is required");
+    }
+    const before = journal.workspaceSummary(workspace);
+    const deleted = runs.deleteWorkspaceHistory(workspace);
+    const after = journal.workspaceSummary(workspace);
+    const result = {
+      workspace,
+      deletedOperations: deleted.deletedOperationIds.length,
+      deletedEvents: Math.max(0, before.eventCount - after.eventCount),
+    };
+    broadcast(sseClients, { type: "journal", action: "history_deleted", ...result });
+    sendJson(response, 200, result);
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/api/runs") {
     assertSameOrigin(request);
     const body = (await readJson(request)) as RunBody;
@@ -953,6 +991,18 @@ function sendJson(response: ServerResponse, status: number, value: unknown): voi
   response.end(body);
 }
 
+function sendJsonDownload(response: ServerResponse, value: unknown, filename: string): void {
+  if (response.headersSent) return;
+  const body = `${JSON.stringify(value, null, 2)}\n`;
+  response.statusCode = 200;
+  response.setHeader("Content-Type", "application/json; charset=utf-8");
+  response.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  response.setHeader("Cache-Control", "no-store");
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("Content-Length", Buffer.byteLength(body));
+  response.end(body);
+}
+
 function sendError(response: ServerResponse, error: unknown): void {
   if (response.headersSent) {
     response.end();
@@ -966,6 +1016,7 @@ function sendError(response: ServerResponse, error: unknown): void {
       || error instanceof GatewayAuthError
       || error instanceof RunCoordinatorError
       || error instanceof ApprovalBrokerError
+      || error instanceof EventJournalExportError
       ? error.statusCode
       : 500;
   const message = error instanceof Error ? error.message : String(error);
