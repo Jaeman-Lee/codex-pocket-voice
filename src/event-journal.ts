@@ -94,7 +94,7 @@ export interface WorkspaceJournalExport {
   workspace: string;
   policy: EventJournalPolicy;
   summary: WorkspaceJournalSummary;
-  operations: RunOperation[];
+  operations: Array<Omit<RunOperation, "resumeState"> & { resumable: boolean }>;
   events: JournalReplayEvent[];
 }
 
@@ -358,8 +358,9 @@ export class EventJournal implements RunStateStore {
       const payload = this.open<StoredOperationPayload>(operationAad(row), row.envelope, MAX_OPERATION_BYTES);
       assertStoredOperation(payload, row.id);
       assertOperationMetadata(payload.operation, row, workspaceIndex);
-      exportedBytes = addExportBytes(exportedBytes, payload.operation, this.maxExportBytes);
-      return structuredClone(payload.operation);
+      const operation = exportableOperation(payload.operation);
+      exportedBytes = addExportBytes(exportedBytes, operation, this.maxExportBytes);
+      return operation;
     });
     const events = eventRows.map((row) => {
       const item: JournalReplayEvent = {
@@ -618,12 +619,35 @@ function assertStoredOperation(value: StoredOperationPayload, expectedId: string
     || (operation.acknowledgedAt !== undefined && !boundedTimestamp(operation.acknowledgedAt))
     || (operation.error !== undefined && (typeof operation.error !== "string" || operation.error.length > 20_000))
     || !validResult
+    || !validResumeState(operation.resumeState, operation.providerId, operation.model)
   ) throw new Error("Encrypted event journal operation is invalid");
   if (value.idempotency && (
     !boundedString(value.idempotency.key, 500)
     || !/^[a-f0-9]{64}$/.test(value.idempotency.fingerprint)
     || value.idempotency.operationId !== expectedId
   )) throw new Error("Encrypted event journal idempotency record is invalid");
+}
+
+function validResumeState(value: unknown, providerId: unknown, model: unknown): boolean {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const state = value as Record<string, unknown>;
+  if (state.version !== 1 || state.providerId !== providerId || !boundedString(state.providerId, 80)
+      || !boundedString(state.model, 200) || (model !== undefined && state.model !== model)
+      || !state.data || typeof state.data !== "object" || Array.isArray(state.data)
+      || (state.truncated !== undefined && typeof state.truncated !== "boolean")) return false;
+  try {
+    return Buffer.byteLength(JSON.stringify(state)) <= 1024 * 1024;
+  } catch {
+    return false;
+  }
+}
+
+function exportableOperation(
+  operation: RunOperation,
+): Omit<RunOperation, "resumeState"> & { resumable: boolean } {
+  const { resumeState, ...exported } = structuredClone(operation);
+  return { ...exported, resumable: resumeState !== undefined };
 }
 
 function validWorkspaceIdentity(value: unknown): boolean {

@@ -30,6 +30,7 @@ import {
   type ProviderRun,
   type ProviderRunCompletion,
   type ProviderRunInput,
+  type ProviderResumeState,
   type ProviderRuntime,
   type ProviderUsage,
 } from "./types.js";
@@ -37,6 +38,8 @@ import {
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_TOOL_CALLS_PER_RUN = 8;
 const MAX_TOOL_OUTPUT_CHARS = 80_000;
+const MAX_RESUME_STATE_BYTES = 900 * 1024;
+const MAX_RESUME_TURNS = 12;
 const PROJECT_TOOL_INSTRUCTIONS = [
   "Project tools are restricted to the selected workspace and cannot access credentials.",
   "Observation tools may run immediately; every file-changing or execution tool pauses for explicit on-screen user approval.",
@@ -68,6 +71,11 @@ interface ActiveOpenAIRun {
   controller: AbortController;
   cancelled: boolean;
   timedOut: boolean;
+}
+
+interface OpenAIResumeTurn {
+  input: ResponseInput;
+  output: ResponseInputItem[];
 }
 
 type ProviderEventPayload = ProviderEvent extends infer Event
@@ -147,7 +155,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
       canTest: configured,
       capabilities: {
         run: runnable,
-        resume: false,
+        resume: true,
         models: configured,
         attachments: true,
         streaming: true,
@@ -207,17 +215,15 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
   }
 
   async startRun(input: ProviderRunInput): Promise<ProviderRun> {
-    if (input.conversationId) {
-      throw new ProviderError(409, "OpenAI API 대화 재개는 로컬 저널 단계에서 활성화됩니다. 새 대화로 시작해 주세요.");
-    }
     const model = input.model || this.defaultModel;
     if (!model) throw new ProviderError(400, "OpenAI API 모델을 선택해 주세요.");
     if (!this.modelAllowlist.has(model)) {
       throw new ProviderError(400, "허용 목록에 없는 OpenAI API 모델입니다.");
     }
     const credential = await this.requireCredential();
-    const responseInput = await buildResponseInput(input.prompt, input.imagePaths ?? [], this.maxImageBytes);
-    const conversationId = `openai-conversation-${this.createId()}`;
+    const currentInput = await buildResponseInput(input.prompt, input.imagePaths ?? [], this.maxImageBytes);
+    const priorTurns = readOpenAIResumeState(input.resumeState, model, Boolean(input.conversationId));
+    const conversationId = input.conversationId ?? `openai-conversation-${this.createId()}`;
     const runId = `openai-run-${this.createId()}`;
     const active: ActiveOpenAIRun = { controller: new AbortController(), cancelled: false, timedOut: false };
     this.activeRuns.set(runKey(conversationId, runId), active);
@@ -229,7 +235,9 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
           runId,
           model,
           cwd: input.cwd,
-          responseInput,
+          currentInput,
+          priorTurns,
+          historyTruncated: input.resumeState?.truncated === true,
           timeoutMs: input.timeoutMs,
           active,
         }).then(resolve, reject);
@@ -258,7 +266,9 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
     runId: string;
     model: string;
     cwd: string;
-    responseInput: ResponseInput;
+    currentInput: ResponseInput;
+    priorTurns: OpenAIResumeTurn[];
+    historyTruncated: boolean;
     timeoutMs?: number;
     active: ActiveOpenAIRun;
   }): Promise<ProviderRunCompletion> {
@@ -291,7 +301,11 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
       const client = this.clientFactory(options.credential);
       const tools = providerTools(this.toolBroker);
       const allowedToolNames = new Set(tools.map((tool) => tool.name));
-      const responseInput: ResponseInput = [...options.responseInput];
+      const responseInput: ResponseInput = [
+        ...flattenOpenAIResumeTurns(options.priorTurns),
+        ...options.currentInput,
+      ];
+      const turnOutput: ResponseInputItem[] = [];
       while (true) {
         let completedResponse: Response | undefined;
         let roundText = "";
@@ -300,11 +314,11 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
           input: responseInput,
           store: false,
           stream: true,
+          include: ["reasoning.encrypted_content" as const],
           ...(tools.length > 0 ? {
             tools,
             tool_choice: "auto" as const,
             parallel_tool_calls: false,
-            include: ["reasoning.encrypted_content" as const],
             instructions: PROJECT_TOOL_INSTRUCTIONS,
           } : {}),
         };
@@ -339,6 +353,17 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
         const responseOutput = completedResponse.output ?? [];
         const toolCalls = responseOutput.filter(isFunctionCall);
         if (toolCalls.length === 0) {
+          const finalItems = cloneResponseItems(continuationItems(responseOutput));
+          turnOutput.push(...finalItems);
+          const resumeState = finalItems.length > 0
+            ? buildOpenAIResumeState(
+                options.model,
+                options.priorTurns,
+                options.currentInput,
+                turnOutput,
+                options.historyTruncated,
+              )
+            : undefined;
           emit({ kind: "run.completed", status: "completed" });
           return {
             status: "completed",
@@ -349,9 +374,12 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
               remoteResponseId,
               model: options.model,
               finalResponse,
+              resumeAvailable: resumeState !== undefined,
+              ...(resumeState?.truncated ? { resumeTruncated: true } : {}),
               ...(totalUsage ? { usage: totalUsage } : {}),
               ...(completedTools.length > 0 ? { tools: completedTools } : {}),
             },
+            ...(resumeState ? { resumeState } : {}),
           };
         }
         if (!this.toolBroker || tools.length === 0) {
@@ -364,7 +392,9 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
           emit({ kind: "run.failed", message });
           return { status: "failed", result: { providerId: this.id, model: options.model, error: message } };
         }
-        responseInput.push(...continuationItems(responseOutput));
+        const continued = cloneResponseItems(continuationItems(responseOutput));
+        responseInput.push(...continued);
+        turnOutput.push(...continued);
         for (const toolCall of toolCalls) {
           toolCallCount += 1;
           const paths = safeToolPaths(toolCall.arguments);
@@ -384,11 +414,13 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
             kind: "tool.completed",
             tool: { type: toolCall.name, id: toolCall.call_id, status: execution.status, ...(paths ? { paths } : {}) },
           });
-          responseInput.push({
+          const output: ResponseInputItem = {
             type: "function_call_output",
             call_id: toolCall.call_id,
             output: toolOutput(execution),
-          });
+          };
+          responseInput.push(output);
+          turnOutput.push(structuredClone(output));
         }
       }
     } catch (error) {
@@ -523,6 +555,97 @@ function continuationItems(items: readonly ResponseOutputItem[]): ResponseInputI
   return items.filter((item) =>
     item.type === "message" || item.type === "reasoning" || item.type === "function_call",
   ) as ResponseInputItem[];
+}
+
+function readOpenAIResumeState(
+  state: ProviderResumeState | undefined,
+  model: string,
+  required: boolean,
+): OpenAIResumeTurn[] {
+  if (!state) {
+    if (required) throw new ProviderError(409, "OpenAI 대화의 암호화된 replay context가 없습니다.");
+    return [];
+  }
+  if (state.version !== 1 || state.providerId !== "openai" || state.model !== model
+      || !Array.isArray(state.data.turns)) {
+    throw new ProviderError(409, "OpenAI 대화 replay context가 현재 Provider·모델과 일치하지 않습니다.");
+  }
+  const turns: OpenAIResumeTurn[] = [];
+  for (const value of state.data.turns) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new ProviderError(409, "OpenAI 대화 replay context가 손상되었습니다.");
+    }
+    const turn = value as Record<string, unknown>;
+    if (!Array.isArray(turn.input) || !Array.isArray(turn.output)) {
+      throw new ProviderError(409, "OpenAI 대화 replay context가 손상되었습니다.");
+    }
+    turns.push(cloneJson({ input: turn.input, output: turn.output }) as OpenAIResumeTurn);
+  }
+  return turns;
+}
+
+function flattenOpenAIResumeTurns(turns: readonly OpenAIResumeTurn[]): ResponseInputItem[] {
+  return turns.flatMap((turn) => [
+    ...cloneResponseItems(turn.input as ResponseInputItem[]),
+    ...cloneResponseItems(turn.output),
+  ]);
+}
+
+function buildOpenAIResumeState(
+  model: string,
+  priorTurns: readonly OpenAIResumeTurn[],
+  currentInput: ResponseInput,
+  currentOutput: readonly ResponseInputItem[],
+  wasTruncated: boolean,
+): ProviderResumeState | undefined {
+  const turns = [
+    ...priorTurns.map((turn) => cloneJson(turn) as OpenAIResumeTurn),
+    {
+      input: replayableOpenAIInput(currentInput),
+      output: cloneResponseItems(currentOutput),
+    },
+  ];
+  let truncated = wasTruncated;
+  while (turns.length > MAX_RESUME_TURNS) {
+    turns.shift();
+    truncated = true;
+  }
+  let state: ProviderResumeState = {
+    version: 1,
+    providerId: "openai",
+    model,
+    data: { turns },
+    ...(truncated ? { truncated: true } : {}),
+  };
+  while (Buffer.byteLength(JSON.stringify(state)) > MAX_RESUME_STATE_BYTES && turns.length > 1) {
+    turns.shift();
+    truncated = true;
+    state = { ...state, data: { turns }, truncated: true };
+  }
+  return Buffer.byteLength(JSON.stringify(state)) <= MAX_RESUME_STATE_BYTES ? state : undefined;
+}
+
+function replayableOpenAIInput(input: ResponseInput): ResponseInput {
+  const value = cloneJson(input) as Array<Record<string, unknown>>;
+  for (const item of value) {
+    if (!Array.isArray(item.content)) continue;
+    item.content = item.content.map((part: unknown) => {
+      if (!part || typeof part !== "object" || Array.isArray(part)) return part;
+      const record = part as Record<string, unknown>;
+      return record.type === "input_image"
+        ? { type: "input_text", text: "[이전 이미지 입력은 보안상 대화 replay에서 제외됨]" }
+        : record;
+    });
+  }
+  return value as unknown as ResponseInput;
+}
+
+function cloneResponseItems(items: readonly ResponseInputItem[]): ResponseInputItem[] {
+  return cloneJson(items) as ResponseInputItem[];
+}
+
+function cloneJson(value: unknown): unknown {
+  return JSON.parse(JSON.stringify(value)) as unknown;
 }
 
 async function executeFunctionCall(

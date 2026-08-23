@@ -28,7 +28,14 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   고정 Git status/diff만 observation 도구로 제공한다. strict schema, 단일 호출, 8회 상한, stateless
   reasoning replay, 민감 경로·symlink·Git 환경·출력 제한을 적용했다.
 - 공개 검사는 실제 유료 AI 요청 없이 가짜 OpenAI stream과 Models 목록만 사용한다. OpenAI API
-  모드의 대화 재개와 임의 명령은 계속 비활성화한다.
+  모드의 임의 명령은 계속 비활성화한다.
+- OpenAI `store:false` 응답 항목과 OpenRouter chat/tool transcript를 Linux Companion의 암호화 journal에만
+  보관해 두 API Provider의 다중 턴 대화를 이어갈 수 있게 했다. 재개 상태는 Provider·workspace·model·
+  account에 고정하고, 미확인 `unknown` run이 있으면 이어가기를 차단한다. 최신 성공 run 하나만 상태를
+  소유하며 클라이언트 API, SSE, workspace JSON export에는 opaque 본문 대신 `resumable` 여부만 보낸다.
+  상태는 최대 12턴·900 KiB로 제한하고 오래된 완전한 turn부터 제거한다. 이미지 data URL은 첫 요청에만
+  사용하고 로컬 replay에는 제외 안내문만 남긴다. 공개 검사는 가짜 응답만 사용하며 API key나 유료
+  inference를 사용하지 않았다.
 - OpenRouter의 server-only key와 `0600` key 파일, user/ZDR 모델 catalog 교집합, 명시적 allowlist,
   Chat Completions SSE와 usage·credit 비용 기록을 추가했다. 도구 capability가 확인된 모델만
   공통 ToolBroker를 받고 나머지는 chat-only로 제한한다.

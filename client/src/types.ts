@@ -160,6 +160,8 @@ export interface ThreadDetail {
 export interface RunResult {
   threadId?: string;
   finalResponse?: string;
+  resumeAvailable?: boolean;
+  resumeTruncated?: boolean;
   commands?: Array<{ command: string; status: string; exitCode?: number | null }>;
   fileChanges?: Array<{ changes?: Array<{ kind: string; path: string }> }>;
   usage?: {
@@ -192,6 +194,7 @@ export interface Operation {
   acknowledgedAt?: string;
   error?: string;
   result?: RunResult;
+  resumable?: boolean;
 }
 
 export type ApprovalRisk = "observation" | "change" | "execution" | "high_risk" | "external_effect";

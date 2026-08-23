@@ -51,7 +51,12 @@ Model inference can still require internet access, but project files and executi
 
 ## Phase 3 — durable local work journal
 
-Implementation status: v1.6 introduces the versioned `WorkJournal` boundary, IndexedDB persistence with a localStorage fallback, offline conversation restore, and target-bound prompt queue recovery. Native Android SQLite, full event/diff journaling, retention controls, and reconciliation migrations remain in progress.
+Implementation status: v1.6 introduced the versioned `WorkJournal` boundary, IndexedDB persistence with a
+localStorage fallback, offline conversation restore, and target-bound prompt queue recovery. The v2 branch now
+mirrors encrypted snapshots into app-owned Android SQLite and stores Companion run/events plus bounded OpenAI and
+OpenRouter replay state in an encrypted SQLite journal. Provider/workspace conversation selection, cursor replay,
+unknown-run acknowledgement, bounded export and protected deletion are implemented; user-configurable retention,
+pin/archive flows and full diff/event reconciliation remain in progress.
 
 - Add an app-owned SQLite work journal for conversations, queued prompts, command events, diffs, attachments, and target metadata.
 - Make project history and completed results readable while the PC or network connectivity is unavailable.

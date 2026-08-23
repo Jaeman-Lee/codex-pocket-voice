@@ -11,11 +11,21 @@ export interface ProviderRunInput {
   model?: string;
   effort?: string;
   timeoutMs?: number;
+  resumeState?: ProviderResumeState;
+}
+
+export interface ProviderResumeState {
+  version: 1;
+  providerId: string;
+  model: string;
+  data: Record<string, unknown>;
+  truncated?: boolean;
 }
 
 export interface ProviderRunCompletion {
   status: ProviderRunStatus;
   result: Record<string, unknown>;
+  resumeState?: ProviderResumeState;
 }
 
 export interface ProviderRun {

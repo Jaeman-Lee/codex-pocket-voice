@@ -22,7 +22,7 @@
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환, operation UI 상태 모듈 구현; 나머지 App 상태 분리 잔여 |
-| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 읽기 도구, SHA-bound 단일 파일 교체와 격리 npm 검증 구현; 다중 파일 patch·durable multi-turn 잔여 |
+| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일 파일 교체와 격리 npm 검증 구현; 다중 파일 patch·실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, live branch/worktree identity, workspace export/protected delete 구현; 사용자 retention 설정·pin/archive·native 알림 잔여 |
 | Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion과 recoverable A/B client-key rotation 구현; discovery/P2P·relay·background release gate 잔여 |
@@ -112,6 +112,11 @@ Provider별 원시 이벤트는 즉시 공통 이벤트로 변환한다. UI와 �
 - `stream: true`의 SSE 이벤트를 공통 `ProviderEvent`로 변환한다.
 - 함수 도구 호출은 모델이 실행하는 것이 아니라 Companion의 Tool Broker가 검증·실행한다.
 - 기본은 `store: false`로 두고 대화·도구 결과·응답 항목은 암호화된 로컬 작업 저널이 관리한다.
+- 이어지는 요청은 이전 입력과 응답의 message·reasoning·function-call 항목을 Companion journal에서
+  복호화해 다시 보낸다. reasoning 모델은 `reasoning.encrypted_content`를 요청해 응답 항목을 빠뜨리지
+  않는다. 클라이언트에는 opaque 상태를 보내지 않는다.
+- replay 상태는 Provider·workspace·model·account에 고정하고 최신 성공 run 하나만 소유한다. 최대
+  12턴·900 KiB를 넘으면 오래된 완전한 turn부터 제거하며 이미지 data URL은 재생하지 않는다.
 - 서버 저장을 켜는 선택지는 기본값으로 제공하지 않는다. 추후 제공할 경우 보존 기간과 전송 범위를
   활성화 전에 명확히 표시한다.
 - `store: false`는 Responses application state를 끄는 설정이며 기본 abuse-monitoring 보존까지
@@ -296,7 +301,9 @@ UTF-8 파일 한 개만 atomic replace하며 민감 파일, link, secret 형태,
 `project_verify`는 검토한 package SHA와 check/test/build script만 namespace·network-off·secret-mask·
 disposable overlay sandbox에서 실행하고 probe 실패 시 capability 자체를 숨긴다. strict schema, 단일
 함수 호출, 8회 상한과 stateless reasoning replay도 유지한다. 이 checkpoint는 개발용 2.0 source
-update이며 APK를 새 current 후보로 배포하지 않는다.
+update이며 APK를 새 current 후보로 배포하지 않는다. `store:false` 다중 턴은 이전 입력과 모든 재생 가능한
+응답 항목을 암호화 Companion journal에 보존해 이어가며, 모바일은 Provider·workspace별 대화를 명시적으로
+선택한다. opaque replay state는 API/SSE/export에 노출하지 않고 이미지 원본을 다음 turn에 보존하지 않는다.
 
 완료 조건: 실제 프로젝트에서 조사 → diff 제안 → 승인된 patch → test → 결과 검토가 키 노출 없이
 한 run으로 완료된다.
@@ -313,7 +320,8 @@ update이며 APK를 새 current 후보로 배포하지 않는다.
 allowlist, chat SSE와 동일한 승인형 tool loop를 구현했다. `allow_fallbacks: false`,
 `require_parameters: true`, `data_collection: deny`, `zdr: true`를 강제하고 upstream Provider와
 token/credit usage를 공통 run 결과에 기록한다. 실제 모델별 contract/eval과 사용자가 확인하는
-routing 선택지는 남아 있다.
+routing 선택지는 남아 있다. OpenRouter 다중 턴 transcript도 같은 암호화 journal·최신 상태 소유권·
+12턴/900 KiB 상한을 적용하고 모델·account·workspace 변경이나 자동 Provider 전환을 허용하지 않는다.
 
 완료 조건: 서로 다른 두 upstream 계열의 검증 모델이 같은 Tool Broker 계약을 통과하고,
 지원하지 않는 모델은 코딩 권한을 얻지 못한다.
@@ -381,6 +389,7 @@ release gate는 남아 있다.
 - 로그·journal·SSE·diagnostics에 API key와 Authorization 헤더가 없는지 검사
 - OpenRouter model capability 변화와 fallback 정책 fixture
 - OpenAI `store: false` 요청과 로컬 상태 replay 검사
+- API Provider replay 상태의 journal 암호화, API/SSE/export 비노출, 이미지 data URL 제거 검사
 - Playwright에서 320/360/412px, 큰 글자, 키보드, 회전과 긴 diff 검증
 - Android instrumentation에서 Keystore, 알림 deep link, background reconnect와 음성 확인 검증
 
@@ -433,9 +442,10 @@ release gate는 남아 있다.
 
 ## 16. 공식 참고 자료
 
-기준 확인일은 2026-08-23이다. 구현을 시작할 때 API 동작과 개인정보 정책을 다시 확인한다.
+기준 확인일은 2026-08-24이다. 구현을 시작할 때 API 동작과 개인정보 정책을 다시 확인한다.
 
 - [OpenAI Responses API — response 생성, 함수 도구와 streaming](https://developers.openai.com/api/reference/cli/resources/responses/methods/create)
+- [OpenAI conversation state — `store:false` 수동 context와 응답 항목 replay](https://developers.openai.com/api/docs/guides/conversation-state)
 - [OpenAI function calling — strict schema와 tool output loop](https://developers.openai.com/api/docs/guides/function-calling)
 - [OpenAI API 데이터 보존과 `store` 정책](https://developers.openai.com/api/docs/guides/your-data#default-usage-policies-by-endpoint)
 - [OpenAI API key 보안 권고](https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety)

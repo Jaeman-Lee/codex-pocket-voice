@@ -1,4 +1,4 @@
-import type { ChatMessage, DeviceId, QueuedPrompt } from "./types";
+import type { ChatMessage, DeviceId, ProviderId, QueuedPrompt } from "./types";
 
 export type JournalSyncState = "local" | "queued" | "running" | "synced";
 
@@ -18,7 +18,13 @@ export interface JournalQueue {
   updatedAt: string;
 }
 
-export function conversationKey(device: DeviceId, workspace: string, threadId: string): string {
+export function conversationKey(
+  device: DeviceId,
+  workspace: string,
+  threadId: string,
+  provider: ProviderId = "codex",
+): string {
+  if (provider !== "codex") return JSON.stringify([device, provider, workspace, threadId || "new"]);
   return JSON.stringify([device, workspace, threadId || "new"]);
 }
 

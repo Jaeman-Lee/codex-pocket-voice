@@ -167,6 +167,37 @@ test("workspace journal export enforces the configured response size cap", async
   journal.close();
 });
 
+test("event journal encrypts provider replay state and omits it from workspace export", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-pocket-event-resume-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const databaseFile = join(directory, "events.sqlite3");
+  const resumeSecret = "opaque-provider-replay-secret";
+  const journal = await EventJournal.create(databaseFile);
+  journal.saveOperation({
+    ...operation("operation-resumable", "completed"),
+    model: "model-a",
+    resumeState: {
+      version: 1,
+      providerId: "fake",
+      model: "model-a",
+      data: { value: resumeSecret },
+    },
+  });
+  const exported = journal.exportWorkspace("/workspace/a");
+  assert.equal(exported.operations[0]?.resumable, true);
+  assert.equal("resumeState" in exported.operations[0]!, false);
+  assert.doesNotMatch(JSON.stringify(exported), new RegExp(resumeSecret));
+  journal.close();
+
+  assert.doesNotMatch(await readFile(databaseFile, "utf8"), new RegExp(resumeSecret));
+  const reopened = await EventJournal.create(databaseFile);
+  assert.equal(
+    (reopened.load().operations[0]?.resumeState?.data as { value?: string } | undefined)?.value,
+    resumeSecret,
+  );
+  reopened.close();
+});
+
 test("event journal rejects a permissive or symlinked key file", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "codex-pocket-event-key-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

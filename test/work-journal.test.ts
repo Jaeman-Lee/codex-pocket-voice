@@ -9,13 +9,21 @@ import {
 } from "../client/src/work-journal-raw.js";
 import { conversationKey, restoredMessages, serializableQueue } from "../client/src/work-journal-model.js";
 
-test("work journal keys isolate device, workspace, and thread", () => {
+test("work journal keys isolate device, provider, workspace, and thread without changing Codex rollback keys", () => {
   const phone = conversationKey("phone", "/workspace/a", "thread-1");
   const pc = conversationKey("pc", "/workspace/a", "thread-1");
   const otherThread = conversationKey("phone", "/workspace/a", "thread-2");
   assert.notEqual(phone, pc);
   assert.notEqual(phone, otherThread);
   assert.equal(conversationKey("phone", "/workspace/a", ""), '["phone","/workspace/a","new"]');
+  assert.equal(
+    conversationKey("phone", "/workspace/a", "", "openai"),
+    '["phone","openai","/workspace/a","new"]',
+  );
+  assert.notEqual(
+    conversationKey("phone", "/workspace/a", "conversation-1", "openai"),
+    conversationKey("phone", "/workspace/a", "conversation-1", "openrouter"),
+  );
 });
 
 test("restoring a journal never presents an interrupted response as still running", () => {

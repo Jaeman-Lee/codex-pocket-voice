@@ -22,6 +22,67 @@ import { LocalToolBroker, type RegisteredTool } from "../src/tool-broker.js";
 
 const secret = "sk-or-v1-test-super-secret-value";
 
+test("OpenRouter resumes a bounded local conversation without retaining image data", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-pocket-openrouter-resume-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const imagePath = join(directory, "screen.png");
+  await writeFile(imagePath, new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), { mode: 0o600 });
+  const client = new FakeOpenRouterClient([
+    [chunk({
+      id: "generation-resume-one",
+      provider: "Provider A",
+      choices: [{ delta: { content: "첫 답변" }, finish_reason: "stop" }],
+      usage: usage(3, 2, 0, 0.001),
+    })],
+    [chunk({
+      id: "generation-resume-two",
+      provider: "Provider A",
+      choices: [{ delta: { content: "둘째 답변" }, finish_reason: "stop" }],
+      usage: usage(5, 2, 0, 0.001),
+    })],
+  ], models());
+  const adapter = new OpenRouterProviderAdapter({
+    credentials: staticCredentials(secret),
+    clientFactory: () => client,
+    createId: sequentialIds("resume-conversation", "resume-run-one", "resume-run-two"),
+    modelAllowlist: ["vendor/tool-model"],
+    defaultModel: "vendor/tool-model",
+  });
+  assert.equal((await adapter.describe()).capabilities.resume, true);
+
+  const first = await adapter.startRun({
+    cwd: process.cwd(),
+    prompt: "첫 질문",
+    model: "vendor/tool-model",
+    imagePaths: [imagePath],
+  });
+  const firstCompletion = await first.completion;
+  assert.equal(firstCompletion.result.resumeAvailable, true);
+  assert.match(JSON.stringify(client.requests[0]), /data:image\/png;base64,/);
+  assert.doesNotMatch(JSON.stringify(firstCompletion.resumeState), /data:image\/png;base64,/);
+  assert.match(JSON.stringify(firstCompletion.resumeState), /보안상 대화 replay에서 제외/);
+
+  const second = await adapter.startRun({
+    cwd: process.cwd(),
+    prompt: "둘째 질문",
+    model: "vendor/tool-model",
+    conversationId: first.conversationId,
+    resumeState: firstCompletion.resumeState,
+  });
+  assert.equal(second.conversationId, first.conversationId);
+  assert.equal((await second.completion).result.finalResponse, "둘째 답변");
+  const replay = JSON.stringify(client.requests[1]?.messages);
+  assert.ok(replay.indexOf("첫 질문") < replay.indexOf("첫 답변"));
+  assert.ok(replay.indexOf("첫 답변") < replay.indexOf("둘째 질문"));
+  assert.doesNotMatch(replay, /data:image\/png;base64,/);
+  assert.deepEqual(client.requests[1]?.provider, {
+    allow_fallbacks: false,
+    require_parameters: true,
+    data_collection: "deny",
+    zdr: true,
+  });
+});
+
 test("OpenRouter runs strict ZDR project tools and keeps unsupported models chat-only", async (t) => {
   const paths = await PathPolicy.fromEnvironment(process.cwd());
   const approvals = new InMemoryApprovalBroker();

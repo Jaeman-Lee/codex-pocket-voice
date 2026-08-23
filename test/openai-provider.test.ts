@@ -82,7 +82,68 @@ test("OpenAI provider streams a store:false response through the common runtime 
   assert.equal(client.requests[0]?.store, false);
   assert.equal(client.requests[0]?.stream, true);
   assert.equal(client.requests[0]?.model, "gpt-test");
+  assert.deepEqual(client.requests[0]?.include, ["reasoning.encrypted_content"]);
   assert.doesNotMatch(JSON.stringify(client.requests[0]), /sk-test-super-secret/);
+});
+
+test("OpenAI provider replays encrypted store:false output for the next local conversation turn", async () => {
+  const client = new SequencedOpenAIClient([
+    [event({
+      type: "response.completed",
+      sequence_number: 1,
+      response: {
+        id: "resp-resume-one",
+        output_text: "첫 답변",
+        output: [
+          { type: "reasoning", id: "reasoning-resume", summary: [], encrypted_content: "encrypted-resume-context" },
+          assistantOutput("message-resume-one", "첫 답변"),
+        ],
+        usage: usage(3, 2, 1),
+      },
+    })],
+    [event({
+      type: "response.completed",
+      sequence_number: 1,
+      response: {
+        id: "resp-resume-two",
+        output_text: "둘째 답변",
+        output: [assistantOutput("message-resume-two", "둘째 답변")],
+        usage: usage(5, 2, 0),
+      },
+    })],
+  ]);
+  const adapter = new OpenAIProviderAdapter({
+    credentials: staticCredentials("sk-test-resume"),
+    clientFactory: () => client,
+    createId: sequentialIds("resume-conversation", "resume-run-one", "resume-run-two"),
+    modelAllowlist: ["gpt-resume-test"],
+  });
+  assert.equal((await adapter.describe()).capabilities.resume, true);
+
+  const first = await adapter.startRun({
+    cwd: process.cwd(),
+    prompt: "첫 질문",
+    model: "gpt-resume-test",
+  });
+  const firstCompletion = await first.completion;
+  assert.equal(firstCompletion.result.resumeAvailable, true);
+  assert.equal(firstCompletion.resumeState?.providerId, "openai");
+
+  const second = await adapter.startRun({
+    cwd: process.cwd(),
+    prompt: "둘째 질문",
+    model: "gpt-resume-test",
+    conversationId: first.conversationId,
+    resumeState: firstCompletion.resumeState,
+  });
+  assert.equal(second.conversationId, first.conversationId);
+  assert.equal((await second.completion).result.finalResponse, "둘째 답변");
+  const replay = JSON.stringify(client.requests[1]?.input);
+  assert.ok(replay.indexOf("첫 질문") < replay.indexOf("encrypted-resume-context"));
+  assert.ok(replay.indexOf("encrypted-resume-context") < replay.indexOf("첫 답변"));
+  assert.ok(replay.indexOf("첫 답변") < replay.indexOf("둘째 질문"));
+  assert.equal(client.requests[1]?.store, false);
+  assert.deepEqual(client.requests[1]?.include, ["reasoning.encrypted_content"]);
 });
 
 test("OpenAI provider executes a stateless project-tool loop through LocalToolBroker", async (t) => {
@@ -365,10 +426,13 @@ test("OpenAI image input is encoded on the Companion without exposing its local 
     model: "gpt-image-test",
     imagePaths: [imagePath],
   });
-  assert.equal((await run.completion).status, "completed");
+  const completion = await run.completion;
+  assert.equal(completion.status, "completed");
   const request = JSON.stringify(client.requests[0]);
   assert.match(request, /data:image\/png;base64,/);
   assert.doesNotMatch(request, new RegExp(imagePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(JSON.stringify(completion.resumeState), /data:image\/png;base64,/);
+  assert.match(JSON.stringify(completion.resumeState), /보안상 대화 replay에서 제외/);
 });
 
 test("OpenAI provider cancellation aborts the stream and completes as interrupted", async () => {
@@ -489,6 +553,7 @@ function completedEvent(outputText: string): ResponseStreamEvent {
     response: {
       id: "resp-test",
       output_text: outputText,
+      output: [assistantOutput("message-test", outputText)],
       usage: {
         input_tokens: 12,
         input_tokens_details: { cached_tokens: 2, cache_write_tokens: 0 },
@@ -498,6 +563,16 @@ function completedEvent(outputText: string): ResponseStreamEvent {
       },
     },
   });
+}
+
+function assistantOutput(id: string, text: string) {
+  return {
+    type: "message",
+    id,
+    status: "completed",
+    role: "assistant",
+    content: [{ type: "output_text", text, annotations: [], logprobs: [] }],
+  };
 }
 
 function event(value: Record<string, unknown>): ResponseStreamEvent {

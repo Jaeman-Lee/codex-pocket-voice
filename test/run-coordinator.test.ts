@@ -23,7 +23,7 @@ test("RunCoordinator owns lifecycle state and forwards only active provider even
     providerId: "fake",
     accountId: "account-1",
     prompt: "inspect",
-    input: { conversationId: "conversation-1", cwd: process.cwd(), prompt: "inspect" },
+    input: { cwd: process.cwd(), prompt: "inspect" },
   });
   assert.equal(operation.id, "operation-1");
   assert.equal(operation.status, "running");
@@ -88,18 +88,125 @@ test("RunCoordinator blocks simultaneous work in one provider conversation", asy
   await coordinator.start({
     providerId: "fake",
     prompt: "first",
-    input: { conversationId: "shared", cwd: process.cwd(), prompt: "first" },
+    input: { cwd: process.cwd(), prompt: "first" },
   });
 
   await assert.rejects(
     coordinator.start({
       providerId: "fake",
       prompt: "second",
-      input: { conversationId: "shared", cwd: process.cwd(), prompt: "second" },
+      input: { conversationId: "conversation-1", cwd: process.cwd(), prompt: "second" },
     }),
     (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
   );
   assert.equal(providers.starts.length, 1);
+  coordinator.close();
+});
+
+test("RunCoordinator resumes only journal-owned API conversations and transfers the latest state", async () => {
+  const providers = new FakeRunProviders();
+  const coordinator = new RunCoordinator(providers, {
+    createId: sequentialIds("operation-first", "operation-second"),
+  });
+  const first = await coordinator.start({
+    providerId: "fake",
+    accountId: "account-1",
+    prompt: "first",
+    input: { cwd: process.cwd(), prompt: "first", model: "model-a" },
+  });
+  providers.complete(0, {
+    status: "completed",
+    result: { finalResponse: "one" },
+    resumeState: resumeState("first-state"),
+  });
+  await waitFor(() => coordinator.get(first.id)?.status === "completed");
+
+  await assert.rejects(
+    coordinator.start({
+      providerId: "fake",
+      accountId: "account-1",
+      prompt: "wrong model",
+      input: { cwd: process.cwd(), prompt: "wrong model", model: "model-b", conversationId: first.conversationId },
+    }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  await assert.rejects(
+    coordinator.start({
+      providerId: "fake",
+      accountId: "account-2",
+      prompt: "wrong account",
+      input: { cwd: process.cwd(), prompt: "wrong account", conversationId: first.conversationId },
+    }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  await assert.rejects(
+    coordinator.start({
+      providerId: "fake",
+      accountId: "account-1",
+      prompt: "wrong workspace",
+      input: { cwd: "/another/workspace", prompt: "wrong workspace", conversationId: first.conversationId },
+    }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+
+  const second = await coordinator.start({
+    providerId: "fake",
+    accountId: "account-1",
+    prompt: "second",
+    input: { cwd: process.cwd(), prompt: "second", conversationId: first.conversationId },
+  });
+  assert.equal(second.conversationId, first.conversationId);
+  assert.equal(providers.starts[1]?.accountId, "account-1");
+  assert.equal(providers.starts[1]?.input.model, "model-a");
+  assert.deepEqual(providers.starts[1]?.input.resumeState, resumeState("first-state"));
+
+  providers.complete(1, {
+    status: "completed",
+    result: { finalResponse: "two" },
+    resumeState: resumeState("second-state"),
+  });
+  await waitFor(() => coordinator.get(second.id)?.status === "completed");
+  assert.equal(coordinator.get(first.id)?.resumeState, undefined);
+  assert.deepEqual(coordinator.get(second.id)?.resumeState, resumeState("second-state"));
+  coordinator.close();
+});
+
+test("RunCoordinator refuses API resume when the latest state is unresolved", async () => {
+  const restored = {
+    id: "operation-unknown",
+    providerId: "fake",
+    conversationId: "conversation-unknown",
+    runId: "run-unknown",
+    cwd: process.cwd(),
+    prompt: "uncertain",
+    accountId: "account-1",
+    model: "model-a",
+    status: "unknown" as const,
+    startedAt: "2026-08-24T00:00:00.000Z",
+    completedAt: "2026-08-24T00:00:01.000Z",
+    resumeState: resumeState("unresolved-state"),
+  };
+  const coordinator = new RunCoordinator(new FakeRunProviders(), {
+    stateStore: {
+      load: () => ({ operations: [restored], idempotency: [] }),
+      saveOperation: () => undefined,
+      deleteOperation: () => undefined,
+      deleteOperations: () => undefined,
+    },
+  });
+  await assert.rejects(
+    coordinator.start({
+      providerId: "fake",
+      accountId: "account-1",
+      prompt: "continue",
+      input: {
+        cwd: process.cwd(),
+        prompt: "continue",
+        conversationId: restored.conversationId,
+      },
+    }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
   coordinator.close();
 });
 
@@ -247,4 +354,17 @@ async function waitFor(predicate: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
   throw new Error("condition was not met");
+}
+
+function resumeState(value: string) {
+  return {
+    version: 1 as const,
+    providerId: "fake",
+    model: "model-a",
+    data: { value },
+  };
+}
+
+function sequentialIds(...values: string[]): () => string {
+  return () => values.shift() ?? "unexpected-id";
 }

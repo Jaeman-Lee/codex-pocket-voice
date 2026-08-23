@@ -1214,8 +1214,10 @@ function safeInternalError(error: unknown): string {
 }
 
 function publicOperation(operation: RunOperation): Record<string, unknown> {
+  const { resumeState, ...visible } = operation;
   return {
-    ...operation,
+    ...visible,
+    resumable: resumeState !== undefined,
     ...(operation.providerId === "codex"
       ? { threadId: operation.conversationId, turnId: operation.runId }
       : {}),

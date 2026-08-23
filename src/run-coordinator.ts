@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type {
   ProviderEvent,
+  ProviderResumeState,
   ProviderRun,
   ProviderRunInput,
   ProviderRunStatus,
@@ -29,6 +30,7 @@ export interface RunOperation {
   completedAt?: string;
   acknowledgedAt?: string;
   result?: Record<string, unknown>;
+  resumeState?: ProviderResumeState;
   error?: string;
 }
 
@@ -264,20 +266,27 @@ export class RunCoordinator {
     command: StartRunCommand,
     idempotency?: RunIdempotencyRecord,
   ): Promise<RunOperation> {
-    const requestedConversation = command.input.conversationId
-      ? conversationKey(command.providerId, command.input.conversationId)
+    const resumed = this.resumeInput(command);
+    const providerInput = resumed.input;
+    const providerAccountId = resumed.accountId;
+    const requestedConversation = providerInput.conversationId
+      ? conversationKey(command.providerId, providerInput.conversationId)
       : undefined;
     if (requestedConversation) this.reserveConversation(requestedConversation);
 
     let begun: ProviderRun;
     try {
-      begun = await this.providers.startRun(command.providerId, command.accountId, command.input);
+      begun = await this.providers.startRun(command.providerId, providerAccountId, providerInput);
     } finally {
       if (requestedConversation) this.pendingConversations.delete(requestedConversation);
     }
 
     try {
       this.assertWorkspace(begun.cwd);
+      if (providerInput.conversationId && begun.conversationId !== providerInput.conversationId) {
+        await this.providers.cancelRun(begun.providerId, begun.conversationId, begun.runId).catch(() => undefined);
+        throw new RunCoordinatorError(409, "Provider가 요청한 대화와 다른 대화를 시작했습니다.");
+      }
       const actualConversation = conversationKey(begun.providerId, begun.conversationId);
       if (this.activeByConversation.has(actualConversation)) {
         await this.providers.cancelRun(begun.providerId, begun.conversationId, begun.runId).catch(() => undefined);
@@ -291,10 +300,10 @@ export class RunCoordinator {
         runId: begun.runId,
         cwd: begun.cwd,
         prompt: command.prompt,
-        accountId: command.accountId,
-        model: command.input.model,
-        effort: command.input.effort,
-        networkAccess: command.input.networkAccess === true,
+        accountId: providerAccountId,
+        model: providerInput.model,
+        effort: providerInput.effort,
+        networkAccess: providerInput.networkAccess === true,
         ...(command.workspaceIdentity ? { workspaceIdentity: structuredClone(command.workspaceIdentity) } : {}),
         status: "running",
         startedAt: new Date(this.now()).toISOString(),
@@ -329,6 +338,48 @@ export class RunCoordinator {
     this.pendingConversations.add(key);
   }
 
+  private resumeInput(command: StartRunCommand): { input: ProviderRunInput; accountId?: string } {
+    const conversationId = command.input.conversationId;
+    if (!conversationId || command.providerId === "codex") {
+      return { input: command.input, accountId: command.accountId };
+    }
+    const matching = [...this.operations.values()].filter((operation) => operation.providerId === command.providerId
+      && operation.conversationId === conversationId);
+    if (matching.length === 0) {
+      throw new RunCoordinatorError(409, "이어갈 API Provider 대화를 Companion journal에서 찾을 수 없습니다.");
+    }
+    if (matching.some((operation) => operation.cwd !== command.input.cwd)) {
+      throw new RunCoordinatorError(409, "API Provider 대화는 처음 시작한 프로젝트 밖에서 이어갈 수 없습니다.");
+    }
+    if (matching.some((operation) => operation.status === "unknown" && !operation.acknowledgedAt)) {
+      throw new RunCoordinatorError(409, "최종 상태를 확인하지 않은 작업이 있어 이 대화를 이어갈 수 없습니다.");
+    }
+    const latest = matching
+      .filter((operation) => operation.status === "completed" && operation.resumeState)
+      .sort((left, right) => operationTime(right) - operationTime(left))[0];
+    if (!latest?.resumeState) {
+      throw new RunCoordinatorError(409, "이 대화에는 안전하게 복구할 Provider context가 없습니다. 새 대화를 시작해 주세요.");
+    }
+    const state = latest.resumeState;
+    if (state.providerId !== command.providerId) {
+      throw new RunCoordinatorError(409, "저장된 대화 Provider가 현재 선택과 다릅니다.");
+    }
+    if (command.input.model && command.input.model !== state.model) {
+      throw new RunCoordinatorError(409, "기존 API Provider 대화의 모델은 중간에 변경할 수 없습니다.");
+    }
+    if (command.accountId && latest.accountId && command.accountId !== latest.accountId) {
+      throw new RunCoordinatorError(409, "기존 API Provider 대화의 계정은 중간에 변경할 수 없습니다.");
+    }
+    return {
+      input: {
+        ...command.input,
+        model: state.model,
+        resumeState: structuredClone(state),
+      },
+      accountId: command.accountId ?? latest.accountId,
+    };
+  }
+
   private async settle(operation: RunOperation, begun: ProviderRun): Promise<void> {
     try {
       const completed = await begun.completion;
@@ -336,7 +387,18 @@ export class RunCoordinator {
       operation.status = completed.status;
       operation.completedAt = new Date(this.now()).toISOString();
       operation.result = completed.result;
+      if (completed.status === "completed" && completed.resumeState) {
+        if (completed.resumeState.providerId !== operation.providerId) {
+          throw new Error("Provider resume state does not belong to the completed operation");
+        }
+        if (operation.model && completed.resumeState.model !== operation.model) {
+          throw new Error("Provider resume state model does not match the completed operation");
+        }
+        operation.model = completed.resumeState.model;
+        operation.resumeState = structuredClone(completed.resumeState);
+      }
       this.stateStore?.saveOperation(operation, this.idempotencyForOperation(operation.id));
+      if (completed.status === "completed") this.retirePreviousResumeStates(operation);
       this.emit({
         type: "operation",
         action: completed.status === "failed" ? "failed" : "completed",
@@ -346,6 +408,7 @@ export class RunCoordinator {
       if (this.closed) return;
       operation.status = "failed";
       operation.completedAt = new Date(this.now()).toISOString();
+      delete operation.resumeState;
       operation.error = error instanceof Error ? error.message : String(error);
       try {
         this.stateStore?.saveOperation(operation, this.idempotencyForOperation(operation.id));
@@ -356,6 +419,20 @@ export class RunCoordinator {
     } finally {
       const key = conversationKey(operation.providerId, operation.conversationId);
       if (this.activeByConversation.get(key) === operation.id) this.activeByConversation.delete(key);
+    }
+  }
+
+  private retirePreviousResumeStates(current: RunOperation): void {
+    for (const operation of this.operations.values()) {
+      if (operation.id === current.id || operation.providerId !== current.providerId
+          || operation.conversationId !== current.conversationId || !operation.resumeState) continue;
+      const previous = operation.resumeState;
+      delete operation.resumeState;
+      try {
+        this.stateStore?.saveOperation(operation, this.idempotencyForOperation(operation.id));
+      } catch {
+        operation.resumeState = previous;
+      }
     }
   }
 
@@ -424,6 +501,10 @@ function fingerprintCommand(command: StartRunCommand): string {
 
 function cloneOperation(operation: RunOperation): RunOperation {
   return structuredClone(operation);
+}
+
+function operationTime(operation: RunOperation): number {
+  return Date.parse(operation.completedAt ?? operation.startedAt);
 }
 
 function safeError(error: unknown): string {

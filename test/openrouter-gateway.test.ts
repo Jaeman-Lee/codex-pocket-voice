@@ -104,6 +104,9 @@ test("gateway exposes OpenRouter only through safe common events and strict rout
   assert.equal(operation.result.routedProvider, "Strict Provider");
   assert.equal(operation.result.usage.totalTokens, 9);
   assert.equal(operation.result.usage.costCredits, 0.0015);
+  assert.equal(operation.resumable, true);
+  assert.equal(operation.resumeState, undefined);
+  assert.doesNotMatch(frames, /resumeState/);
   assert.equal(apiClient.requests.length, 2);
   assert.deepEqual(apiClient.requests[0]?.provider, {
     allow_fallbacks: false,
@@ -112,6 +115,31 @@ test("gateway exposes OpenRouter only through safe common events and strict rout
     zdr: true,
   });
   assert.match(JSON.stringify(apiClient.requests[1]?.messages), /function_call_output|hiddenSensitivePaths/);
+
+  const continued = await jsonFetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json", Origin: "http://localhost" },
+    body: JSON.stringify({
+      requestId: "openrouter-gateway-continued",
+      prompt: "Summarize that result",
+      cwd,
+      provider: "openrouter",
+      accountId: "api-default",
+      model: "vendor/gateway-tool",
+      conversationId: operation.conversationId,
+    }),
+  });
+  assert.equal(continued.operation.conversationId, operation.conversationId);
+  const continuedOperation = await waitForOperation(base, headers, continued.operation.id, "completed");
+  assert.equal(continuedOperation.resumable, true);
+  const replayedMessages = JSON.stringify(apiClient.requests[2]?.messages);
+  assert.match(replayedMessages, /Inspect Git status/);
+  assert.match(replayedMessages, /OpenRouter gateway complete/);
+  assert.match(replayedMessages, /Summarize that result/);
+  const listed = await jsonFetch(`${base}/api/runs`, { headers });
+  const conversationRuns = listed.operations.filter((item: any) => item.conversationId === operation.conversationId);
+  assert.equal(conversationRuns.filter((item: any) => item.resumable).length, 1);
+  assert.equal(conversationRuns.some((item: any) => item.resumeState !== undefined), false);
   streamAbort.abort();
 });
 

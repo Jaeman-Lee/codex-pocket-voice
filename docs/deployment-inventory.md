@@ -16,13 +16,13 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | V2 development component | Version / revision | State |
 | --- | --- | --- |
 | Source version | `2.0.0` / Android `versionCode 20000` | development only; not field installed |
-| Target branch | `feature/v2-control-plane` | approved API tools, encrypted journals, workspace management, dashboard, approval inbox, live branch/worktree identity and staged PocketLink rotations implemented; discovery/relay, model eval and broader patch workflow next |
+| Target branch | `feature/v2-control-plane` | approved API tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, live branch/worktree identity and staged PocketLink rotations implemented; discovery/relay, model eval and broader patch workflow next |
 | Gateway protocol | maximum 3, minimum 2 | v1 rollout compatibility retained |
 | Codex app-server schema | `codex-cli 0.149.0` | generated bindings and no-model real integration verified |
 | Current v1 APK | 1.8.2 candidate | signed APK/checksum/SBOM prepared from hotfix PR #4; install not performed |
 | Existing rollback APK | 1.8.1 | user-validated APK and running Companion preserved |
-| OpenAI API milestone | official SDK 6.49.0 | fake stateless tool-loop/SSE/Models tests only; no API key configured and no paid request sent |
-| OpenRouter milestone | Chat Completions + Models HTTP API | fake strict-routing/tool-loop/SSE tests only; no API key configured and no paid request sent |
+| OpenAI API milestone | official SDK 6.49.0 | encrypted bounded `store:false` multi-turn replay and fake tool-loop/SSE/Models tests; no API key configured and no paid request sent |
+| OpenRouter milestone | Chat Completions + Models HTTP API | encrypted bounded multi-turn replay and fake strict-routing/tool-loop/SSE tests; no API key configured and no paid request sent |
 | Android journal milestone | app-owned SQLite schema 1 | encrypted snapshot migration and rollback mirror implemented; CI-only, no device migration performed |
 | Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, policy summary, bounded workspace JSON export and protected delete implemented; no field restart performed |
 | Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation, touch-only approvals and two-touch history deletion implemented; no field APK handed off |
@@ -39,6 +39,13 @@ OpenRouter checkpoint decision: 새 Provider 실행·모델 catalog·비용 기�
 기존 `breaking`/`2.0.0`, Android `versionCode 20000`, `feature/v2-control-plane` 결정을 유지한다.
 개발 source와 CI-only Android artifact만 갱신하고 APK를 현장 전달하거나 Companion을 재시작하지
 않는다. current v1 APK 1.8.2와 rollback 1.8.1은 변경하지 않는다.
+
+API conversation replay checkpoint decision: OpenAI/OpenRouter 다중 턴 대화 선택과 Companion 암호화
+replay state를 추가하는 user-visible v2 기능이므로 기존 `breaking`/`2.0.0`, Android
+`versionCode 20000`, 대상 `feature/v2-control-plane`을 유지한다. 상태는 Provider·workspace·model·account에
+고정하고 최대 12턴·900 KiB로 제한하며 API/SSE/export에는 내보내지 않는다. 공개 검사는 fake Provider와
+임시 암호화 journal만 사용하고 실제 API key·유료 inference·APK 설치·Companion 재시작을 수행하지
+않는다. 이번 CI-only APK가 갱신되어도 current v1 후보 1.8.2와 검증된 rollback 1.8.1은 그대로 보존한다.
 
 Native SQLite journal checkpoint decision: Android 저장 backend와 v1 journal migration을 추가하는
 v2 기능이므로 기존 `breaking`/`2.0.0`, Android `versionCode 20000`,

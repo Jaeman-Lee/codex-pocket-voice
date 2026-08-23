@@ -37,6 +37,7 @@ import { mergeSpeechSegments } from "./speech-utils";
 import { OperationsDashboard } from "./OperationsDashboard";
 import { activeApprovals, applyApprovalEvent, upsertOperation } from "./operations-state";
 import { operationBelongsToSession, scopedHandoff } from "./session-scope";
+import { providerConversationMessages, providerConversationThreads } from "./provider-conversations";
 import { workspaceIdentityFor, workspaceIdentityLabel } from "./workspace-identity";
 import { createWorkJournal } from "./work-journal";
 import { conversationKey, restoredMessages, serializableQueue } from "./work-journal-model";
@@ -267,6 +268,20 @@ export function App() {
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { handsFreeRef.current = handsFree; }, [handsFree]);
   useEffect(() => {
+    if (provider === "codex") return;
+    const available = providerConversationThreads(operationSnapshots, provider, workspace);
+    setThreads(available);
+    if (!threadId || available.some((item) => item.id === threadId)) return;
+    const activeConversation = operationSnapshots.some((item) => item.providerId === provider
+      && item.cwd === workspace
+      && item.conversationId === threadId
+      && (item.status === "running" || (item.status === "unknown" && !item.acknowledgedAt)));
+    if (activeConversation) return;
+    setThreadId("");
+    threadRef.current = "";
+    persistConversationSelection(deviceRef.current, provider, workspace, "");
+  }, [operationSnapshots, provider, threadId, workspace]);
+  useEffect(() => {
     if (showConnectionCenter && isNativeApp()) void refreshPocketLinkStatuses(deviceTargets);
   }, [showConnectionCenter, deviceTargets]);
   useEffect(() => {
@@ -317,8 +332,8 @@ export function App() {
   useEffect(() => {
     if (!workspace) return;
     let disposed = false;
-    const expectedKey = conversationKey(device, workspace, threadId);
-    void journal.loadConversation(device, workspace, threadId).then((record) => {
+    const expectedKey = conversationKey(device, workspace, threadId, provider);
+    void journal.loadConversation(device, workspace, threadId, provider).then((record) => {
       if (disposed || !record || record.key !== expectedKey || messagesRef.current.length > 0) return;
       const restored = restoredMessages(record.messages);
       if (!restored.length) return;
@@ -327,13 +342,13 @@ export function App() {
       setJournalRestored(true);
     }).catch(() => undefined);
     return () => { disposed = true; };
-  }, [device, journal, threadId, workspace]);
+  }, [device, journal, provider, threadId, workspace]);
 
   useEffect(() => {
     if (!workspace || messages.length === 0) return;
     const timer = window.setTimeout(() => {
       void journal.saveConversation({
-        key: conversationKey(device, workspace, threadId),
+        key: conversationKey(device, workspace, threadId, provider),
         device,
         workspace,
         threadId,
@@ -343,7 +358,7 @@ export function App() {
       }).catch(() => undefined);
     }, 120);
     return () => window.clearTimeout(timer);
-  }, [connection, device, journal, messages, operation?.status, threadId, workspace]);
+  }, [connection, device, journal, messages, operation?.status, provider, threadId, workspace]);
 
   useEffect(() => {
     if (connection !== "online" || operationRef.current || queueDispatchingRef.current || promptQueueRef.current.length === 0
@@ -525,9 +540,29 @@ export function App() {
         await loadThreads(selected, true, localStorage.getItem(storageKey("thread", deviceRef.current)) ?? "");
         await loadProjectHandoff(selected);
       } else {
-        setThreads([]);
-        setThreadId("");
-        threadRef.current = "";
+        const availableConversations = providerConversationThreads(runData.operations, selectedProviderId, selected);
+        const storedConversation = localStorage.getItem(
+          providerConversationKey(deviceRef.current, selectedProviderId, selected),
+        ) ?? "";
+        const selectedConversation = availableConversations.some((item) => item.id === storedConversation)
+          ? storedConversation
+          : "";
+        setThreads(availableConversations);
+        setThreadId(selectedConversation);
+        threadRef.current = selectedConversation;
+        messagesRef.current = [];
+        setMessages([]);
+        setJournalRestored(false);
+        if (selectedConversation) {
+          const restored = providerConversationMessages(
+            runData.operations,
+            selectedProviderId,
+            selected,
+            selectedConversation,
+          );
+          messagesRef.current = restored;
+          setMessages(restored);
+        }
         setHandoff(null);
       }
       if (selectedProviderId === "codex" && threadRef.current) {
@@ -562,13 +597,23 @@ export function App() {
           || (item.status === "unknown" && !item.acknowledgedAt))
           && (item.providerId ?? "codex") === selectedProviderId
           && item.cwd === selected
-          && (selectedProviderId !== "codex" || !threadRef.current || item.threadId === threadRef.current));
+          && (!threadRef.current || (selectedProviderId === "codex"
+            ? item.threadId === threadRef.current
+            : item.conversationId === threadRef.current)));
         const activeOperation = threadRef.current ? candidates[0] : candidates.length === 1 ? candidates[0] : undefined;
         if (activeOperation) {
-          if (selectedProviderId === "codex" && !threadRef.current && activeOperation.threadId) {
-            setThreadId(activeOperation.threadId);
-            threadRef.current = activeOperation.threadId;
-            localStorage.setItem(storageKey("thread", deviceRef.current), activeOperation.threadId);
+          const activeConversation = selectedProviderId === "codex"
+            ? activeOperation.threadId
+            : activeOperation.conversationId;
+          if (!threadRef.current && activeConversation) {
+            setThreadId(activeConversation);
+            threadRef.current = activeConversation;
+            persistConversationSelection(
+              deviceRef.current,
+              selectedProviderId,
+              selected,
+              activeConversation,
+            );
           }
           handleOperationEvent(operationAction(activeOperation), activeOperation);
         }
@@ -911,8 +956,20 @@ export function App() {
   }
 
   function handleOperationEvent(action: string, nextOperation: Operation) {
-    setOperationSnapshots((current) => upsertOperation(current, nextOperation));
     const operationProvider = nextOperation.providerId ?? "codex";
+    const updateSnapshots = (current: Operation[]) => {
+      const retired = nextOperation.status === "completed"
+          && operationProvider !== "codex" && nextOperation.conversationId
+        ? current.map((item) => item.id !== nextOperation.id
+            && item.providerId === operationProvider
+            && item.cwd === nextOperation.cwd
+            && item.conversationId === nextOperation.conversationId
+          ? { ...item, resumable: false }
+          : item)
+        : current;
+      return upsertOperation(retired, nextOperation);
+    };
+    setOperationSnapshots(updateSnapshots);
     if (action === "acknowledged") {
       if (operationRef.current?.id !== nextOperation.id) return;
       operationRef.current = null;
@@ -923,7 +980,20 @@ export function App() {
     }
     if ((action === "started" || action === "recovered") && !operationRef.current) {
       if (nextOperation.cwd !== workspaceRef.current || operationProvider !== providerRef.current) return;
-      if (operationProvider === "codex" && nextOperation.threadId !== threadRef.current) return;
+      const operationConversation = operationProvider === "codex"
+        ? nextOperation.threadId
+        : nextOperation.conversationId;
+      if (threadRef.current && operationConversation !== threadRef.current) return;
+      if (!threadRef.current && operationConversation) {
+        setThreadId(operationConversation);
+        threadRef.current = operationConversation;
+        persistConversationSelection(
+          deviceRef.current,
+          operationProvider,
+          nextOperation.cwd,
+          operationConversation,
+        );
+      }
       operationRef.current = nextOperation;
       setOperation(nextOperation);
       ensureLiveMessage();
@@ -956,9 +1026,27 @@ export function App() {
         threadRef.current = result.threadId;
         localStorage.setItem(storageKey("thread", deviceRef.current), result.threadId);
       }
+      if (operationProvider !== "codex" && nextOperation.status === "completed" && nextOperation.conversationId) {
+        const conversationId = nextOperation.conversationId;
+        if (nextOperation.resumable) {
+          setThreadId(conversationId);
+          threadRef.current = conversationId;
+          persistConversationSelection(
+            deviceRef.current,
+            operationProvider,
+            nextOperation.cwd,
+            conversationId,
+          );
+        } else {
+          setThreadId("");
+          threadRef.current = "";
+          persistConversationSelection(deviceRef.current, operationProvider, nextOperation.cwd, "");
+          showToast("이 응답의 replay context를 안전하게 저장하지 못해 새 대화로만 계속할 수 있습니다.");
+        }
+      }
       if (ttsRef.current && result.finalResponse) speak(result.finalResponse);
       if (operationProvider === "codex") void loadThreads(workspaceRef.current, true, result.threadId);
-      startNextQueuedPrompt(result.threadId ?? threadRef.current);
+      startNextQueuedPrompt(result.threadId ?? nextOperation.conversationId ?? threadRef.current);
     } else if (action === "failed") {
       finishLiveMessage(`작업 실패: ${nextOperation.error || "알 수 없는 오류"}`, true);
       stopRunning();
@@ -1246,6 +1334,7 @@ export function App() {
           prompt: queued.text,
           cwd: queued.cwd,
           threadId: queued.provider === "codex" ? queued.threadId || continuedThreadId || undefined : undefined,
+          conversationId: queued.provider !== "codex" ? queued.threadId || continuedThreadId || undefined : undefined,
           networkAccess: queued.networkAccess,
           model: queued.model || undefined,
           effort: queued.effort || undefined,
@@ -1257,10 +1346,18 @@ export function App() {
       operationRef.current = data.operation;
       setOperation(data.operation);
       setOperationSnapshots((current) => upsertOperation(current, data.operation));
-      if (queued.provider === "codex" && data.operation.threadId && !threadRef.current) {
-        setThreadId(data.operation.threadId);
-        threadRef.current = data.operation.threadId;
-        localStorage.setItem(storageKey("thread", deviceRef.current), data.operation.threadId);
+      const startedConversation = queued.provider === "codex"
+        ? data.operation.threadId
+        : data.operation.conversationId;
+      if (startedConversation && !threadRef.current) {
+        setThreadId(startedConversation);
+        threadRef.current = startedConversation;
+        persistConversationSelection(
+          deviceRef.current,
+          queued.provider,
+          queued.cwd,
+          startedConversation,
+        );
       }
       queueDispatchingRef.current = false;
       for (const item of queued.attachments) if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
@@ -1306,8 +1403,12 @@ export function App() {
       localStorage.setItem(storageKey("workspace", deviceRef.current), next.cwd);
       setThreadId(effectiveThreadId);
       threadRef.current = effectiveThreadId;
-      if (effectiveThreadId) localStorage.setItem(storageKey("thread", deviceRef.current), effectiveThreadId);
-      else localStorage.removeItem(storageKey("thread", deviceRef.current));
+      persistConversationSelection(
+        deviceRef.current,
+        next.provider,
+        next.cwd,
+        effectiveThreadId,
+      );
       messagesRef.current = [];
       setMessages([]);
       setJournalRestored(false);
@@ -1594,7 +1695,30 @@ export function App() {
       );
       await loadProjectHandoff(workspaceRef.current);
     } else {
-      setThreads([]);
+      const availableConversations = providerConversationThreads(
+        operationSnapshots,
+        nextProvider,
+        workspaceRef.current,
+      );
+      const storedConversation = localStorage.getItem(
+        providerConversationKey(deviceRef.current, nextProvider, workspaceRef.current),
+      ) ?? "";
+      const selectedConversation = availableConversations.some((item) => item.id === storedConversation)
+        ? storedConversation
+        : "";
+      setThreads(availableConversations);
+      setThreadId(selectedConversation);
+      threadRef.current = selectedConversation;
+      if (selectedConversation) {
+        const restored = providerConversationMessages(
+          operationSnapshots,
+          nextProvider,
+          workspaceRef.current,
+          selectedConversation,
+        );
+        messagesRef.current = restored;
+        setMessages(restored);
+      }
     }
   }
 
@@ -1732,8 +1856,32 @@ export function App() {
     setMessages([]);
     messagesRef.current = [];
     setJournalRestored(false);
-    await loadThreads(path, false);
-    await loadProjectHandoff(path);
+    if (providerRef.current === "codex") {
+      await loadThreads(path, false);
+      await loadProjectHandoff(path);
+    } else {
+      const availableConversations = providerConversationThreads(operationSnapshots, providerRef.current, path);
+      const storedConversation = localStorage.getItem(
+        providerConversationKey(deviceRef.current, providerRef.current, path),
+      ) ?? "";
+      const selectedConversation = availableConversations.some((item) => item.id === storedConversation)
+        ? storedConversation
+        : "";
+      setThreads(availableConversations);
+      setThreadId(selectedConversation);
+      threadRef.current = selectedConversation;
+      if (selectedConversation) {
+        const restored = providerConversationMessages(
+          operationSnapshots,
+          providerRef.current,
+          path,
+          selectedConversation,
+        );
+        messagesRef.current = restored;
+        setMessages(restored);
+      }
+      setHandoff(null);
+    }
   }
 
   async function selectThread(id: string) {
@@ -1743,12 +1891,22 @@ export function App() {
     }
     setThreadId(id);
     threadRef.current = id;
-    if (id) localStorage.setItem(storageKey("thread", deviceRef.current), id);
-    else localStorage.removeItem(storageKey("thread", deviceRef.current));
+    persistConversationSelection(deviceRef.current, providerRef.current, workspaceRef.current, id);
     setMessages([]);
     messagesRef.current = [];
     setJournalRestored(false);
     if (!id) return;
+    if (providerRef.current !== "codex") {
+      const restored = providerConversationMessages(
+        operationSnapshots,
+        providerRef.current,
+        workspaceRef.current,
+        id,
+      );
+      messagesRef.current = restored;
+      setMessages(restored);
+      return;
+    }
     try {
       const data = await api<{ thread: ThreadDetail }>(`/api/threads/${encodeURIComponent(id)}`);
       const restored = historyMessages(data.thread);
@@ -2285,8 +2443,16 @@ export function App() {
 
   function openOperationFromDashboard(nextOperation: Operation) {
     const nextProvider = nextOperation.providerId ?? "codex";
-    const nextThread = nextProvider === "codex"
-      ? nextOperation.threadId ?? nextOperation.conversationId ?? ""
+    const conversationId = nextOperation.threadId ?? nextOperation.conversationId ?? "";
+    const providerThreads = nextProvider === "codex"
+      ? []
+      : providerConversationThreads(
+          upsertOperation(operationSnapshots, nextOperation),
+          nextProvider,
+          nextOperation.cwd,
+        );
+    const nextThread = nextProvider === "codex" || providerThreads.some((item) => item.id === conversationId)
+      ? conversationId
       : "";
     stopRunning();
     operationRef.current = null;
@@ -2310,9 +2476,10 @@ export function App() {
     localStorage.setItem(storageKey("workspace", deviceRef.current), nextOperation.cwd);
     setThreadId(nextThread);
     threadRef.current = nextThread;
-    if (nextThread) localStorage.setItem(storageKey("thread", deviceRef.current), nextThread);
-    else localStorage.removeItem(storageKey("thread", deviceRef.current));
-    setThreads((current) => current.filter((item) => item.cwd === nextOperation.cwd));
+    persistConversationSelection(deviceRef.current, nextProvider, nextOperation.cwd, nextThread);
+    setThreads(nextProvider === "codex"
+      ? (current) => current.filter((item) => item.cwd === nextOperation.cwd)
+      : providerThreads);
     setHandoff(null);
     setJournalRestored(false);
 
@@ -2322,17 +2489,32 @@ export function App() {
       : nextOperation.status === "unknown"
         ? nextOperation.error || "Companion 재시작 전 작업의 최종 상태를 확인할 수 없습니다."
         : nextOperation.result?.finalResponse || statusMessage(nextOperation.status);
-    const restored: ChatMessage[] = [
-      { id: newId("operation-user"), role: "user", text: nextOperation.prompt },
-      {
-        id: assistantId,
-        role: "assistant",
-        text: nextOperation.status === "running" ? "" : terminalText,
-        pending: nextOperation.status === "running",
-        error: nextOperation.status === "failed" || nextOperation.status === "unknown",
-        details: nextOperation.status === "running" ? undefined : buildResultDetails(nextOperation.result ?? {}) || undefined,
-      },
-    ];
+    const restored: ChatMessage[] = nextProvider !== "codex" && conversationId
+      ? [
+          ...providerConversationMessages(
+            upsertOperation(operationSnapshots, nextOperation),
+            nextProvider,
+            nextOperation.cwd,
+            conversationId,
+          ),
+          ...(nextOperation.status === "running" ? [{
+            id: assistantId,
+            role: "assistant" as const,
+            text: "",
+            pending: true,
+          }] : []),
+        ]
+      : [
+          { id: newId("operation-user"), role: "user", text: nextOperation.prompt },
+          {
+            id: assistantId,
+            role: "assistant",
+            text: nextOperation.status === "running" ? "" : terminalText,
+            pending: nextOperation.status === "running",
+            error: nextOperation.status === "failed" || nextOperation.status === "unknown",
+            details: nextOperation.status === "running" ? undefined : buildResultDetails(nextOperation.result ?? {}) || undefined,
+          },
+        ];
     messagesRef.current = restored;
     setMessages(restored);
 
@@ -2552,13 +2734,26 @@ export function App() {
         <label>
           <span>{tr("conversation")}</span>
           <div className="select-row">
-            <select value={threadId} disabled={operation !== null || controlsCollapsed} aria-label="Codex 대화 선택" onChange={(event) => void selectThread(event.target.value)}>
+            <select value={threadId} disabled={operation !== null || controlsCollapsed} aria-label="AI 대화 선택" onChange={(event) => void selectThread(event.target.value)}>
               <option value="">{tr("newConversation")}</option>
               {threads.map((thread) => (
                 <option key={thread.id} value={thread.id}>{short(thread.name || thread.preview || tr("unnamed"), 42)}</option>
               ))}
             </select>
-            <button className="icon-button" type="button" disabled={operation !== null || controlsCollapsed} aria-label="대화 새로고침" onClick={() => void loadThreads(workspaceRef.current, true)}>↻</button>
+            <button
+              className="icon-button"
+              type="button"
+              disabled={operation !== null || controlsCollapsed}
+              aria-label="대화 새로고침"
+              onClick={() => {
+                if (providerRef.current === "codex") void loadThreads(workspaceRef.current, true);
+                else setThreads(providerConversationThreads(
+                  operationSnapshots,
+                  providerRef.current,
+                  workspaceRef.current,
+                ));
+              }}
+            >↻</button>
           </div>
         </label>
       </section>
@@ -3299,6 +3494,23 @@ function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void
 
 function providerAliasKey(device: DeviceId, provider: ProviderId): string {
   return `codex-pocket-provider-alias-${device}-${provider}`;
+}
+
+function providerConversationKey(device: DeviceId, provider: ProviderId, workspace: string): string {
+  return `codex-pocket-conversation-${device}-${provider}-${workspace}`;
+}
+
+function persistConversationSelection(
+  device: DeviceId,
+  provider: ProviderId,
+  workspace: string,
+  conversationId: string,
+): void {
+  const key = provider === "codex"
+    ? storageKey("thread", device)
+    : providerConversationKey(device, provider, workspace);
+  if (conversationId) localStorage.setItem(key, conversationId);
+  else localStorage.removeItem(key);
 }
 
 function handoffDismissedKey(device: DeviceId): string {

@@ -1,4 +1,4 @@
-import type { DeviceId } from "./types";
+import type { DeviceId, ProviderId } from "./types";
 import { isNativeApp } from "./native";
 import { NativeJournal } from "./native-journal";
 import { conversationKey, type JournalConversation, type JournalQueue } from "./work-journal-model";
@@ -20,7 +20,12 @@ interface EncryptedEnvelope {
 }
 
 export interface WorkJournal {
-  loadConversation(device: DeviceId, workspace: string, threadId: string): Promise<JournalConversation | undefined>;
+  loadConversation(
+    device: DeviceId,
+    workspace: string,
+    threadId: string,
+    provider?: ProviderId,
+  ): Promise<JournalConversation | undefined>;
   saveConversation(record: JournalConversation): Promise<void>;
   loadQueue(device: DeviceId): Promise<JournalQueue | undefined>;
   saveQueue(record: JournalQueue): Promise<void>;
@@ -42,8 +47,13 @@ class EncryptedWorkJournal implements WorkJournal {
 
   constructor(private readonly raw: RawJournal) {}
 
-  async loadConversation(device: DeviceId, workspace: string, threadId: string): Promise<JournalConversation | undefined> {
-    const key = conversationKey(device, workspace, threadId);
+  async loadConversation(
+    device: DeviceId,
+    workspace: string,
+    threadId: string,
+    provider: ProviderId = "codex",
+  ): Promise<JournalConversation | undefined> {
+    const key = conversationKey(device, workspace, threadId, provider);
     const value = await this.raw.loadConversation(key);
     if (isEnvelope(value)) {
       const decrypted = await decryptValue(value, `conversation:${key}`, this.key);

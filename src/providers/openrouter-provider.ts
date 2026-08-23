@@ -18,6 +18,7 @@ import {
   type ProviderRun,
   type ProviderRunCompletion,
   type ProviderRunInput,
+  type ProviderResumeState,
   type ProviderRuntime,
   type ProviderUsage,
 } from "./types.js";
@@ -30,6 +31,8 @@ const MAX_TOOL_ARGUMENT_CHARS = 16_384;
 const MAX_TOOL_OUTPUT_CHARS = 80_000;
 const MAX_RESPONSE_TEXT_CHARS = 2 * 1024 * 1024;
 const MAX_TOOL_CALLS_PER_RUN = 8;
+const MAX_RESUME_STATE_BYTES = 900 * 1024;
+const MAX_RESUME_TURNS = 12;
 const MODEL_CACHE_MS = 10 * 60_000;
 const PROJECT_TOOL_INSTRUCTIONS = [
   "Project tools are restricted to the selected workspace and cannot access credentials.",
@@ -233,7 +236,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
       canTest: configured,
       capabilities: {
         run: runnable,
-        resume: false,
+        resume: true,
         models: configured,
         attachments: true,
         streaming: true,
@@ -297,9 +300,6 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
   }
 
   async startRun(input: ProviderRunInput): Promise<ProviderRun> {
-    if (input.conversationId) {
-      throw new ProviderError(409, "OpenRouter 대화 재개는 로컬 저널 단계에서 활성화됩니다. 새 대화로 시작해 주세요.");
-    }
     const modelId = input.model || this.defaultModel;
     if (!modelId) throw new ProviderError(400, "OpenRouter 모델을 선택해 주세요.");
     if (!this.modelAllowlist.has(modelId)) throw new ProviderError(400, "허용 목록에 없는 OpenRouter 모델입니다.");
@@ -309,14 +309,18 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
       throw new ProviderError(409, "선택한 모델은 현재 계정의 strict ZDR routing에서 사용할 수 없습니다.");
     }
     const toolEnabled = (this.hasReadTools || this.hasApprovalTools) && supportsTools(model);
-    const messages = await buildInitialMessages(
+    const currentMessages = await buildInitialMessages(
       input.prompt,
       input.imagePaths ?? [],
       model.inputModalities.includes("image"),
       toolEnabled,
       this.maxImageBytes,
     );
-    const conversationId = `openrouter-conversation-${this.createId()}`;
+    const priorMessages = readOpenRouterResumeState(input.resumeState, modelId, Boolean(input.conversationId));
+    const messages = priorMessages.length > 0
+      ? [...priorMessages, currentMessages[currentMessages.length - 1]!]
+      : currentMessages;
+    const conversationId = input.conversationId ?? `openrouter-conversation-${this.createId()}`;
     const runId = `openrouter-run-${this.createId()}`;
     const active: ActiveOpenRouterRun = { controller: new AbortController(), cancelled: false, timedOut: false };
     this.activeRuns.set(runKey(conversationId, runId), active);
@@ -329,6 +333,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
           cwd: input.cwd,
           model,
           messages,
+          historyTruncated: input.resumeState?.truncated === true,
           toolEnabled,
           timeoutMs: input.timeoutMs,
           active,
@@ -357,6 +362,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     cwd: string;
     model: OpenRouterModelRecord;
     messages: OpenRouterChatMessage[];
+    historyTruncated: boolean;
     toolEnabled: boolean;
     timeoutMs?: number;
     active: ActiveOpenRouterRun;
@@ -464,6 +470,12 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
             emit({ kind: "run.failed", message });
             return { status: "failed", result: { providerId: this.id, model: options.model.id, error: message } };
           }
+          options.messages.push({ role: "assistant", content: roundText, tool_calls: [] });
+          const resumeState = buildOpenRouterResumeState(
+            options.model.id,
+            options.messages,
+            options.historyTruncated,
+          );
           emit({ kind: "run.completed", status: "completed" });
           return {
             status: "completed",
@@ -474,10 +486,13 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
               remoteResponseId,
               model: options.model.id,
               finalResponse,
+              resumeAvailable: resumeState !== undefined,
+              ...(resumeState?.truncated ? { resumeTruncated: true } : {}),
               ...(routedProvider ? { routedProvider } : {}),
               ...(totalUsage ? { usage: totalUsage } : {}),
               ...(completedTools.length > 0 ? { tools: completedTools } : {}),
             },
+            ...(resumeState ? { resumeState } : {}),
           };
         }
         if (!options.toolEnabled || !this.toolBroker || tools.length === 0) {
@@ -748,6 +763,98 @@ async function buildInitialMessages(
   }
   messages.push({ role: "user", content });
   return messages;
+}
+
+function readOpenRouterResumeState(
+  state: ProviderResumeState | undefined,
+  model: string,
+  required: boolean,
+): OpenRouterChatMessage[] {
+  if (!state) {
+    if (required) throw new ProviderError(409, "OpenRouter 대화의 암호화된 replay context가 없습니다.");
+    return [];
+  }
+  if (state.version !== 1 || state.providerId !== "openrouter" || state.model !== model
+      || !Array.isArray(state.data.messages) || !state.data.messages.every(isOpenRouterChatMessage)) {
+    throw new ProviderError(409, "OpenRouter 대화 replay context가 현재 Provider·모델과 일치하지 않습니다.");
+  }
+  return cloneJson(state.data.messages) as OpenRouterChatMessage[];
+}
+
+function buildOpenRouterResumeState(
+  model: string,
+  source: readonly OpenRouterChatMessage[],
+  wasTruncated: boolean,
+): ProviderResumeState | undefined {
+  const messages = replayableOpenRouterMessages(source);
+  let truncated = wasTruncated;
+  while (userMessageCount(messages) > MAX_RESUME_TURNS) {
+    if (!removeOldestOpenRouterTurn(messages)) break;
+    truncated = true;
+  }
+  let state: ProviderResumeState = {
+    version: 1,
+    providerId: "openrouter",
+    model,
+    data: { messages },
+    ...(truncated ? { truncated: true } : {}),
+  };
+  while (Buffer.byteLength(JSON.stringify(state)) > MAX_RESUME_STATE_BYTES) {
+    if (!removeOldestOpenRouterTurn(messages)) return undefined;
+    truncated = true;
+    state = { ...state, data: { messages }, truncated: true };
+  }
+  return state;
+}
+
+function replayableOpenRouterMessages(source: readonly OpenRouterChatMessage[]): OpenRouterChatMessage[] {
+  const messages = cloneJson(source) as OpenRouterChatMessage[];
+  return messages.map((message) => {
+    if (message.role !== "user" || !Array.isArray(message.content)) return message;
+    return {
+      role: "user",
+      content: message.content.map((part) => part.type === "image_url"
+        ? { type: "text", text: "[이전 이미지 입력은 보안상 대화 replay에서 제외됨]" }
+        : part),
+    };
+  });
+}
+
+function removeOldestOpenRouterTurn(messages: OpenRouterChatMessage[]): boolean {
+  const firstUser = messages.findIndex((message) => message.role === "user");
+  if (firstUser < 0) return false;
+  const nextUserOffset = messages.slice(firstUser + 1).findIndex((message) => message.role === "user");
+  if (nextUserOffset < 0) return false;
+  messages.splice(firstUser, nextUserOffset + 1);
+  return true;
+}
+
+function userMessageCount(messages: readonly OpenRouterChatMessage[]): number {
+  return messages.filter((message) => message.role === "user").length;
+}
+
+function isOpenRouterChatMessage(value: unknown): value is OpenRouterChatMessage {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const message = value as Record<string, unknown>;
+  if (message.role === "system") return typeof message.content === "string";
+  if (message.role === "tool") {
+    return typeof message.tool_call_id === "string" && typeof message.content === "string";
+  }
+  if (message.role === "assistant") {
+    return (typeof message.content === "string" || message.content === null)
+      && Array.isArray(message.tool_calls);
+  }
+  if (message.role !== "user") return false;
+  if (typeof message.content === "string") return true;
+  return Array.isArray(message.content) && message.content.every((part) => {
+    if (!part || typeof part !== "object" || Array.isArray(part)) return false;
+    const item = part as Record<string, unknown>;
+    return item.type === "text" && typeof item.text === "string";
+  });
+}
+
+function cloneJson(value: unknown): unknown {
+  return JSON.parse(JSON.stringify(value)) as unknown;
 }
 
 function providerTools(broker: ToolBroker | undefined): NonNullable<OpenRouterChatRequest["tools"]> {
