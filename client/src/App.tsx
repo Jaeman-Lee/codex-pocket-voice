@@ -92,6 +92,8 @@ import type {
   ThreadDetail,
   ThreadSummary,
   Workspace,
+  WorkspaceChangeRecoveryResponse,
+  WorkspaceChangeRecoveryStatus,
   WorkspaceResponse,
 } from "./types";
 
@@ -233,6 +235,8 @@ export function App() {
   const [journalPolicy, setJournalPolicy] = useState<JournalPolicy | null>(null);
   const [journalPolicyLimits, setJournalPolicyLimits] = useState<JournalPolicyLimits | null>(null);
   const [updatingJournalPolicy, setUpdatingJournalPolicy] = useState(false);
+  const [workspaceRecovery, setWorkspaceRecovery] = useState<WorkspaceChangeRecoveryStatus | null>(null);
+  const [retryingWorkspaceRecovery, setRetryingWorkspaceRecovery] = useState(false);
   const [exportingWorkspace, setExportingWorkspace] = useState<string | null>(null);
   const [deletingWorkspace, setDeletingWorkspace] = useState<string | null>(null);
   const [journal] = useState(createWorkJournal);
@@ -506,7 +510,7 @@ export function App() {
     if (initializingRef.current) return;
     initializingRef.current = true;
     try {
-      const [health, workspaceData, providerData, codexModelData, runData, approvalData, journalData] = await Promise.all([
+      const [health, workspaceData, providerData, codexModelData, runData, approvalData, journalData, recoveryData] = await Promise.all([
         api<{ userAgent: string; device: { name: string } }>("/api/health"),
         api<WorkspaceResponse>("/api/workspaces"),
         api<ProviderResponse>("/api/providers"),
@@ -517,6 +521,8 @@ export function App() {
           .catch(() => ({ approvals: [] })),
         api<{ policy: JournalPolicy; limits: JournalPolicyLimits }>("/api/journal/policy")
           .catch(() => ({ policy: null, limits: null })),
+        api<WorkspaceChangeRecoveryResponse>("/api/workspace-changes/recovery")
+          .catch(() => ({ supported: false, status: null })),
       ]);
       setConnectionText(`${health.device.name} · ${health.userAgent}`);
       setConnection("online");
@@ -527,6 +533,7 @@ export function App() {
       setApprovalInbox(activeApprovals(approvalData.approvals));
       setJournalPolicy(journalData.policy);
       setJournalPolicyLimits(journalData.limits);
+      setWorkspaceRecovery(recoveryData.status);
       const storedProvider = localStorage.getItem(storageKey("provider", deviceRef.current));
       let selectedProvider = providerData.providers.find((item) => item.id === storedProvider && item.available)
         ?? providerData.providers.find((item) => item.id === "codex")
@@ -950,12 +957,14 @@ export function App() {
   async function refreshOperationalSnapshot(silent = false) {
     const requestedDevice = deviceRef.current;
     try {
-      const [runData, approvalData, workspaceData, journalData] = await Promise.all([
+      const [runData, approvalData, workspaceData, journalData, recoveryData] = await Promise.all([
         api<{ operations: Operation[] }>("/api/runs"),
         api<{ approvals: ApprovalItem[] }>("/api/approvals"),
         api<WorkspaceResponse>("/api/workspaces"),
         api<{ policy: JournalPolicy; limits: JournalPolicyLimits }>("/api/journal/policy")
           .catch(() => ({ policy: null, limits: null })),
+        api<WorkspaceChangeRecoveryResponse>("/api/workspace-changes/recovery")
+          .catch(() => ({ supported: false, status: null })),
       ]);
       if (deviceRef.current !== requestedDevice) return;
       setOperationSnapshots(runData.operations);
@@ -964,6 +973,7 @@ export function App() {
       setCreationLocations(workspaceData.creationLocations);
       setJournalPolicy(journalData.policy);
       setJournalPolicyLimits(journalData.limits);
+      setWorkspaceRecovery(recoveryData.status);
       if (!silent) showToast("프로젝트 작업 상태를 새로 확인했습니다.");
     } catch (error) {
       if (!silent && deviceRef.current === requestedDevice) showToast(errorMessage(error));
@@ -1827,6 +1837,8 @@ export function App() {
     setJournalPolicy(null);
     setJournalPolicyLimits(null);
     setUpdatingJournalPolicy(false);
+    setWorkspaceRecovery(null);
+    setRetryingWorkspaceRecovery(false);
     setExportingWorkspace(null);
     setDeletingWorkspace(null);
     replayingEventsRef.current = false;
@@ -2575,6 +2587,31 @@ export function App() {
     }
   }
 
+  async function retrySafeWorkspaceRecovery(): Promise<boolean> {
+    if (retryingWorkspaceRecovery) return false;
+    const requestedDevice = deviceRef.current;
+    setRetryingWorkspaceRecovery(true);
+    try {
+      const data = await api<{ status: WorkspaceChangeRecoveryStatus }>(
+        "/api/workspace-changes/recovery/retry",
+        { method: "POST", body: { confirm: "retry-safe-workspace-recovery" } },
+      );
+      if (deviceRef.current !== requestedDevice) return false;
+      setWorkspaceRecovery(data.status);
+      if (data.status.blocked) {
+        showToast("아직 안전하게 복구할 수 없습니다. PC에서 표시된 파일을 확인해 주세요.");
+        return false;
+      }
+      showToast("Workspace 변경 복구를 마쳤습니다. 변경 도구를 다시 사용할 수 있습니다.");
+      return true;
+    } catch (error) {
+      if (deviceRef.current === requestedDevice) showToast(errorMessage(error));
+      return false;
+    } finally {
+      if (deviceRef.current === requestedDevice) setRetryingWorkspaceRecovery(false);
+    }
+  }
+
   async function exportCompanionJournal(targetWorkspace: string) {
     if (exportingWorkspace || deletingWorkspace) return;
     setExportingWorkspace(targetWorkspace);
@@ -2807,7 +2844,12 @@ export function App() {
             }}
           >
             <span aria-hidden="true">▤</span>
-            {pendingApprovalCount > 0 && <b aria-label={`승인 필요 ${pendingApprovalCount}건`}>{Math.min(99, pendingApprovalCount)}</b>}
+            {(workspaceRecovery?.blocked || pendingApprovalCount > 0) && (
+              <b aria-label={workspaceRecovery?.blocked
+                ? `Workspace 변경 복구 필요${pendingApprovalCount > 0 ? ` · 승인 필요 ${pendingApprovalCount}건` : ""}`
+                : `승인 필요 ${pendingApprovalCount}건`}
+              >{workspaceRecovery?.blocked ? "!" : Math.min(99, pendingApprovalCount)}</b>
+            )}
           </button>
           <button
             className="icon-button handoff-button"
@@ -2857,6 +2899,8 @@ export function App() {
           approvals={approvalInbox}
           workspaces={workspaces}
           queuedCount={promptQueue.length}
+          workspaceRecovery={workspaceRecovery}
+          retryingWorkspaceRecovery={retryingWorkspaceRecovery}
           decidingApprovalId={decidingApprovalId}
           updatingOperationId={updatingOperationId}
           journalPolicy={journalPolicy}
@@ -2866,6 +2910,7 @@ export function App() {
           deletingWorkspace={deletingWorkspace}
           onClose={() => setShowOperationsDashboard(false)}
           onRefresh={() => void refreshOperationalSnapshot(false)}
+          onRetryWorkspaceRecovery={retrySafeWorkspaceRecovery}
           onOpenOperation={openOperationFromDashboard}
           onUpdateOperation={updateOperationMetadata}
           onUpdateJournalPolicy={updateCompanionJournalPolicy}

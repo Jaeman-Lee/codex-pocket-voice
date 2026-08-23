@@ -14,6 +14,7 @@ import type {
   Operation,
   OperationMetadataPatch,
   Workspace,
+  WorkspaceChangeRecoveryStatus,
   WorkspaceIdentity,
 } from "./types";
 
@@ -23,6 +24,8 @@ interface OperationsDashboardProps {
   approvals: ApprovalItem[];
   workspaces: Workspace[];
   queuedCount: number;
+  workspaceRecovery: WorkspaceChangeRecoveryStatus | null;
+  retryingWorkspaceRecovery: boolean;
   decidingApprovalId: string | null;
   journalPolicy: JournalPolicy | null;
   journalPolicyLimits: JournalPolicyLimits | null;
@@ -32,6 +35,7 @@ interface OperationsDashboardProps {
   updatingOperationId: string | null;
   onClose(): void;
   onRefresh(): void;
+  onRetryWorkspaceRecovery(): Promise<boolean>;
   onOpenOperation(operation: Operation): void;
   onUpdateOperation(operation: Operation, patch: OperationMetadataPatch): Promise<boolean>;
   onUpdateJournalPolicy(policy: JournalPolicy): Promise<boolean>;
@@ -43,6 +47,7 @@ interface OperationsDashboardProps {
 export function OperationsDashboard(props: OperationsDashboardProps) {
   const [now, setNow] = useState(Date.now());
   const [confirmingWorkspace, setConfirmingWorkspace] = useState<string | null>(null);
+  const [confirmingRecovery, setConfirmingRecovery] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [showPolicyEditor, setShowPolicyEditor] = useState(false);
   useEffect(() => {
@@ -63,6 +68,9 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
       setConfirmingWorkspace(null);
     }
   }, [confirmingWorkspace, groups]);
+  useEffect(() => {
+    if (!props.workspaceRecovery?.blocked) setConfirmingRecovery(false);
+  }, [props.workspaceRecovery?.blocked]);
 
   return (
     <section className="operations-dashboard" role="dialog" aria-modal="true" aria-labelledby="operations-title">
@@ -84,6 +92,16 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
           <Count label="완료" value={counts.completed} tone="completed" />
           <Count label="실패" value={counts.failed} tone="failed" />
         </div>
+
+        {props.workspaceRecovery?.blocked && (
+          <WorkspaceRecoveryCard
+            status={props.workspaceRecovery}
+            busy={props.retryingWorkspaceRecovery}
+            confirming={confirmingRecovery}
+            onConfirming={setConfirmingRecovery}
+            onRetry={props.onRetryWorkspaceRecovery}
+          />
+        )}
 
         {approvals.length > 0 && (
           <section className="approval-inbox" aria-labelledby="approval-inbox-title">
@@ -154,6 +172,89 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
       </div>
     </section>
   );
+}
+
+function WorkspaceRecoveryCard({
+  status,
+  busy,
+  confirming,
+  onConfirming,
+  onRetry,
+}: {
+  status: WorkspaceChangeRecoveryStatus;
+  busy: boolean;
+  confirming: boolean;
+  onConfirming(confirming: boolean): void;
+  onRetry(): Promise<boolean>;
+}) {
+  const retry = async () => {
+    if (busy) return;
+    if (!confirming) {
+      onConfirming(true);
+      return;
+    }
+    try {
+      await onRetry();
+    } finally {
+      onConfirming(false);
+    }
+  };
+  const visibleTransactions = status.pendingTransactions.slice(0, 8);
+  return (
+    <section className="workspace-recovery" role="alert" aria-labelledby="workspace-recovery-title">
+      <header>
+        <strong id="workspace-recovery-title">Workspace 변경 복구가 멈췄습니다</strong>
+        <span>읽기 작업은 계속 사용할 수 있지만 파일 변경 도구는 안전을 위해 차단됐습니다.</span>
+      </header>
+      {status.error && <p className="workspace-recovery-error">{status.error}</p>}
+      {status.pendingCountKnown ? (
+        visibleTransactions.length > 0 && (
+          <ol className="workspace-recovery-transactions">
+            {visibleTransactions.map((transaction) => (
+              <li key={transaction.id}>
+                <strong>{recoveryOperationLabel(transaction.operation)} · {recoveryPhaseLabel(transaction.phase)}</strong>
+                <code title={transaction.workspace}>{transaction.workspace}</code>
+                <div>
+                  {transaction.paths.map((item) => <code key={item} title={item}>{item}</code>)}
+                </div>
+              </li>
+            ))}
+            {status.pendingTransactions.length > visibleTransactions.length && (
+              <li className="workspace-recovery-more">그 밖의 transaction {status.pendingTransactions.length - visibleTransactions.length}건</li>
+            )}
+          </ol>
+        )
+      ) : (
+        <p>비공개 transaction journal을 안전하게 해석하지 못해 파일 경로를 추측하지 않습니다.</p>
+      )}
+      <p>Linux PC에서 위 workspace와 상대 경로를 확인하고 필요한 내용을 보존한 뒤 다시 시도하세요.</p>
+      <p className="workspace-recovery-safety">재시도는 journal을 버리거나 파일을 강제로 덮어쓰거나 삭제하지 않습니다. 같은 안전 검사를 다시 실행합니다.</p>
+      {confirming && (
+        <strong className="workspace-recovery-confirm">PC에서 파일 상태를 확인했다면 한 번 더 눌러 재시도하세요.</strong>
+      )}
+      <div className="workspace-recovery-actions">
+        {confirming && <button type="button" disabled={busy} onClick={() => onConfirming(false)}>취소</button>}
+        <button
+          type="button"
+          className={confirming ? "confirm-recovery" : undefined}
+          disabled={busy}
+          onClick={() => void retry()}
+        >{busy ? "안전 복구 확인 중…" : confirming ? "확인하고 안전 복구 재시도" : "안전 복구 재시도 검토"}</button>
+      </div>
+    </section>
+  );
+}
+
+function recoveryOperationLabel(operation: WorkspaceChangeRecoveryStatus["pendingTransactions"][number]["operation"]): string {
+  if (operation === "replace") return "파일 교체";
+  if (operation === "create") return "파일 생성";
+  return "파일 이름 변경";
+}
+
+function recoveryPhaseLabel(phase: WorkspaceChangeRecoveryStatus["pendingTransactions"][number]["phase"]): string {
+  if (phase === "staging") return "준비 중";
+  if (phase === "prepared") return "원복 대기";
+  return "정리 대기";
 }
 
 function RetentionPolicyEditor({

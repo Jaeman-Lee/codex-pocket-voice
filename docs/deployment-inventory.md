@@ -20,6 +20,7 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | Gateway protocol | maximum 3, minimum 2 | v1 rollout compatibility retained |
 | Codex app-server schema | `codex-cli 0.149.0` | generated bindings and no-model real integration verified |
 | Current v1 APK | 1.8.2 candidate | signed APK/checksum/SBOM prepared from hotfix PR #4; install not performed |
+| Staged v1 hotfix APK | 1.8.3 candidate | writer-release PR #5 checks and signed artifact verified; kept separate and not installed |
 | Existing rollback APK | 1.8.1 | user-validated APK and running Companion preserved |
 | OpenAI API milestone | official SDK 6.49.0 | encrypted bounded `store:false` multi-turn replay and fake tool-loop/SSE/Models tests; no API key configured and no paid request sent |
 | OpenRouter milestone | Chat Completions + Models HTTP API | encrypted bounded multi-turn replay and fake strict-routing/tool-loop/SSE tests; no API key configured and no paid request sent |
@@ -27,7 +28,7 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, HMAC-authenticated bounded user retention, workspace JSON export and protected delete implemented; no field restart performed |
 | Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation, touch-only approvals, durable goal/pin/archive and two-touch history deletion implemented; no field APK handed off |
 | Android work notifications | opt-in native channel | generic private completed/approval/error alerts and authenticated retained-operation navigation implemented while WebView SSE is alive; process-death delivery and field acceptance pending |
-| Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; restart recovery; delete/directory/chmod/binary blocked; check/test/build only |
+| Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
 | PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | reviewed QR, observed backup-pin server certificate promotion and recoverable Keystore A/B client identity rotation implemented; discovery/P2P, relay and field validation pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | offline verifier and bounded same-signer native ZIP importer/user-confirmed installer implemented; release discovery/download and field rollback pending |
@@ -130,6 +131,15 @@ Crash-recoverable workspace change checkpoint decision: 검토된 새 텍스트 
 실패시킨다. 삭제·디렉터리 생성·chmod·binary는 활성화하지 않는다. 이번 변경도 source와 CI-only APK만
 갱신하고 실제 API key·유료 inference·APK 전달·설치·Companion 재시작은 수행하지 않는다. current v1
 후보 1.8.2와 검증된 rollback 1.8.1 세트는 그대로 보존한다.
+
+Manual workspace recovery checkpoint decision: 자동 복구가 애매할 때도 읽기·운영 화면을 유지하고
+변경 도구만 차단하는 새 v2 user workflow이므로 기존 `breaking`/`2.0.0`, Android
+`versionCode 20000`, 대상 `feature/v2-control-plane`을 유지한다. 상태 API는 paired client에 최대
+32개 transaction·각 16개 상대 경로만 제공하고 malformed journal이면 경로를 추측하지 않는다.
+재시도는 same-origin 고정 확인값과 모바일 두 번째 터치를 요구하며 journal discard, force overwrite,
+복구 artifact 삭제 경로를 추가하지 않는다. 이 checkpoint는 source와 CI-only APK만 갱신하고 실제
+API key·유료 inference·APK 전달·설치·Companion 재시작을 수행하지 않는다. 별도 1.8.3 hotfix APK는
+staged 상태로 보존하고, current v1 후보 1.8.2와 검증된 rollback 1.8.1 세트도 변경·삭제하지 않는다.
 
 Workspace identity checkpoint decision: 프로젝트·세션의 현재 branch/worktree 정체성과 교차 프로젝트
 thread 검증을 추가하는 v2 기능이므로 분류와 버전은 `breaking`/`2.0.0`, Android `versionCode 20000`,

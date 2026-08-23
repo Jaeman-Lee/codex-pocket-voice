@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, link, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -7,7 +7,10 @@ import { InMemoryApprovalBroker } from "../src/approval-broker.js";
 import { PathPolicy } from "../src/path-policy.js";
 import { createReadOnlyWorkspaceTools } from "../src/read-only-tools.js";
 import { LocalToolBroker } from "../src/tool-broker.js";
-import { SimulatedWorkspaceChangeCrash } from "../src/workspace-change-engine.js";
+import {
+  SimulatedWorkspaceChangeCrash,
+  type WorkspaceChangeEngine,
+} from "../src/workspace-change-engine.js";
 import { createWorkspaceChangeTools } from "../src/workspace-change-tools.js";
 
 test("workspace_replace_text shows a bounded diff and atomically applies only the approved version", async (t) => {
@@ -524,6 +527,61 @@ test("workspace change journal keeps committed creation and refuses ambiguous re
   );
   assert.equal(await readFile(victim, "utf8"), "external after crash\n");
   assert.equal((await readdir(state)).some((name) => name.endsWith(".json")), true);
+
+  let recoveryEngine: WorkspaceChangeEngine | undefined;
+  await createWorkspaceChangeTools(paths, {
+    transactionDirectory: state,
+    deferRecoveryFailure: true,
+    onEngineReady: (engine) => { recoveryEngine = engine; },
+  });
+  assert.ok(recoveryEngine);
+  const blocked = recoveryEngine.recoveryStatus();
+  assert.equal(blocked.blocked, true);
+  assert.equal(blocked.pendingCountKnown, true);
+  assert.equal(blocked.pendingTransactions.length, 1);
+  assert.equal(blocked.pendingTransactions[0]?.workspace, root);
+  assert.deepEqual(blocked.pendingTransactions[0]?.paths, ["victim.txt"]);
+  assert.match(blocked.error ?? "", /changed independently/);
+  await assert.rejects(recoveryEngine.replace([]), /blocked pending safe recovery/);
+
+  const stillBlocked = await recoveryEngine.retryRecovery();
+  assert.equal(stillBlocked.blocked, true);
+  assert.equal(await readFile(victim, "utf8"), "external after crash\n");
+
+  await writeFile(victim, "proposed\n");
+  const recovered = await recoveryEngine.retryRecovery();
+  assert.equal(recovered.blocked, false);
+  assert.equal(recovered.pendingCountKnown, true);
+  assert.deepEqual(recovered.pendingTransactions, []);
+  assert.equal(await readFile(victim, "utf8"), "original\n");
+  assert.deepEqual(await readdir(state), []);
+});
+
+test("workspace recovery refuses an unbounded private journal without exposing guessed transactions", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-pocket-change-recovery-limit-"));
+  const state = join(root, "transactions");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(state, { mode: 0o700 });
+  await Promise.all(Array.from({ length: 33 }, (_, index) => {
+    const id = `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
+    return writeFile(join(state, `${id}.json`), "not-inspected", { mode: 0o600, flag: "wx" });
+  }));
+
+  const paths = await PathPolicy.fromEnvironment(root);
+  let recoveryEngine: WorkspaceChangeEngine | undefined;
+  await createWorkspaceChangeTools(paths, {
+    transactionDirectory: state,
+    deferRecoveryFailure: true,
+    onEngineReady: (engine) => { recoveryEngine = engine; },
+  });
+
+  assert.ok(recoveryEngine);
+  const status = recoveryEngine.recoveryStatus();
+  assert.equal(status.blocked, true);
+  assert.equal(status.pendingCountKnown, false);
+  assert.deepEqual(status.pendingTransactions, []);
+  assert.match(status.error ?? "", /too many pending transactions/);
+  assert.equal((await readdir(state)).length, 33);
 });
 
 function call(toolCallId: string, name: string, input: unknown) {

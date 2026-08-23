@@ -29,6 +29,7 @@ import {
 } from "./approval-broker.js";
 import { createReadOnlyWorkspaceTools } from "./read-only-tools.js";
 import { createWorkspaceChangeTools } from "./workspace-change-tools.js";
+import type { WorkspaceChangeEngine } from "./workspace-change-engine.js";
 import { createWorkspaceExecutionTools } from "./workspace-execution-tools.js";
 import { LocalToolBroker } from "./tool-broker.js";
 import {
@@ -143,10 +144,13 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   );
   const approvals = options.approvals ?? new InMemoryApprovalBroker();
   const executionTools = options.providers ? [] : await createWorkspaceExecutionTools(options.paths);
+  let workspaceChangeEngine: WorkspaceChangeEngine | undefined;
   const changeTools = options.providers ? [] : await createWorkspaceChangeTools(options.paths, {
     transactionDirectory: options.workspaceTransactionDirectory
       ?? process.env.CODEX_POCKET_WORKSPACE_TRANSACTIONS
       ?? join(dirname(auth.stateFile), "workspace-transactions"),
+    deferRecoveryFailure: true,
+    onEngineReady: (engine) => { workspaceChangeEngine = engine; },
   });
   const toolBroker = options.providers
     ? undefined
@@ -207,13 +211,13 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   });
 
   const requestListener = (request: IncomingMessage, response: ServerResponse) => {
-    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, sseClients, undefined).catch(
+    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, workspaceChangeEngine, sseClients, undefined).catch(
       (error) => sendError(response, error),
     );
   };
   const pocketLinkRequestListener = (request: IncomingMessage, response: ServerResponse) => {
     void Promise.resolve().then(() => pocketLinkClientPublicKeyPin(request)).then((tlsPublicKeyPin) => (
-      handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, sseClients, tlsPublicKeyPin)
+      handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, workspaceChangeEngine, sseClients, tlsPublicKeyPin)
     )).catch((error) => sendError(response, error));
   };
   const server = createServer(requestListener);
@@ -351,6 +355,7 @@ async function handleRequest(
   runs: RunCoordinator,
   approvals: ApprovalBroker,
   journal: EventJournal,
+  workspaceChangeEngine: WorkspaceChangeEngine | undefined,
   sseClients: Set<ServerResponse>,
   tlsPublicKeyPin: string | undefined,
 ): Promise<void> {
@@ -367,7 +372,7 @@ async function handleRequest(
       response.end();
       return;
     }
-    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, sseClients, tlsPublicKeyPin);
+    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, workspaceChangeEngine, sseClients, tlsPublicKeyPin);
     return;
   }
   await serveStatic(request, response, url.pathname, options.staticDir);
@@ -387,6 +392,7 @@ async function handleApi(
   runs: RunCoordinator,
   approvals: ApprovalBroker,
   journal: EventJournal,
+  workspaceChangeEngine: WorkspaceChangeEngine | undefined,
   sseClients: Set<ServerResponse>,
   tlsPublicKeyPin: string | undefined,
 ): Promise<void> {
@@ -463,6 +469,25 @@ async function handleApi(
   }
 
   const authenticatedClient = auth.requireAuthorization(request.headers.authorization, tlsPublicKeyPin);
+
+  if (request.method === "GET" && url.pathname === "/api/workspace-changes/recovery") {
+    sendJson(response, 200, {
+      supported: workspaceChangeEngine !== undefined,
+      status: workspaceChangeEngine?.recoveryStatus() ?? null,
+    });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/workspace-changes/recovery/retry") {
+    assertSameOrigin(request);
+    if (!workspaceChangeEngine) throw new HttpError(404, "Workspace change recovery is unavailable");
+    const body = await readJson(request);
+    if (!isRecord(body) || !hasExactKeys(body, ["confirm"]) || body.confirm !== "retry-safe-workspace-recovery") {
+      throw new HttpError(400, "Workspace recovery confirmation is invalid");
+    }
+    sendJson(response, 200, { status: await workspaceChangeEngine.retryRecovery() });
+    return;
+  }
 
   if (request.method === "POST" && url.pathname === "/api/pairing/tls-key-rotation/start") {
     assertSameOrigin(request);
@@ -1438,6 +1463,11 @@ function isLoopbackName(host: string): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value);
+  return actual.length === expected.length && actual.every((key) => expected.includes(key));
 }
 
 function truncateText(value: unknown, limit = MAX_EVENT_TEXT): string | undefined {

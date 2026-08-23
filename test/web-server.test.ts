@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
@@ -28,10 +28,14 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const projectHome = await mkdtemp(join(tmpdir(), "codex-pocket-projects-test-"));
   const authHome = await mkdtemp(join(tmpdir(), "codex-pocket-auth-test-"));
   const tlsHome = await mkdtemp(join(tmpdir(), "codex-pocket-tls-test-"));
+  const workspaceTransactionDirectory = join(authHome, "workspace-transactions");
+  const unsafeManifest = join(workspaceTransactionDirectory, "00000000-0000-4000-8000-000000000001.json");
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
   t.after(() => rm(projectHome, { recursive: true, force: true }));
   t.after(() => rm(authHome, { recursive: true, force: true }));
   t.after(() => rm(tlsHome, { recursive: true, force: true }));
+  await mkdir(workspaceTransactionDirectory, { mode: 0o700 });
+  await writeFile(unsafeManifest, "not-json", { mode: 0o600, flag: "wx" });
   const tlsFiles = await createTestCertificate(tlsHome, "127.0.0.1");
   const clientFiles = await createTestCertificate(tlsHome, "pocket-client.test", "client");
   const otherClientFiles = await createTestCertificate(tlsHome, "other-client.test", "other-client");
@@ -71,6 +75,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
     auth,
     approvals,
     pocketLink: { ...pocketLink, port: 0 },
+    workspaceTransactionDirectory,
     port: 0,
   });
   t.after(() => running.close());
@@ -238,6 +243,45 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const health = await jsonFetch(`${base}/api/health`, { headers: authorized() });
   assert.equal(health.ok, true);
   assert.deepEqual(health.allowedWorkspaceRoots, [cwd]);
+
+  const startupRecovery = await jsonFetch(`${base}/api/workspace-changes/recovery`, { headers: authorized() });
+  assert.equal(startupRecovery.supported, true);
+  assert.equal(startupRecovery.status.blocked, true);
+  assert.equal(startupRecovery.status.pendingCountKnown, false);
+  const crossOriginRecovery = await fetch(`${base}/api/workspace-changes/recovery/retry`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "https://evil.example" }),
+    body: JSON.stringify({ confirm: "retry-safe-workspace-recovery" }),
+  });
+  assert.equal(crossOriginRecovery.status, 403);
+  const missingRecoveryConfirmation = await fetch(`${base}/api/workspace-changes/recovery/retry`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: "{}",
+  });
+  assert.equal(missingRecoveryConfirmation.status, 400);
+  const expandedRecoveryRequest = await fetch(`${base}/api/workspace-changes/recovery/retry`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ confirm: "retry-safe-workspace-recovery", discardJournal: true }),
+  });
+  assert.equal(expandedRecoveryRequest.status, 400);
+  const blockedRecovery = await jsonFetch(`${base}/api/workspace-changes/recovery/retry`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ confirm: "retry-safe-workspace-recovery" }),
+  });
+  assert.equal(blockedRecovery.status.blocked, true);
+  assert.equal(blockedRecovery.status.pendingCountKnown, false);
+  assert.doesNotMatch(blockedRecovery.status.error, new RegExp(authHome.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  await unlink(unsafeManifest);
+  const recovered = await jsonFetch(`${base}/api/workspace-changes/recovery/retry`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ confirm: "retry-safe-workspace-recovery" }),
+  });
+  assert.equal(recovered.status.blocked, false);
+  assert.deepEqual(recovered.status.pendingTransactions, []);
 
   const models = await jsonFetch(`${base}/api/models`, { headers: authorized() });
   assert.equal(models.models[0].id, "test-codex");

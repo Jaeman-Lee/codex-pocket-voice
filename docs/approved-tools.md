@@ -52,6 +52,26 @@ state 옆 `workspace-transactions`이며 `CODEX_POCKET_WORKSPACE_TRANSACTIONS`�
 - manifest·내부 파일·대상 중 하나가 외부에서 바뀌어 안전한 판정이 불가능하면 자동 덮어쓰기를 하지
   않고 Companion의 변경 도구 초기화를 실패시킨다. 남은 복구본은 보존한다.
 
+## 수동 안전 복구
+
+자동 복구가 중단되어도 Companion web server는 fail-closed degraded mode로 시작한다. 프로젝트 목록,
+파일 읽기와 작업 대시보드는 계속 사용할 수 있지만 네 workspace 변경 도구는 모두 `503`으로 차단된다.
+paired 클라이언트만 복구 상태를 읽을 수 있고 재시도 API는 same-origin 요청과 고정 확인값을 요구한다.
+응답은 최대 32개 transaction과 transaction당 16개 상대 경로로 제한한다. manifest를 안전하게 해석하지
+못하면 workspace나 경로를 추측하지 않는다.
+
+모바일 작업 대시보드의 경고에서 다음 순서로 처리한다.
+
+1. 표시된 Linux PC workspace와 상대 경로를 Git, 편집기 history 또는 별도 backup으로 확인한다.
+2. 외부에서 만든 제3의 내용을 유지해야 하면 먼저 transaction 대상 밖의 안전한 위치에 복사한다.
+3. 내부 `.codex-pocket-*` 파일과 private transaction journal은 삭제·편집하지 않는다.
+4. 대상 파일을 Git/승인 diff로 확인 가능한 원본 또는 승인된 새 본문 상태로 되돌린 뒤
+   **안전 복구 재시도 검토**와 **확인하고 안전 복구 재시도**를 차례로 누른다.
+5. 계속 차단되거나 journal을 해석할 수 없으면 journal을 보존한 채 운영자 검토를 요청한다.
+
+재시도는 startup과 같은 inode/hash/link/내용 검사를 다시 실행할 뿐 journal을 폐기하거나 외부 변경을
+강제로 덮어쓰지 않는다. 안전한 상태가 증명되지 않으면 계속 차단된 상태로 남는다.
+
 삭제, 디렉터리 생성, chmod와 binary 변경은 어떤 API 변경 도구도 허용하지 않는다.
 
 ## npm 검증 sandbox

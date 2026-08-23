@@ -97,6 +97,11 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   hash·inode·mode만 기록한다. 재시작 시 staging은 폐기하고 prepared는 전체 원복하며 committed는 결과를
   유지한 채 backup을 정리한다. 복구 대상이 외부에서 다시 바뀌어 자동 처리가 애매하면 덮어쓰지 않고
   변경 도구 초기화를 실패시킨다.
+- 자동 workspace 복구가 애매해도 Companion의 읽기·대시보드 API는 fail-closed degraded mode로 시작하고
+  변경 도구만 503으로 차단한다. paired 클라이언트는 최대 32개 transaction·각 16개 상대 경로의 bounded
+  상태를 조회하며, journal을 해석하지 못하면 경로를 추측하지 않는다. 모바일 대시보드는 정확한
+  workspace/상대 경로와 PC 확인 안내를 보여 주고 두 번째 터치와 same-origin 확인값 뒤 같은 안전 복구만
+  재시도한다. journal 폐기, 외부 변경 강제 덮어쓰기와 복구용 파일 삭제 선택지는 제공하지 않는다.
 - `project_verify`는 기존 `package.json`의 `check`, `test`, `build` script만 터치 승인 뒤 실행한다.
   package SHA-256으로 검토 후 script 변경을 차단하고, unprivileged user/mount/network namespace,
   일회용 overlay, 빈 환경, 민감 파일 mask, 로컬 loopback만 있는 네트워크, 시간·process·fd·파일·출력

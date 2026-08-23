@@ -61,6 +61,8 @@ export interface WorkspaceChangeToolOptions {
   transactionDirectory: string;
   beforeBatchCommit?: (index: number, path: string) => Promise<void>;
   afterMutation?: (mutation: WorkspaceChangeMutation, index: number, path: string) => Promise<void>;
+  deferRecoveryFailure?: boolean;
+  onEngineReady?: (engine: WorkspaceChangeEngine) => void;
 }
 
 export async function createWorkspaceChangeTools(
@@ -71,7 +73,9 @@ export async function createWorkspaceChangeTools(
     transactionDirectory: options.transactionDirectory,
     beforeCommit: options.beforeBatchCommit,
     afterMutation: options.afterMutation,
+    deferRecoveryFailure: options.deferRecoveryFailure,
   });
+  options.onEngineReady?.(engine);
   return [
     workspaceReplaceTextTool(paths, engine),
     workspaceReplaceTextBatchTool(paths, engine),

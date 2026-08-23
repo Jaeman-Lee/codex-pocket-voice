@@ -29,6 +29,10 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   const operationNameInput = css.match(/\.operation-name-editor input \{([^}]+)\}/)?.[1] ?? "";
   const retentionFields = css.match(/\.retention-policy-fields \{([^}]+)\}/)?.[1] ?? "";
   const retentionEditor = css.match(/\.retention-policy-editor \{([^}]+)\}/)?.[1] ?? "";
+  const recoveryCard = css.match(/\.workspace-recovery \{([^}]+)\}/)?.[1] ?? "";
+  const recoveryWorkspace = css.match(/\.workspace-recovery-transactions > li > code \{([^}]+)\}/)?.[1] ?? "";
+  const recoveryPaths = css.match(/\.workspace-recovery-transactions > li > div code \{([^}]+)\}/)?.[1] ?? "";
+  const recoveryActions = css.match(/\.workspace-recovery-actions \{([^}]+)\}/)?.[1] ?? "";
 
   assert.match(overlay, /grid-template-rows:\s*minmax\(0,\s*1fr\)/);
   assert.match(overlay, /overflow:\s*hidden/);
@@ -61,6 +65,27 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   assert.match(operationNameInput, /min-width:\s*0/);
   assert.match(retentionFields, /minmax\(0,\s*1fr\)/);
   assert.match(retentionEditor, /max-width:\s*100%/);
+  assert.match(recoveryCard, /max-width:\s*100%/);
+  assert.match(recoveryCard, /overflow:\s*hidden/);
+  assert.match(recoveryWorkspace, /white-space:\s*pre-wrap/);
+  assert.match(recoveryWorkspace, /overflow-wrap:\s*anywhere/);
+  assert.match(recoveryPaths, /max-width:\s*100%/);
+  assert.match(recoveryPaths, /overflow-wrap:\s*anywhere/);
+  assert.match(recoveryActions, /minmax\(0,\s*0\.7fr\)/);
+  assert.match(recoveryActions, /minmax\(0,\s*1\.3fr\)/);
+});
+
+test("workspace recovery stays fail-closed and requires a second touch", async () => {
+  const app = await readFile(new URL("../client/src/App.tsx", import.meta.url), "utf8");
+  const dashboard = await readFile(new URL("../client/src/OperationsDashboard.tsx", import.meta.url), "utf8");
+
+  assert.match(app, /confirm:\s*"retry-safe-workspace-recovery"/);
+  assert.match(app, /workspaceRecovery\?\.blocked\s*\?\s*"!"/);
+  assert.match(dashboard, /if \(!confirming\)/);
+  assert.match(dashboard, /안전 복구 재시도 검토/);
+  assert.match(dashboard, /확인하고 안전 복구 재시도/);
+  assert.match(dashboard, /journal을 버리거나 파일을 강제로 덮어쓰거나 삭제하지 않습니다/);
+  assert.match(dashboard, /pendingTransactions\.slice\(0, 8\)/);
 });
 
 test("the app shell cannot grow beyond a narrow mobile viewport", async () => {

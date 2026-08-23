@@ -57,6 +57,27 @@ export interface JournalPolicyLimits {
   maxEvents: { minimum: number; maximum: number };
 }
 
+export interface WorkspaceChangeRecoveryTransaction {
+  id: string;
+  workspace: string;
+  phase: "staging" | "prepared" | "committed";
+  operation: "replace" | "create" | "rename";
+  paths: string[];
+}
+
+export interface WorkspaceChangeRecoveryStatus {
+  blocked: boolean;
+  pendingCountKnown: boolean;
+  pendingTransactions: WorkspaceChangeRecoveryTransaction[];
+  error?: string;
+  attemptedAt: string;
+}
+
+export interface WorkspaceChangeRecoveryResponse {
+  supported: boolean;
+  status: WorkspaceChangeRecoveryStatus | null;
+}
+
 export interface ModelOption {
   id: string;
   displayName: string;

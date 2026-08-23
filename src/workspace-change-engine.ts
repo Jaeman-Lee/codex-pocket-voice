@@ -19,6 +19,8 @@ import { ToolBrokerError } from "./tool-broker.js";
 const TRANSACTION_VERSION = 1;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_RECOVERY_FILE_BYTES = 1024 * 1024;
+const MAX_RECOVERY_TRANSACTIONS = 32;
+const MAX_JOURNAL_ENTRIES = 128;
 const UUID_SOURCE = "[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}";
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`);
 const TRANSACTION_FILE = new RegExp(`^(${UUID_SOURCE})\\.json$`);
@@ -70,6 +72,23 @@ export interface WorkspaceChangeEngineOptions {
   transactionDirectory: string;
   beforeCommit?: (index: number, path: string) => Promise<void>;
   afterMutation?: (mutation: WorkspaceChangeMutation, index: number, path: string) => Promise<void>;
+  deferRecoveryFailure?: boolean;
+}
+
+export interface WorkspaceChangeRecoveryTransaction {
+  id: string;
+  workspace: string;
+  phase: "staging" | "prepared" | "committed";
+  operation: "replace" | "create" | "rename";
+  paths: string[];
+}
+
+export interface WorkspaceChangeRecoveryStatus {
+  blocked: boolean;
+  pendingCountKnown: boolean;
+  pendingTransactions: WorkspaceChangeRecoveryTransaction[];
+  error?: string;
+  attemptedAt: string;
 }
 
 interface ReplacementManifestItem {
@@ -134,6 +153,9 @@ interface InspectedFile {
 export class WorkspaceChangeEngine {
   private tail: Promise<void> = Promise.resolve();
   private failure: unknown;
+  private pendingCountKnown = false;
+  private pendingTransactions: WorkspaceChangeRecoveryTransaction[] = [];
+  private recoveryAttemptedAt = new Date(0).toISOString();
 
   private constructor(
     private readonly paths: PathPolicy,
@@ -147,8 +169,39 @@ export class WorkspaceChangeEngine {
   ): Promise<WorkspaceChangeEngine> {
     const journal = await WorkspaceTransactionJournal.create(options.transactionDirectory);
     const engine = new WorkspaceChangeEngine(paths, journal, options);
-    await engine.recoverAll();
+    try {
+      await engine.attemptRecovery();
+    } catch (error) {
+      if (!options.deferRecoveryFailure) throw error;
+    }
     return engine;
+  }
+
+  recoveryStatus(): WorkspaceChangeRecoveryStatus {
+    return {
+      blocked: this.failure !== undefined,
+      pendingCountKnown: this.pendingCountKnown,
+      pendingTransactions: this.pendingTransactions.map((transaction) => ({
+        ...transaction,
+        paths: [...transaction.paths],
+      })),
+      ...(this.failure !== undefined ? { error: recoveryMessage(this.failure) } : {}),
+      attemptedAt: this.recoveryAttemptedAt,
+    };
+  }
+
+  retryRecovery(): Promise<WorkspaceChangeRecoveryStatus> {
+    const retry = async () => {
+      try {
+        await this.attemptRecovery();
+      } catch {
+        // The bounded status is returned to the paired client; unsafe state remains blocked.
+      }
+      return this.recoveryStatus();
+    };
+    const result = this.tail.then(retry, retry);
+    this.tail = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   replace(
@@ -174,7 +227,7 @@ export class WorkspaceChangeEngine {
 
   private exclusive<T>(action: () => Promise<T>): Promise<T> {
     const guarded = () => {
-      if (this.failure) throw this.failure;
+      if (this.failure) throw new ToolBrokerError(503, "Workspace change tools are blocked pending safe recovery");
       return action();
     };
     const result = this.tail.then(guarded, guarded);
@@ -183,11 +236,28 @@ export class WorkspaceChangeEngine {
   }
 
   private async recoverAll(): Promise<void> {
-    for (const manifest of await this.journal.list()) {
+    this.pendingCountKnown = false;
+    this.pendingTransactions = [];
+    const manifests = await this.journal.list();
+    this.pendingCountKnown = true;
+    this.pendingTransactions = manifests.map(recoveryTransaction);
+    for (const manifest of manifests) {
       await this.assertManifestWorkspace(manifest);
       if (manifest.phase === "staging") await this.cleanupStaging(manifest);
       else if (manifest.phase === "prepared") await this.rollbackPrepared(manifest);
       else await this.finishCommitted(manifest);
+      this.pendingTransactions = this.pendingTransactions.filter((item) => item.id !== manifest.id);
+    }
+  }
+
+  private async attemptRecovery(): Promise<void> {
+    this.recoveryAttemptedAt = new Date().toISOString();
+    try {
+      await this.recoverAll();
+      this.failure = undefined;
+    } catch (error) {
+      this.failure = error;
+      throw error;
     }
   }
 
@@ -349,6 +419,9 @@ export class WorkspaceChangeEngine {
       else await this.finishCommitted(manifest);
     } catch (recoveryFailure) {
       this.failure = recoveryFailure;
+      this.pendingCountKnown = true;
+      this.pendingTransactions = [recoveryTransaction(manifest)];
+      this.recoveryAttemptedAt = new Date().toISOString();
       throw recoveryFailure;
     }
     throw original;
@@ -478,6 +551,9 @@ export class WorkspaceChangeEngine {
       return true;
     } catch (error) {
       this.failure = error;
+      this.pendingCountKnown = true;
+      this.pendingTransactions = [recoveryTransaction(manifest)];
+      this.recoveryAttemptedAt = new Date().toISOString();
       return false;
     }
   }
@@ -554,6 +630,13 @@ class WorkspaceTransactionJournal {
   async list(): Promise<WorkspaceChangeManifest[]> {
     const manifests: WorkspaceChangeManifest[] = [];
     const entries = await readdir(this.directory, { withFileTypes: true });
+    if (entries.length > MAX_JOURNAL_ENTRIES) {
+      throw recoveryError("Workspace transaction journal has too many entries");
+    }
+    const manifestEntryCount = entries.filter((entry) => TRANSACTION_FILE.test(entry.name)).length;
+    if (manifestEntryCount > MAX_RECOVERY_TRANSACTIONS) {
+      throw recoveryError("Workspace transaction journal has too many pending transactions");
+    }
     for (const entry of entries) {
       const stale = STALE_JOURNAL_TEMP.exec(entry.name);
       if (stale) {
@@ -804,6 +887,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
   const actual = Object.keys(value);
   return actual.length === expected.length && actual.every((key) => expected.includes(key));
+}
+
+function recoveryTransaction(manifest: WorkspaceChangeManifest): WorkspaceChangeRecoveryTransaction {
+  const paths = manifest.items.flatMap((item) => item.kind === "rename"
+    ? [item.sourcePath, item.targetPath]
+    : [item.path]);
+  return {
+    id: manifest.id,
+    workspace: manifest.workspace,
+    phase: manifest.phase,
+    operation: manifest.operation,
+    paths: [...new Set(paths)].slice(0, 16),
+  };
+}
+
+function recoveryMessage(error: unknown): string {
+  if (error instanceof ToolBrokerError && error.message.startsWith("Workspace change recovery stopped safely:")) {
+    return error.message.replace(/[\r\n]/g, " ").slice(0, 500);
+  }
+  return "Workspace change recovery could not verify the private transaction journal.";
 }
 
 function recoveryError(message: string): ToolBrokerError {

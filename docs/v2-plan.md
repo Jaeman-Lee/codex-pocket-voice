@@ -13,8 +13,8 @@
 | 변경 분류 | `breaking` — 제공자 실행 계약, Gateway 프로토콜, 작업 저널과 전송 계층을 함께 확장한다. |
 | 목표 버전 | `2.0.0` |
 | 구현 브랜치 | `feature/v2-control-plane` |
-| v1 정책 | `1.8.2` hotfix 후보까지만 유지하고 1.8.1을 검증된 rollback으로 보존한다. 보안, 데이터 유실, 연결 불능만 추가 `1.8.x` hotfix로 다룬다. |
-| APK 정책 | 2.0 현장 설치 전에는 1.8.2를 current 후보, 1.8.1을 rollback으로 유지한다. 2.0 candidate를 설치할 때도 1.8.1 rollback을 보존한다. |
+| v1 정책 | 연결 불능을 고치는 `1.8.3` writer-release hotfix를 별도 staged 후보로 유지하고 1.8.1을 검증된 rollback으로 보존한다. 보안, 데이터 유실, 연결 불능만 추가 `1.8.x` hotfix로 다룬다. |
+| APK 정책 | 2.0 현장 설치 전에는 1.8.2 current와 별도 staged 1.8.3 후보를 섞지 않고, 1.8.1을 rollback으로 유지한다. 2.0 candidate를 설치할 때도 1.8.1 rollback을 보존한다. |
 | Companion 정책 | 1.x와 2.x 기능 협상을 지원하고, 2.0 검증 중 1.8.1 Companion 복구 지점을 유지한다. |
 
 ### 구현 진행 상황
@@ -22,9 +22,9 @@
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환, operation UI 상태 모듈 구현; 나머지 App 상태 분리 잔여 |
-| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery와 격리 npm 검증 구현; 실모델 eval 잔여 |
+| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
-| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe 구현; process-death background 알림·실기기 acceptance 잔여 |
+| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe 구현; process-death background 알림·실기기 acceptance 잔여 |
 | Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, signed update manifest·offline/native ZIP verifier와 user-confirmed installer 구현; release discovery/download, discovery/P2P·relay·background release gate 잔여 |
 
 ## 2. 제품 정의
@@ -310,7 +310,11 @@ UTF-8 파일 한 개만 atomic replace한다. `workspace_replace_text_batch`는 
 비어 있는 경로로만 옮긴다. 네 도구는 직렬화되며 앱 전용 0700/0600 strict transaction manifest의
 staging/prepared/committed 단계를 fsync한다. Companion 재시작 시 staging은 폐기, prepared는 원복,
 committed는 roll-forward 정리하고 외부 수정으로 판정이 애매하면 자동 덮어쓰기 없이 초기화를 중단한다.
-민감 파일, 외부 link, secret 형태, 삭제·디렉터리 생성·chmod는 막는다. 수동 복구 UI는 release gate다.
+민감 파일, 외부 link, secret 형태, 삭제·디렉터리 생성·chmod는 막는다. 자동 복구가 애매하면 Companion은
+읽기·상태 API를 유지한 degraded mode로 시작하고 변경 도구만 차단한다. 인증된 recovery API는 bounded
+transaction과 상대 경로만 반환하며 journal 해석 실패 시 경로를 추측하지 않는다. 모바일 작업 대시보드는
+PC 확인 안내와 두 번째 터치를 요구한 뒤 동일한 안전 복구만 재시도하고 journal 폐기·강제 덮어쓰기·복구
+파일 삭제는 제공하지 않는다.
 `project_verify`는 검토한 package SHA와 check/test/build script만 namespace·network-off·secret-mask·
 disposable overlay sandbox에서 실행하고 probe 실패 시 capability 자체를 숨긴다. strict schema, 단일
 함수 호출, 8회 상한과 stateless reasoning replay도 유지한다. 이 checkpoint는 개발용 2.0 source
