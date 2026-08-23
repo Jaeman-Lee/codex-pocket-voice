@@ -35,6 +35,7 @@ import {
   type NativeSpeechState,
   type NativeNotificationAction,
   type NativeNotificationKind,
+  type NativeOfficialReleaseStatus,
   type NativeUpdateReview,
   type PocketLinkStatus,
 } from "./native";
@@ -191,6 +192,7 @@ export function App() {
   const [testingProvider, setTestingProvider] = useState<ProviderId | null>(null);
   const [connectionTest, setConnectionTest] = useState<Partial<Record<ProviderId, ProviderConnectionTest>>>({});
   const [updateReview, setUpdateReview] = useState<NativeUpdateReview | null>(null);
+  const [updateDiscovery, setUpdateDiscovery] = useState<NativeOfficialReleaseStatus | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateError, setUpdateError] = useState("");
   const [updateInstallPermissionRequired, setUpdateInstallPermissionRequired] = useState(false);
@@ -1288,9 +1290,55 @@ export function App() {
     try {
       const selected = await NativeUpdate.selectBundle();
       if (selected.cancelled) return;
+      setUpdateDiscovery(null);
       setUpdateReview(selected);
       showToast(`서명과 APK를 확인했습니다 · v${selected.version}`);
     } catch (error) {
+      setUpdateReview(null);
+      setUpdateError(errorMessage(error));
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
+
+  async function discoverOfficialUpdate() {
+    if (!isNativeApp() || updateBusy) return;
+    setUpdateBusy(true);
+    setUpdateError("");
+    setUpdateInstallPermissionRequired(false);
+    setUpdateReview(null);
+    try {
+      const discovered = await NativeUpdate.discoverOfficial();
+      setUpdateDiscovery(discovered);
+      showToast(discovered.available
+        ? `공식 정식판 v${discovered.latestVersion}을 찾았습니다. 다운로드 전 내용을 확인해 주세요.`
+        : `현재 v${discovered.currentVersion}은 공식 Latest보다 같거나 새롭습니다.`);
+    } catch (error) {
+      setUpdateDiscovery(null);
+      setUpdateError(errorMessage(error));
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
+
+  async function downloadOfficialUpdate() {
+    if (!isNativeApp() || !updateDiscovery?.available || !updateDiscovery.token || updateBusy) return;
+    if (!updateDiscovery.expiresAt || Date.now() >= updateDiscovery.expiresAt) {
+      setUpdateDiscovery(null);
+      setUpdateError("10분 조회 시간이 만료되었습니다. 공식 정식판을 다시 조회해 주세요.");
+      void NativeUpdate.discard();
+      return;
+    }
+    setUpdateBusy(true);
+    setUpdateError("");
+    setUpdateInstallPermissionRequired(false);
+    try {
+      const verified = await NativeUpdate.downloadOfficial({ token: updateDiscovery.token });
+      setUpdateDiscovery(null);
+      setUpdateReview(verified);
+      showToast(`공식 ZIP의 서명과 APK를 확인했습니다 · v${verified.version}`);
+    } catch (error) {
+      setUpdateDiscovery(null);
       setUpdateReview(null);
       setUpdateError(errorMessage(error));
     } finally {
@@ -1303,6 +1351,7 @@ export function App() {
     setUpdateBusy(true);
     try {
       await NativeUpdate.discard();
+      setUpdateDiscovery(null);
       setUpdateReview(null);
       setUpdateError("");
       setUpdateInstallPermissionRequired(false);
@@ -3108,14 +3157,51 @@ export function App() {
                 <div className="update-manager-head">
                   <div>
                     <strong>Android 앱 업데이트</strong>
-                    <small>Actions 또는 Release에서 받은 전체 ZIP 묶음을 선택합니다.</small>
+                    <small>공식 GitHub 정식판을 직접 조회하거나, 받은 signed ZIP 묶음을 선택합니다.</small>
                   </div>
-                  <button type="button" disabled={updateBusy} onClick={() => void selectSignedUpdateBundle()}>
-                    {updateBusy ? "검증 중…" : updateReview ? "다른 ZIP" : "ZIP 선택"}
-                  </button>
+                  <div className="update-manager-actions">
+                    <button type="button" disabled={updateBusy} onClick={() => void discoverOfficialUpdate()}>
+                      {updateBusy ? "처리 중…" : "공식판 조회"}
+                    </button>
+                    <button type="button" disabled={updateBusy} onClick={() => void selectSignedUpdateBundle()}>
+                      {updateReview ? "다른 ZIP" : "ZIP 선택"}
+                    </button>
+                  </div>
                 </div>
-                {!updateReview && !updateError && (
-                  <p>현재 앱 signer와 같은 인증서, 분리 manifest 서명, APK·SBOM 해시와 더 높은 versionCode를 모두 확인합니다.</p>
+                {!updateReview && !updateDiscovery && !updateError && (
+                  <p>자동·백그라운드 조회는 하지 않습니다. 다운로드 뒤에도 현재 signer, manifest 서명, APK·SBOM 해시와 상위 versionCode를 다시 확인합니다.</p>
+                )}
+                {updateDiscovery && (
+                  <div className="update-discovery">
+                    <strong>
+                      {updateDiscovery.available
+                        ? `공식 정식판 v${updateDiscovery.latestVersion} 발견`
+                        : "설치할 새 공식 정식판 없음"}
+                    </strong>
+                    <dl>
+                      <div><dt>Version</dt><dd>v{updateDiscovery.currentVersion} → v{updateDiscovery.latestVersion}</dd></div>
+                      <div><dt>게시</dt><dd>{updateDiscovery.publishedAt}</dd></div>
+                      {updateDiscovery.available && updateDiscovery.assetName && updateDiscovery.assetBytes && (
+                        <div><dt>ZIP</dt><dd>{updateDiscovery.assetName} · {formatBytes(updateDiscovery.assetBytes)}</dd></div>
+                      )}
+                      {updateDiscovery.available && updateDiscovery.assetSha256 && (
+                        <div><dt>전송 digest</dt><dd>{updateDiscovery.assetSha256.slice(0, 16)}…</dd></div>
+                      )}
+                    </dl>
+                    {updateDiscovery.available ? (
+                      <>
+                        <p>다음 터치에서 app-private cache로만 내려받습니다. Release digest를 확인한 뒤 signed manifest 검증기로 넘기며, 아직 설치하지 않습니다.</p>
+                        <div className="update-review-actions">
+                          <button type="button" disabled={updateBusy} onClick={() => void discardSignedUpdateBundle()}>취소</button>
+                          <button type="button" className="install" disabled={updateBusy} onClick={() => void downloadOfficialUpdate()}>
+                            다운로드·서명 검증
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <p>Latest는 정식 Release만 대상으로 하며 draft와 prerelease는 조회 대상이 아닙니다.</p>
+                    )}
+                  </div>
                 )}
                 {updateReview && (
                   <div className="update-review">

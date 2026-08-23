@@ -48,7 +48,8 @@ Android 산출물에는 서명 APK 또는 fork용 unsigned APK, `SHA256SUMS`, Cy
 `update-manifest.json`이 함께 있어야 한다. 공식 서명 빌드에는 `update-manifest.sig`와 공개
 `update-manifest-cert.pem`도 있어야 한다. manifest는 APK와 SBOM의 정확한 파일명·SHA-256·크기,
 package ID, SemVer/versionCode, channel, commit을 고정한다. 서명 키와 암호는 GitHub Secrets 밖으로
-복사하지 않는다.
+복사하지 않는다. 공식 서명 CI는 이 6개 파일을 최상위에만 둔
+`Codex-Pocket-Voice-vX.Y.Z-update.zip`도 만든다. unsigned fork는 이 ZIP을 만들지 않는다.
 
 공식 signed candidate는 다음 순서로 오프라인 검증한다. `EXPECTED_CERT_SHA256`은 함께 받은 인증서에서
 새로 계산하면 안 되며, 이미 신뢰하는 설치본·이전 Release APK 또는 별도 신뢰 경로에서 확인한 Android
@@ -71,12 +72,14 @@ node scripts/verify-update-manifest.mjs \
 신뢰 대상이 아니며 수동 검토자가 의도적으로 `--allow-unsigned`를 준 경우에만 검증된다.
 
 v2 Android 앱에서는 연결 센터의 **Android 앱 업데이트 → ZIP 선택**으로 동일한 signed artifact ZIP을
-고를 수 있다. 앱은 top-level 6개 파일만 bounded app-private cache에 풀고 현재 설치 앱과 같은 signer와
-package, 정확한 manifest 서명·APK/SBOM hash와 더 높은 versionCode를 확인한다. 검토 결과는 10분 뒤
+고르거나 **공식판 조회**로 hardcoded public GitHub 저장소의 Latest 정식판을 명시적으로 확인할 수 있다.
+공식판은 조회 결과를 본 뒤 **다운로드·서명 검증**을 다시 눌러야 private cache로 내려받는다. GitHub
+asset digest를 전송 무결성으로 확인한 뒤에도 앱은 top-level 6개 파일만 풀고 현재 설치 앱과 같은 signer와
+package, 정확한 manifest 서명·APK/SBOM hash와 더 높은 versionCode를 검증한다. 검토 결과는 10분 뒤
 폐기되며 **검증된 APK 설치 확인**을 다시 터치해야 Android package installer가 열린다. unknown-source
-허용과 최종 설치는 Android 시스템 화면에서 사용자가 직접 승인한다. 앱이 Release URL을 자동 검색하거나
-다운로드·무인 설치하지 않으며, 1.8.2 앱에는 importer가 없으므로 최초 2.0 candidate는 기존 수동 설치가
-필요하다.
+허용과 최종 설치는 Android 시스템 화면에서 사용자가 직접 승인한다. 시작 시·주기적·background 조회,
+자동 다운로드와 무인 설치는 없으며, 1.8.2 앱에는 importer가 없으므로 최초 2.0 candidate는 기존 수동
+설치가 필요하다.
 
 ## Field-test checklist
 
@@ -98,7 +101,8 @@ package, 정확한 manifest 서명·APK/SBOM hash와 더 높은 versionCode를 �
 2. 병합 커밋에서 `npm run release:check`를 다시 실행한다.
 3. `vX.Y.Z` annotated tag를 만들고 force push 없이 태그를 push한다.
 4. Changelog 내용을 사용해 GitHub Release를 만들고 APK, 체크섬, SBOM, update manifest와
-   signed build의 manifest 서명·공개 인증서를 첨부한다.
+   signed build의 manifest 서명·공개 인증서 및 정확한 이름의 `Codex-Pocket-Voice-vX.Y.Z-update.zip`을
+   첨부한다. ZIP은 draft/prerelease가 아닌 정식 Release에서만 Android 공식판 조회 대상으로 삼는다.
 5. Release asset의 SHA-256을 CI 산출물과 대조하고 `Latest` 표시를 확인한다.
 
 ## Rollback and retention

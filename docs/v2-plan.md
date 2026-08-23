@@ -25,7 +25,7 @@
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe 구현; process-death background 알림·실기기 acceptance 잔여 |
-| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, signed update manifest·offline/native ZIP verifier와 user-confirmed installer 구현; release discovery/download, discovery/P2P·relay·background release gate 잔여 |
+| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; discovery/P2P·relay·background/field release gate 잔여 |
 
 ## 2. 제품 정의
 
@@ -404,12 +404,16 @@ Android CI는 APK와 SBOM의 SHA-256·크기, package, SemVer/versionCode, commi
 SHA-256 분리 서명을 만들고 공개 인증서를 함께 싣는다. 오프라인 검증기는 호출자가 별도 경로로 고정한
 인증서 fingerprint, manifest 서명, APK 실제 signer, artifact hash와 anti-downgrade를 모두 확인한다.
 포함된 인증서 자체는 신뢰 기준이 아니며 unsigned fork manifest는 명시적 override 없이 거부한다.
-Android 앱은 사용자가 받은 전체 artifact ZIP을 document picker로 선택하면 top-level 6개 파일·크기·중복을
-bounded private cache에서 확인한다. 현재 설치 앱과 같은 signer/package, manifest와 같은 APK signer·
-SemVer/versionCode이고 현재보다 높은 versionCode일 때만 10분 검토 token을 만든다. 두 번째 화면 터치와
-Android unknown-source/package-installer 승인을 거쳐 설치하며 자동 URL 검색·다운로드·background/무인
-설치는 하지 않는다. 1.8.2에는 importer가 없으므로 최초 2.0 설치와 실제 1.8.1 rollback 현장 검증은
-release gate로 남아 있다.
+Android 앱은 사용자가 받은 전체 artifact ZIP을 document picker로 선택하거나 **공식판 조회**를 누를 때만
+hardcoded public GitHub 저장소의 최신 non-draft/non-prerelease Release를 확인한다. metadata는 1 MiB와
+128 asset으로 제한하고 정확한 `Codex-Pocket-Voice-vX.Y.Z-update.zip`, uploaded/application-zip 상태,
+asset API URL·크기·SHA-256을 요구한다. 조회 결과는 10분 random token으로만 보존하며 두 번째 터치에서
+최대 3회 GitHub-controlled HTTPS redirect를 따라 private cache로 다운로드한다. Release digest를 확인한
+뒤 top-level 6개 파일·크기·중복, 현재 설치 앱과 같은 signer/package, manifest와 같은 APK signer·
+SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native verifier가 다시 검사한다. 세 번째
+화면 터치와 Android unknown-source/package-installer 승인을 거쳐 설치하며 시작 시·주기적·background
+조회나 무인 설치는 하지 않는다. 1.8.2에는 importer가 없으므로 최초 2.0 설치와 실제 1.8.1 rollback
+현장 검증은 release gate로 남아 있다.
 
 완료 조건: Termux 없이 핵심 흐름이 동작하고, 연결 실패 시 비밀정보를 노출하거나 다른 Provider로
 우회하지 않으며 1.8.1로 복구할 수 있다.
@@ -429,6 +433,7 @@ release gate로 남아 있다.
 - Android instrumentation에서 Keystore, 알림 deep link, background reconnect와 음성 확인 검증
 - update manifest 서명·APK signer binding, artifact 변조, unsigned 기본 거부와 versionCode downgrade 차단
 - Android ZIP importer의 path/duplicate/size 상한, current signer/package binding, 10분 재검토와 설치 전 rehash
+- 공식 Release의 잘못된 repo/tag/중복 asset/digest/content-type, oversized JSON/ZIP, HTTP·외부-host redirect와 조회 token 만료 차단
 
 ### 실제 Provider 검사
 

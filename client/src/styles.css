@@ -189,15 +189,16 @@ select {
 .update-manager-head strong, .update-manager-head small { display: block; overflow-wrap: anywhere; }
 .update-manager-head strong { font-size: 0.76rem; }
 .update-manager-head small, .update-manager > p { margin-top: 0.18rem; color: var(--muted); font-size: 0.61rem; line-height: 1.45; }
+.update-manager-head > .update-manager-actions { display: flex; flex: 0 1 auto; min-width: 0; flex-wrap: wrap; justify-content: flex-end; gap: 0.35rem; }
 .update-manager button { min-height: 2rem; padding: 0.35rem 0.55rem; border: 1px solid var(--line); border-radius: 0.55rem; color: var(--accent); background: var(--surface); cursor: pointer; font-size: 0.65rem; font-weight: 750; }
 .update-manager button:disabled { opacity: 0.4; cursor: not-allowed; }
-.update-review { min-width: 0; margin-top: 0.55rem; padding: 0.55rem; border: 1px solid rgba(62, 213, 165, 0.22); border-radius: 0.62rem; background: var(--surface-2); }
-.update-review > strong { color: var(--accent); font-size: 0.75rem; }
-.update-review dl { display: grid; gap: 0.25rem; margin: 0.5rem 0; }
-.update-review dl > div { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: 0.45rem; min-width: 0; }
-.update-review dt { color: var(--muted); font-size: 0.59rem; }
-.update-review dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 0.59rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.update-review > p { margin: 0.45rem 0; color: var(--muted); font-size: 0.61rem; line-height: 1.5; }
+.update-review, .update-discovery { min-width: 0; margin-top: 0.55rem; padding: 0.55rem; border: 1px solid rgba(62, 213, 165, 0.22); border-radius: 0.62rem; background: var(--surface-2); }
+.update-review > strong, .update-discovery > strong { color: var(--accent); font-size: 0.75rem; }
+.update-review dl, .update-discovery dl { display: grid; gap: 0.25rem; margin: 0.5rem 0; }
+.update-review dl > div, .update-discovery dl > div { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: 0.45rem; min-width: 0; }
+.update-review dt, .update-discovery dt { color: var(--muted); font-size: 0.59rem; }
+.update-review dd, .update-discovery dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 0.59rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.update-review > p, .update-discovery > p { margin: 0.45rem 0; color: var(--muted); font-size: 0.61rem; line-height: 1.5; }
 .update-review .update-blocked { display: block; color: var(--warm); font-size: 0.61rem; line-height: 1.4; }
 .update-review-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 0.4rem; margin-top: 0.5rem; }
 .update-review-actions button { min-width: 0; white-space: normal; }
@@ -645,6 +646,9 @@ textarea::placeholder { color: #6f8285; }
   .operation-list { grid-template-columns: minmax(0, 1fr); }
   .retention-policy-fields { grid-template-columns: minmax(0, 1fr); }
   .journal-actions, .journal-delete-confirm > div, .workspace-recovery-actions { grid-template-columns: minmax(0, 1fr); }
+  .update-manager-head { align-items: stretch; flex-direction: column; }
+  .update-manager-head > .update-manager-actions { display: grid; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .update-manager-actions button, .update-review-actions button { width: 100%; }
   .update-review-actions { grid-template-columns: minmax(0, 1fr); }
 }
 

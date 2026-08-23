@@ -114,8 +114,25 @@ export interface NativeUpdateReview {
   expiresAt: number;
 }
 
+export interface NativeOfficialReleaseStatus {
+  available: boolean;
+  currentVersion: string;
+  currentVersionCode: number;
+  latestVersion: string;
+  latestVersionCode: number;
+  publishedAt: string;
+  releaseUrl: string;
+  token?: string;
+  assetName?: string;
+  assetBytes?: number;
+  assetSha256?: string;
+  expiresAt?: number;
+}
+
 interface NativeUpdatePlugin {
   selectBundle(): Promise<NativeUpdateReview | { cancelled: true }>;
+  discoverOfficial(): Promise<NativeOfficialReleaseStatus>;
+  downloadOfficial(options: { token: string }): Promise<NativeUpdateReview>;
   installVerified(options: { token: string }): Promise<{ launched: boolean; settingsRequired: boolean }>;
   discard(): Promise<void>;
 }

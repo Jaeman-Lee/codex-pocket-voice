@@ -44,9 +44,17 @@ native 검증기는 canonical manifest에 고정된 APK·SBOM SHA-256/크기, `S
 같은 package/signer, manifest와 같은 SemVer/versionCode이고 현재 설치본보다 높은 versionCode여야 한다.
 검증된 APK와 random install token은 10분간 app-private cache에만 남고 설치 직전에 APK hash를 다시
 계산한다. 사용자가 화면에서 다시 터치해야 `FileProvider` read grant로 Android package installer를
-열며, unknown-source 권한과 최종 설치도 시스템 화면에서 별도 승인한다. URL discovery/download,
-background update와 무인 설치는 없다. Activity/process가 회수되면 token과 cache를 폐기하고 ZIP을 다시
-선택한다.
+열며, unknown-source 권한과 최종 설치도 시스템 화면에서 별도 승인한다. Activity/process가 회수되면
+token과 cache를 폐기하고 다시 조회하거나 ZIP을 선택한다.
+
+공식판 경로도 자동 updater가 아니다. 사용자가 **공식판 조회**를 눌러야 hardcoded public GitHub
+저장소의 최신 정식 Release를 한 번 조회하고, 화면에서 version·게시 시각·ZIP 이름·크기·digest를 본 뒤
+**다운로드·서명 검증**을 다시 눌러야 전송을 시작한다. native 계층은 1 MiB Release JSON, asset 128개,
+정확한 저장소/tag/versioned ZIP/API URL, uploaded/application-zip, bounded 크기와 `sha256:` digest를
+요구한다. asset API의 200 stream 또는 최대 3회 302만 처리하고 redirect는 HTTPS
+`*.githubusercontent.com`으로 제한한다. 파일은 public Downloads가 아닌 app-private cache에 저장하며
+Release digest를 검사한 뒤 위의 signed ZIP verifier로 다시 검증한다. API token·GitHub credential을
+사용하거나 저장하지 않으며 앱 시작·주기적·background 조회, 자동 다운로드와 무인 설치는 없다.
 
 ## v2 PocketLink TLS bootstrap
 

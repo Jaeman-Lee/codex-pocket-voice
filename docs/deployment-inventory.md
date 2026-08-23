@@ -31,7 +31,15 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
 | PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | reviewed QR, observed backup-pin server certificate promotion and recoverable Keystore A/B client identity rotation implemented; discovery/P2P, relay and field validation pending |
-| Android update integrity | canonical schema 1 manifest + detached release-key signature | offline verifier and bounded same-signer native ZIP importer/user-confirmed installer implemented; release discovery/download and field rollback pending |
+| Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+Official release discovery checkpoint decision: 공식 GitHub 정식판 조회·다운로드는 새 v2 user workflow이므로
+기존 `breaking`/`2.0.0`, Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지한다. Android가
+hardcoded public 저장소의 Latest를 사용자가 누를 때만 조회하고, 두 번째 터치에서 정확한 versioned ZIP을
+private cache로 내려받아 Release digest와 기존 signed-manifest/signer verifier를 모두 통과시킨다. 자동·주기적·
+background 조회와 무인 설치는 추가하지 않는다. signed CI-only artifact에는 6-file update ZIP을 추가하지만
+APK를 현장 전달·설치하거나 Companion을 재시작하지 않는다. 별도 staged 1.8.3 hotfix와 current v1 후보
+1.8.2를 변경하지 않고, 검증된 1.8.1 rollback 세트를 계속 보존한다.
 
 Session writer release checkpoint decision: 기존 handoff가 UI 상태만 떼고 app-server writer를 남기는 결함을
 수정하는 internal compatibility `patch`다. 아직 전달하지 않은 v2 candidate를 교체하므로 SemVer
@@ -251,8 +259,9 @@ app-server 통합 검사와 새 APK 판단을 거친다.
 
 ## Artifact classes
 
-- GitHub Release assets: 장기 보존하는 정식 배포 APK, SHA256SUMS, SBOM. 역사적
-  `v1.5.0`과 `v1.6.0` Release에는 APK만 있으며, 세 가지 묶음은 `v1.8.1` 정식 배포부터 적용한다.
+- GitHub Release assets: 장기 보존하는 정식 배포 APK, SHA256SUMS, SBOM, signed update manifest·서명·
+  인증서와 `Codex-Pocket-Voice-vX.Y.Z-update.zip`. 역사적 `v1.5.0`과 `v1.6.0` Release에는 APK만
+  있으므로 Android 공식판 조회 설치 대상이 아니다.
 - GitHub Actions artifacts: PR 검증용이며 14일 후 자동 만료한다.
 - Android Downloads: `CodexPocketVoice/current`에 현재 candidate 한 세트,
   `CodexPocketVoice/rollback`에 직전 검증본 한 세트만 보존한다. 과거 느슨한 APK는

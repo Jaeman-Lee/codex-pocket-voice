@@ -132,11 +132,16 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   서명하고 공개 인증서를 함께 제공한다. 오프라인 검증기는 별도로 고정한 인증서 fingerprint, manifest
   서명, 실제 APK signer, artifact 무결성과 downgrade를 확인하며 unsigned fork는 명시적 override 없이
   거부한다.
-- Android 연결 센터에서 signed artifact ZIP을 직접 선택하고 설치 전 검토할 수 있다. native importer는
-  top-level 6개 파일, entry/전체 크기와 중복을 제한하고 현재 설치 앱과 같은 signer·package, exact
-  manifest/APK/SBOM hash와 더 높은 versionCode만 허용한다. 검증된 APK는 random token과 함께 10분간
-  private cache에 두고 설치 직전 다시 hash를 확인한다. 두 번째 터치 뒤에도 Android unknown-source와
-  package installer의 사용자 승인을 요구하며 URL 자동 다운로드·background·무인 설치는 하지 않는다.
+- Android 연결 센터에서 signed artifact ZIP을 직접 선택하거나 공식 GitHub 저장소의 최신 정식 Release를
+  사용자가 명시적으로 조회·검토·다운로드할 수 있다. 조회는 draft/prerelease를 제외한 hardcoded public
+  저장소와 정확한 versioned ZIP asset만 허용하고, 10분 random token, 1 MiB metadata·128 asset·bounded
+  ZIP 상한, GitHub-controlled HTTPS redirect와 Release asset SHA-256을 적용한다. GitHub digest는 전송
+  검사일 뿐이며 다운로드 뒤에도 기존 native importer가 top-level 6개 파일, 현재 signer·package, exact
+  signed manifest/APK/SBOM과 상위 versionCode를 다시 검증한다. 별도 터치 뒤 Android unknown-source와
+  package installer 승인을 요구하며 시작 시·주기적·background 조회나 무인 설치는 하지 않는다.
+- Android signed CI는 importer가 그대로 읽는 최상위 6개 파일을
+  `Codex-Pocket-Voice-vX.Y.Z-update.zip` Release asset으로 함께 패키징하고 native release 정책 단위 테스트를
+  실행한다. unsigned fork에는 신뢰 가능한 update ZIP을 만들지 않는다.
 - 세션 반납이 workspace와 thread를 server에서 다시 검증한 뒤 idle Codex thread를 app-server에서
   `thread/unsubscribe`한다. 실행 중 handoff는 turn을 중단하지 않고 완료·실패 이벤트 뒤 같은
   workspace/thread handoff가 남아 있을 때 자동 unsubscribe하여 터미널의 `codex resume` writer 충돌을

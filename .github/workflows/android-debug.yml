@@ -62,6 +62,9 @@ jobs:
       - name: Build unsigned release APK
         run: npm run android:sync && cd android && ./gradlew assembleRelease
 
+      - name: Test native release policy
+        run: cd android && ./gradlew testReleaseUnitTest
+
       - name: Detect signing configuration
         id: signing
         env:
@@ -172,12 +175,39 @@ jobs:
             --allow-same-version \
             --allow-unsigned
 
-      - name: Upload APK, checksum, SBOM, and update manifest
+      - name: Package signed update bundle
+        if: steps.signing.outputs.available == 'true'
+        run: |
+          release_dir="android/app/build/outputs/apk/release"
+          version="${{ steps.app.outputs.version }}"
+          apk="Codex-Pocket-Voice-v${version}-stable.apk"
+          bundle="Codex-Pocket-Voice-v${version}-update.zip"
+          (
+            cd "$release_dir"
+            zip -X -j "$bundle" \
+              "$apk" \
+              codex-pocket-sbom.json \
+              SHA256SUMS \
+              update-manifest.json \
+              update-manifest.sig \
+              update-manifest-cert.pem
+            mapfile -t entries < <(unzip -Z1 "$bundle")
+            test "${#entries[@]}" -eq 6
+            printf '%s\n' "${entries[@]}" | sort -u | grep -Fxq "$apk"
+            printf '%s\n' "${entries[@]}" | sort -u | grep -Fxq codex-pocket-sbom.json
+            printf '%s\n' "${entries[@]}" | sort -u | grep -Fxq SHA256SUMS
+            printf '%s\n' "${entries[@]}" | sort -u | grep -Fxq update-manifest.json
+            printf '%s\n' "${entries[@]}" | sort -u | grep -Fxq update-manifest.sig
+            printf '%s\n' "${entries[@]}" | sort -u | grep -Fxq update-manifest-cert.pem
+          )
+
+      - name: Upload APK, signed update bundle, checksum, SBOM, and manifest
         uses: actions/upload-artifact@v7
         with:
           name: Codex-Pocket-Voice-v${{ steps.app.outputs.version }}
           path: |
             android/app/build/outputs/apk/release/Codex-Pocket-Voice-v*.apk
+            android/app/build/outputs/apk/release/Codex-Pocket-Voice-v*-update.zip
             android/app/build/outputs/apk/release/SHA256SUMS
             android/app/build/outputs/apk/release/codex-pocket-sbom.json
             android/app/build/outputs/apk/release/update-manifest.json
