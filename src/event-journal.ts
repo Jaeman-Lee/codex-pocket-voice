@@ -471,6 +471,7 @@ function assertStoredOperation(value: StoredOperationPayload, expectedId: string
     || (operation.model !== undefined && !boundedString(operation.model, 200))
     || (operation.effort !== undefined && !boundedString(operation.effort, 40))
     || (operation.networkAccess !== undefined && typeof operation.networkAccess !== "boolean")
+    || !validWorkspaceIdentity(operation.workspaceIdentity)
     || !validStatus
     || !boundedTimestamp(operation.startedAt)
     || (operation.completedAt !== undefined && !boundedTimestamp(operation.completedAt))
@@ -483,6 +484,19 @@ function assertStoredOperation(value: StoredOperationPayload, expectedId: string
     || !/^[a-f0-9]{64}$/.test(value.idempotency.fingerprint)
     || value.idempotency.operationId !== expectedId
   )) throw new Error("Encrypted event journal idempotency record is invalid");
+}
+
+function validWorkspaceIdentity(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const identity = value as Record<string, unknown>;
+  if (identity.kind !== "git" && identity.kind !== "directory") return false;
+  const strings = [identity.branch, identity.head, identity.upstream];
+  const counts = [identity.ahead, identity.behind, identity.changedFiles];
+  const flags = [identity.dirty, identity.detached, identity.linkedWorktree];
+  return strings.every((entry) => entry === undefined || boundedString(entry, 4_096))
+    && counts.every((entry) => entry === undefined || (Number.isSafeInteger(entry) && (entry as number) >= 0))
+    && flags.every((entry) => entry === undefined || typeof entry === "boolean");
 }
 
 function requiredTimestamp(value: string, name: string): number {

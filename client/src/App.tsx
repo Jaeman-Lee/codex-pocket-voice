@@ -28,6 +28,7 @@ import { mergeSpeechSegments } from "./speech-utils";
 import { OperationsDashboard } from "./OperationsDashboard";
 import { activeApprovals, applyApprovalEvent, upsertOperation } from "./operations-state";
 import { operationBelongsToSession, scopedHandoff } from "./session-scope";
+import { workspaceIdentityFor, workspaceIdentityLabel } from "./workspace-identity";
 import { createWorkJournal } from "./work-journal";
 import { conversationKey, restoredMessages, serializableQueue } from "./work-journal-model";
 import { initialSpeechLanguage, initialUiLanguage, translate, type MessageKey, type UiLanguage } from "./i18n";
@@ -173,6 +174,8 @@ export function App() {
   const [decidingApprovalId, setDecidingApprovalId] = useState<string | null>(null);
   const [journal] = useState(createWorkJournal);
   const tr = (key: MessageKey) => translate(uiLanguage, key);
+  const selectedWorkspaceIdentity = workspaceIdentityFor(workspaces, workspace);
+  const selectedWorkspaceIdentityText = workspaceIdentityLabel(selectedWorkspaceIdentity);
 
   const transcriptRef = useRef<HTMLElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -757,13 +760,16 @@ export function App() {
   async function refreshOperationalSnapshot(silent = false) {
     const requestedDevice = deviceRef.current;
     try {
-      const [runData, approvalData] = await Promise.all([
+      const [runData, approvalData, workspaceData] = await Promise.all([
         api<{ operations: Operation[] }>("/api/runs"),
         api<{ approvals: ApprovalItem[] }>("/api/approvals"),
+        api<WorkspaceResponse>("/api/workspaces"),
       ]);
       if (deviceRef.current !== requestedDevice) return;
       setOperationSnapshots(runData.operations);
       setApprovalInbox(activeApprovals(approvalData.approvals));
+      setWorkspaces(workspaceData.workspaces);
+      setCreationLocations(workspaceData.creationLocations);
       if (!silent) showToast("프로젝트 작업 상태를 새로 확인했습니다.");
     } catch (error) {
       if (!silent && deviceRef.current === requestedDevice) showToast(errorMessage(error));
@@ -1890,9 +1896,12 @@ export function App() {
             className="icon-button handoff-button"
             type="button"
             aria-label="선택한 프로젝트의 현재 세션 반납"
-            title={handoffSupported ? `${workspaceName(workspace)} 프로젝트 세션 반납` : "Companion 1.8.0 이상에서 사용할 수 있습니다"}
+            title={handoffSupported ? `${workspaceName(workspace)} · ${selectedWorkspaceIdentityText} 세션 반납` : "Companion 1.8.0 이상에서 사용할 수 있습니다"}
             disabled={!handoffSupported || handoffBusy || (!threadId && !operationBelongsToSession(operation, workspace, threadId))}
-            onClick={() => setShowHandoffDialog(true)}
+            onClick={() => {
+              setShowHandoffDialog(true);
+              void refreshOperationalSnapshot(true);
+            }}
           >⇥</button>
           <button
             className="icon-button"
@@ -1929,6 +1938,7 @@ export function App() {
           deviceName={deviceLabel(device)}
           operations={operationSnapshots}
           approvals={approvalInbox}
+          workspaces={workspaces}
           queuedCount={promptQueue.length}
           decidingApprovalId={decidingApprovalId}
           onClose={() => setShowOperationsDashboard(false)}
@@ -1967,13 +1977,15 @@ export function App() {
           <div className="project-dialog-card handoff-dialog-card">
             <div className="project-dialog-head">
               <div>
-                <strong id="handoff-dialog-title">{workspaceName(workspaceRef.current)} 프로젝트 세션 반납</strong>
-                <small>대화와 프로젝트 파일은 PC에 그대로 보존됩니다.</small>
+                <strong id="handoff-dialog-title">{workspaceName(workspace)} 프로젝트 세션 반납</strong>
+                <small>아래의 정확한 연결 대상만 이 기기에서 분리합니다.</small>
               </div>
               <button type="button" aria-label="닫기" onClick={() => setShowHandoffDialog(false)}>×</button>
             </div>
             <div className="handoff-summary">
-              <span><strong>프로젝트</strong>{workspaceName(workspaceRef.current)}</span>
+              <span><strong>프로젝트</strong>{workspaceName(workspace)}</span>
+              <span><strong>정확한 경로</strong><code>{workspace}</code></span>
+              <span><strong>브랜치</strong>{selectedWorkspaceIdentityText}</span>
               <span><strong>대화</strong>{threadId ? short(threads.find((item) => item.id === threadId)?.name || threads.find((item) => item.id === threadId)?.preview || threadId, 42) : "새 대화"}</span>
               <span><strong>PC 작업</strong>{operationBelongsToSession(operation, workspace, threadId) && operation?.status === "running"
                 ? "반납 후에도 계속 실행"
@@ -1985,7 +1997,7 @@ export function App() {
             <button className="create-project-button" type="button" disabled={handoffBusy || promptQueue.length > 0} onClick={() => void releaseSession()}>
               {handoffBusy ? "반납 중…" : "세션 반납"}
             </button>
-            <p className="handoff-note">‘작업 중단’과 다릅니다. 실행 중인 Codex는 PC에서 계속되고, 다른 폰이나 노트북이 이 세션에 다시 붙을 수 있습니다.</p>
+            <p className="handoff-note">‘작업 중단’과 다릅니다. 위 프로젝트의 모바일 연결만 반납하며 실행 중인 Codex는 PC에서 계속됩니다.</p>
           </div>
         </section>
       )}
@@ -2276,7 +2288,7 @@ export function App() {
           <div className="handoff-banner" role="status">
             <div>
               <strong>다른 기기에서 반납한 세션</strong>
-              <span>{workspaceName(handoff.workspace)} · {handoff.operationId ? "PC 작업 실행 중" : "대화 이어가기"}</span>
+              <span>{workspaceName(handoff.workspace)} · {workspaceIdentityLabel(workspaceIdentityFor(workspaces, handoff.workspace))} · {handoff.operationId ? "PC 작업 실행 중" : "대화 이어가기"}</span>
             </div>
             <button type="button" disabled={handoffBusy} onClick={() => void resumeHandoff()}>{handoffBusy ? "연결 중…" : "이어받기"}</button>
           </div>

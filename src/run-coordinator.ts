@@ -5,6 +5,7 @@ import type {
   ProviderRunInput,
   ProviderRunStatus,
 } from "./providers/types.js";
+import type { WorkspaceIdentity } from "./workspace-identity.js";
 
 const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const DEFAULT_MAX_OPERATIONS = 500;
@@ -22,6 +23,7 @@ export interface RunOperation {
   model?: string;
   effort?: string;
   networkAccess?: boolean;
+  workspaceIdentity?: WorkspaceIdentity;
   status: RunOperationStatus;
   startedAt: string;
   completedAt?: string;
@@ -35,6 +37,7 @@ export interface StartRunCommand {
   accountId?: string;
   prompt: string;
   input: ProviderRunInput;
+  workspaceIdentity?: WorkspaceIdentity;
   idempotencyKey?: string;
 }
 
@@ -274,6 +277,7 @@ export class RunCoordinator {
         model: command.input.model,
         effort: command.input.effort,
         networkAccess: command.input.networkAccess === true,
+        ...(command.workspaceIdentity ? { workspaceIdentity: structuredClone(command.workspaceIdentity) } : {}),
         status: "running",
         startedAt: new Date(this.now()).toISOString(),
       };

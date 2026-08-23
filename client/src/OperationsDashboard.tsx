@@ -4,12 +4,14 @@ import {
   groupOperations,
   operationCounts,
 } from "./operations-state";
-import type { ApprovalItem, Operation } from "./types";
+import { workspaceIdentityFor, workspaceIdentityLabel } from "./workspace-identity";
+import type { ApprovalItem, Operation, Workspace, WorkspaceIdentity } from "./types";
 
 interface OperationsDashboardProps {
   deviceName: string;
   operations: Operation[];
   approvals: ApprovalItem[];
+  workspaces: Workspace[];
   queuedCount: number;
   decidingApprovalId: string | null;
   onClose(): void;
@@ -77,7 +79,10 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
           ) : groups.map((group) => (
             <section className="operation-group" key={group.cwd}>
               <header>
-                <strong>{group.name}</strong>
+                <strong>
+                  {group.name}
+                  <em>{workspaceIdentityLabel(workspaceIdentityFor(props.workspaces, group.cwd))}</em>
+                </strong>
                 <small title={group.cwd}>{group.cwd}</small>
               </header>
               <div className="operation-list">
@@ -85,6 +90,7 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
                   <OperationCard
                     key={operation.id}
                     operation={operation}
+                    identity={operation.workspaceIdentity ?? workspaceIdentityFor(props.workspaces, operation.cwd)}
                     waiting={approvals.some((item) => item.operationId === operation.id)}
                     now={now}
                     onOpen={props.onOpenOperation}
@@ -138,11 +144,13 @@ function ApprovalCard({
 
 function OperationCard({
   operation,
+  identity,
   waiting,
   now,
   onOpen,
 }: {
   operation: Operation;
+  identity: WorkspaceIdentity | undefined;
   waiting: boolean;
   now: number;
   onOpen(operation: Operation): void;
@@ -160,6 +168,7 @@ function OperationCard({
       <div className="operation-facts">
         <span>{operation.providerId ?? "codex"}</span>
         <span>{model}</span>
+        <span>{workspaceIdentityLabel(identity)}</span>
         {usage?.totalTokens !== undefined && <span>{usage.totalTokens.toLocaleString()} tokens</span>}
         {usage?.costCredits !== undefined && <span>{usage.costCredits.toFixed(6)} credits</span>}
       </div>

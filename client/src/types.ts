@@ -21,6 +21,20 @@ export type OperationStatus = "running" | "unknown" | "completed" | "interrupted
 export interface Workspace {
   path: string;
   name: string;
+  identity?: WorkspaceIdentity;
+}
+
+export interface WorkspaceIdentity {
+  kind: "git" | "directory";
+  branch?: string;
+  head?: string;
+  upstream?: string;
+  ahead?: number;
+  behind?: number;
+  changedFiles?: number;
+  dirty?: boolean;
+  detached?: boolean;
+  linkedWorktree?: boolean;
 }
 
 export interface WorkspaceResponse {
@@ -163,6 +177,7 @@ export interface Operation {
   model?: string;
   effort?: string;
   networkAccess?: boolean;
+  workspaceIdentity?: WorkspaceIdentity;
   status: OperationStatus;
   startedAt?: string;
   completedAt?: string;

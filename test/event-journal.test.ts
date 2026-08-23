@@ -36,6 +36,14 @@ test("encrypted event journal restores running work as unknown and preserves ide
     accountId: "account-a",
     prompt: "super-private-prompt",
     input: { cwd: "/private/workspace", prompt: "super-private-prompt" },
+    workspaceIdentity: {
+      kind: "git" as const,
+      branch: "feature/private-identity",
+      head: "1234567890ab",
+      changedFiles: 2,
+      dirty: true,
+      linkedWorktree: true,
+    },
     idempotencyKey: "paired-client:request-1",
   };
   const running = await firstCoordinator.start(command);
@@ -55,7 +63,7 @@ test("encrypted event journal restores running work as unknown and preserves ide
   assert.equal((await stat(`${databaseFile}.key`)).mode & 0o777, 0o600);
   const rawDatabase = await readFile(databaseFile, "utf8");
   const rawKey = await readFile(`${databaseFile}.key`, "utf8");
-  for (const secret of ["super-private-prompt", "/private/workspace", "secret-output", "paired-client:request-1"]) {
+  for (const secret of ["super-private-prompt", "/private/workspace", "feature/private-identity", "secret-output", "paired-client:request-1"]) {
     assert.doesNotMatch(rawDatabase, new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.doesNotMatch(rawKey, new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
@@ -69,6 +77,7 @@ test("encrypted event journal restores running work as unknown and preserves ide
   const restoredCoordinator = new RunCoordinator(restoredProviders, { stateStore: restoredJournal });
   const recovered = restoredCoordinator.get(running.id);
   assert.equal(recovered?.status, "unknown");
+  assert.equal(recovered?.workspaceIdentity?.branch, "feature/private-identity");
   assert.match(recovered?.error ?? "", /최종 상태/);
   assert.equal((await restoredCoordinator.start(command)).id, running.id);
   assert.equal(restoredProviders.starts.length, 0);

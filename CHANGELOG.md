@@ -73,6 +73,13 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 - run을 중단하면 대기 중인 도구 승인을 system decline으로 즉시 닫아 만료 때까지 작업이 매달리지 않는다.
 - AI 연결 센터는 Provider별 프로젝트 읽기, 터치 승인 파일 변경·명령, 사용량 기록 capability를 표시하고
   승인 카드에는 정확한 프로젝트·Provider와 읽기 쉬운 script/diff를 표시한다.
+- Workspace catalog가 현재 Git branch, 12자리 HEAD, dirty 파일 수, upstream ahead/behind와 linked
+  worktree 여부를 안전한 read-only Git 환경에서 수집한다. 작업 대시보드와 세션 반납 화면은 branch와
+  전체 프로젝트 경로를 함께 표시해 같은 이름의 프로젝트나 다른 worktree를 구분한다. 각 run은 시작
+  시점 identity를 암호화 journal에 보존해 나중에 branch가 바뀌어도 작업 카드의 원래 대상을 유지한다.
+- Gateway는 Codex run 시작, 세션 반납과 이어받기에서 thread의 실제 cwd가 선택한 workspace와 같거나
+  그 하위인지 다시 검사한다. 오래된 클라이언트 상태나 잘못된 thread ID가 다른 프로젝트의 실행·인계로
+  연결되면 409로 거절한다.
 - 이 기준선은 CI·개발용이며 v1.8.1 설치본이나 실행 중인 Companion을 교체하지 않는다.
 
 ## 1.8.2 hotfix candidate — project-scoped session handoff

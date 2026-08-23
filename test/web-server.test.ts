@@ -106,6 +106,8 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
 
   const workspaceData = await jsonFetch(`${base}/api/workspaces`, { headers: authorized() });
   assert.equal(workspaceData.creationLocations[0].path, projectHome);
+  assert.equal(workspaceData.workspaces[0].identity.kind, "git");
+  assert.equal(typeof workspaceData.workspaces[0].identity.branch, "string");
   const created = await jsonFetch(`${base}/api/projects`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
@@ -113,11 +115,21 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   });
   assert.equal(created.project.name, "new-mobile-project");
   assert.equal(paths.isAllowed(created.project.path), true);
+  assert.equal(created.project.identity.kind, "git");
+  assert.equal(created.project.identity.branch, "main");
 
   const listed = await jsonFetch(`${base}/api/threads`, { headers: authorized() });
   assert.equal(listed.threads[0].id, "thread-web");
   const read = await jsonFetch(`${base}/api/threads/thread-web`, { headers: authorized() });
   assert.equal(read.thread.turns[0].items[0].text, "hello");
+
+  const crossProjectRun = await fetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ prompt: "wrong project", cwd: created.project.path, threadId: "thread-web" }),
+  });
+  assert.equal(crossProjectRun.status, 409);
+  assert.match((await crossProjectRun.json() as any).error, /selected workspace/);
 
   const blocked = await fetch(`${base}/api/runs`, {
     method: "POST",
@@ -171,6 +183,8 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   });
   assert.equal(started.operation.status, "running");
   assert.equal(started.operation.providerId, "codex");
+  assert.equal(started.operation.workspaceIdentity.kind, "git");
+  assert.equal(typeof started.operation.workspaceIdentity.branch, "string");
   assert.equal(fake.lastRun?.cwd, cwd);
   assert.equal(fake.lastRun?.networkAccess, false);
   assert.equal(fake.lastRun?.model, "test-codex");
@@ -248,6 +262,13 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(activeRuns.operations[0].model, "test-codex");
   assert.equal(activeRuns.operations[0].effort, "high");
   assert.equal(activeRuns.operations[0].networkAccess, false);
+  const mismatchedHandoff = await fetch(`${base}/api/session/handoff`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ workspace: created.project.path, threadId: "thread-web" }),
+  });
+  assert.equal(mismatchedHandoff.status, 409);
+  assert.match((await mismatchedHandoff.json() as any).error, /selected workspace/);
   const released = await jsonFetch(`${base}/api/session/handoff`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),

@@ -1,7 +1,7 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, sep } from "node:path";
 import type { ThreadListResponse } from "../generated/app-server/v2/ThreadListResponse";
 import type { ThreadReadResponse } from "../generated/app-server/v2/ThreadReadResponse";
 import type { CodexProviderClient } from "./providers/codex-provider.js";
@@ -15,7 +15,8 @@ import { ProviderLoginManager } from "./provider-login-manager.js";
 import { GatewayAuth, GatewayAuthError } from "./gateway-auth.js";
 import { APP_VERSION, GATEWAY_CAPABILITIES, GATEWAY_PROTOCOL_MINIMUM, GATEWAY_PROTOCOL_VERSION } from "./version.js";
 import { collectSystemDiagnostics } from "./system-diagnostics.js";
-import { SessionHandoffStore } from "./session-handoff-store.js";
+import { SessionHandoffStore, type SessionHandoff } from "./session-handoff-store.js";
+import { inspectWorkspaceIdentity } from "./workspace-identity.js";
 import {
   ApprovalBrokerError,
   InMemoryApprovalBroker,
@@ -323,9 +324,13 @@ async function handleApi(
   }
 
   if (request.method === "GET" && url.pathname === "/api/workspaces") {
+    const workspaces = await Promise.all(projects.list().map(async (workspace) => ({
+      ...workspace,
+      identity: await inspectWorkspaceIdentity(workspace.path),
+    })));
     sendJson(response, 200, {
       device: auth.device,
-      workspaces: projects.list(),
+      workspaces,
       creationLocations: projects.creationLocations(),
     });
     return;
@@ -389,7 +394,10 @@ async function handleApi(
     const name = requiredString(body.name, "name", 80);
     const parent = optionalString(body.parent, "parent", 4_096);
     const project = await projects.create(name, parent);
-    sendJson(response, 201, { device: auth.device, project });
+    sendJson(response, 201, {
+      device: auth.device,
+      project: { ...project, identity: await inspectWorkspaceIdentity(project.path) },
+    });
     return;
   }
 
@@ -410,7 +418,8 @@ async function handleApi(
     const workspace = url.searchParams.get("workspace") || undefined;
     const threadId = url.searchParams.get("threadId") || undefined;
     if (workspace) options.paths.assertAllowed(workspace);
-    const handoff = handoffs.current({ workspace, threadId });
+    const candidate = handoffs.current({ workspace, threadId });
+    const handoff = candidate && await handoffMatchesWorkspace(candidate, options, runs) ? candidate : null;
     const operation = handoff?.operationId ? runs.get(handoff.operationId) : undefined;
     sendJson(response, 200, {
       handoff,
@@ -435,6 +444,10 @@ async function handleApi(
     const workspace = await options.paths.resolveWorkspace(
       optionalString(body.workspace, "workspace", 4_096) ?? operation?.cwd ?? read.thread.cwd,
     );
+    const threadWorkspace = await options.paths.resolveWorkspace(read.thread.cwd);
+    if (!containsWorkspace(workspace, threadWorkspace)) {
+      throw new HttpError(409, "Thread does not belong to the selected workspace");
+    }
     if (operation && (operation.conversationId !== threadId || operation.cwd !== workspace)) {
       throw new HttpError(409, "Operation does not belong to this session");
     }
@@ -460,6 +473,9 @@ async function handleApi(
     const existing = handoffs.list().find((item) => item.id === handoffId);
     if (!existing) throw new HttpError(404, "Session handoff not found");
     options.paths.assertAllowed(existing.workspace);
+    if (!await handoffMatchesWorkspace(existing, options, runs)) {
+      throw new HttpError(409, "Session handoff no longer belongs to its recorded workspace");
+    }
     const claimed = await handoffs.claim(handoffId);
     broadcast(sseClients, { type: "session", action: "claimed", handoffId });
     sendJson(response, 200, { claimed });
@@ -587,6 +603,10 @@ async function handleApi(
       const existing = await options.client.readThread(conversationId, false);
       options.paths.assertAllowed(existing.thread.cwd);
       cwd = await options.paths.resolveWorkspace(requestedCwd ?? existing.thread.cwd);
+      const threadWorkspace = await options.paths.resolveWorkspace(existing.thread.cwd);
+      if (!containsWorkspace(cwd, threadWorkspace)) {
+        throw new HttpError(409, "Thread does not belong to the selected workspace");
+      }
     } else {
       cwd = await options.paths.resolveWorkspace(requestedCwd);
     }
@@ -615,6 +635,7 @@ async function handleApi(
         effort,
         timeoutMs: timeoutSeconds * 1_000,
       },
+      workspaceIdentity: await inspectWorkspaceIdentity(cwd),
       idempotencyKey: requestId ? `${authenticatedClient.id}:${requestId}` : undefined,
     });
     sendJson(response, 202, { operation: publicOperation(operation) });
@@ -1003,6 +1024,32 @@ function publicOperation(operation: RunOperation): Record<string, unknown> {
       ? { threadId: operation.conversationId, turnId: operation.runId }
       : {}),
   };
+}
+
+async function handoffMatchesWorkspace(
+  handoff: SessionHandoff,
+  options: WebServerOptions,
+  runs: RunCoordinator,
+): Promise<boolean> {
+  try {
+    const workspace = await options.paths.resolveWorkspace(handoff.workspace);
+    const read = await options.client.readThread(handoff.threadId, false);
+    const threadWorkspace = await options.paths.resolveWorkspace(read.thread.cwd);
+    if (!containsWorkspace(workspace, threadWorkspace)) return false;
+    const operation = handoff.operationId ? runs.get(handoff.operationId) : undefined;
+    return !operation || (
+      operation.providerId === "codex"
+      && operation.conversationId === handoff.threadId
+      && operation.cwd === workspace
+    );
+  } catch {
+    return false;
+  }
+}
+
+function containsWorkspace(workspace: string, candidate: string): boolean {
+  const nested = relative(workspace, candidate);
+  return nested === "" || (!isAbsolute(nested) && nested !== ".." && !nested.startsWith(`..${sep}`));
 }
 
 function publicApproval(approval: ApprovalRequest, operation: RunOperation): Record<string, unknown> {
