@@ -211,6 +211,12 @@ PC 이름·TLS port·protocol version을 내보내고 신뢰 pin·pairing code·
 APK를 현장 전달·설치하거나 Companion을 재시작·LAN에 노출하지 않고, current v1 후보 1.8.2와 별도
 staged 1.8.3, 검증된 rollback 1.8.1을 그대로 보존한다.
 
+PocketLink bootstrap state checkpoint decision: QR/LAN bootstrap의 분산 UI 상태를 순수 reducer로
+분리하고 stale·동시 전이를 fail-closed로 바꾸는 internal compatibility `patch`다. 아직 전달하지 않은
+v2 안의 변경이므로 SemVer `2.0.0`/Android `versionCode 20000`과 대상
+`feature/v2-control-plane`을 유지하고 이전 CI-only v2 artifact를 대체한다. APK 설치·전달이나 Companion
+재시작은 하지 않으며 current v1 후보 1.8.2, 별도 staged 1.8.3과 rollback 1.8.1을 그대로 보존한다.
+
 Update decision: `1.8.0`은 새 교차 기기 세션 흐름과 Companion API를 추가하므로
 `feature`/minor 변경이다. Draft feature PR에서 유지하고 현장 승인 전에는 `main`에 병합하지
 않는다. `1.8.0`은 최초 feature candidate였으며, 아래의 `1.8.1` viewport patch가

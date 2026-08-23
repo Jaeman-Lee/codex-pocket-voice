@@ -21,7 +21,7 @@
 
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
-| Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환, operation UI 상태 모듈 구현; 나머지 App 상태 분리 잔여 |
+| Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환, operation UI와 PocketLink QR/LAN bootstrap 상태 머신 모듈 구현; 나머지 App 연결·run·journal·voice·media 상태 분리 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe 구현; process-death background 알림·실기기 acceptance 잔여 |
@@ -289,6 +289,12 @@ same-origin 확인값 뒤에만 적용한다. 낮춘 한도는 즉시 정리되�
 - Gateway protocol 3 capability negotiation과 1.x Companion 호환 응답
 - `App.tsx`의 연결, run, journal, voice, media 상태를 기능별 모듈과 상태 머신으로 분리
 - fake Provider contract suite와 Provider stream failure fixture 추가
+
+PocketLink 연결 bootstrap은 `App.tsx`의 개별 boolean·후보·QR 상태 대신 순수 reducer를 사용한다.
+QR scan과 LAN discovery는 상호 배타적이고 새 bootstrap을 시작하면 이전 trust hint를 지운다. 현재 phase와
+맞지 않는 늦은 native 응답, 발견 목록에 없거나 만료된 후보를 무시하며, 사용자가 이름·host·port를
+편집하면 LAN 선택 신뢰만 즉시 무효화한다. QR pairing code는 기존처럼 exact host·port·SPKI pin과 새
+target/실제 Companion device가 모두 일치할 때만 전달한다.
 
 완료 조건: Codex CLI의 기존 run·queue·handoff가 동일하게 동작하고 새 Provider를 fake runtime으로
 끝까지 실행할 수 있다.

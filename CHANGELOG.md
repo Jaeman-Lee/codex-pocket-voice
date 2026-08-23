@@ -169,6 +169,10 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   후보를 선택해도 pin은 비워 두고 Companion 터미널의 SPKI pin을 직접 대조해야 하며 자동 페어링·연결·
   SSH fallback은 하지 않는다. 광고는 MIT `bonjour-service`, Android 검색은 platform `NsdManager`를
   사용한다.
+- `App.tsx`의 PocketLink QR/LAN boolean과 trust hint를 순수 bootstrap reducer로 분리했다. QR scan과
+  LAN discovery를 상호 배타적으로 만들고, 새 bootstrap 시 이전 hint를 폐기하며, stale native 결과와
+  목록 밖·만료 후보를 무시한다. 이름·host·port 편집도 발견 선택만 즉시 무효화하고 QR의 기존 exact
+  host·port·SPKI-pin/target/device 검증은 유지한다.
 - 기존 PocketLink 연결에 새 server backup SPKI pin을 준비하는 화면과 staged 인증서 교체를 추가했다.
   새 pin은 실제 HTTPS hostname/pin TLS handshake가 성공해도 자동 승격되지 않는다. 앱은 성공 슬롯과
   시각만 표시하고, 사용자가 2분 안에 대상·폐기 경고를 두 번 확인해야 native 계층이 새 pin을 primary로

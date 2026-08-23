@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   abortActiveDeviceIdentityRotation,
   api,
@@ -51,14 +51,16 @@ import { initialSpeechLanguage, initialUiLanguage, translate, type MessageKey, t
 import { parsePocketLinkBootstrapUri } from "../../src/pocket-link-bootstrap";
 import {
   evaluatePocketLinkBootstrap,
-  matchesPocketLinkConnection,
-  type PendingPocketLinkBootstrap,
 } from "./pocket-link-pairing";
 import {
   matchesPocketLinkDiscovery,
   parsePocketLinkDiscoveryResult,
   type PocketLinkDiscoveryCandidate,
 } from "./pocket-link-discovery";
+import {
+  initialPocketLinkBootstrapState,
+  reducePocketLinkBootstrap,
+} from "./pocket-link-bootstrap-state";
 import {
   isRecentBackupPinObservation,
   pocketLinkSecurityStatus,
@@ -216,11 +218,15 @@ export function App() {
   const [newPocketLinkPort, setNewPocketLinkPort] = useState("8789");
   const [newPocketLinkPin, setNewPocketLinkPin] = useState("");
   const [newPocketLinkBackupPin, setNewPocketLinkBackupPin] = useState("");
-  const [scanningPocketLinkQr, setScanningPocketLinkQr] = useState(false);
-  const [discoveringPocketLinks, setDiscoveringPocketLinks] = useState(false);
-  const [pocketLinkDiscoveryCandidates, setPocketLinkDiscoveryCandidates] = useState<PocketLinkDiscoveryCandidate[]>([]);
-  const [selectedPocketLinkDiscovery, setSelectedPocketLinkDiscovery] = useState<PocketLinkDiscoveryCandidate | null>(null);
-  const [pendingPocketLinkBootstrap, setPendingPocketLinkBootstrap] = useState<PendingPocketLinkBootstrap | null>(null);
+  const [pocketLinkBootstrap, dispatchPocketLinkBootstrap] = useReducer(
+    reducePocketLinkBootstrap,
+    initialPocketLinkBootstrapState,
+  );
+  const scanningPocketLinkQr = pocketLinkBootstrap.phase === "scanning_qr";
+  const discoveringPocketLinks = pocketLinkBootstrap.phase === "discovering_lan";
+  const pocketLinkDiscoveryCandidates = pocketLinkBootstrap.discoveryCandidates;
+  const selectedPocketLinkDiscovery = pocketLinkBootstrap.selectedDiscovery;
+  const pendingPocketLinkBootstrap = pocketLinkBootstrap.pendingQr;
   const [pocketLinkStatuses, setPocketLinkStatuses] = useState<Partial<Record<DeviceId, PocketLinkStatus>>>({});
   const [pocketLinkStatusRevision, setPocketLinkStatusRevision] = useState(0);
   const [stagingPinTarget, setStagingPinTarget] = useState<DeviceId | null>(null);
@@ -439,27 +445,27 @@ export function App() {
     );
     if (decision.kind === "wait") return;
     if (decision.kind === "expired") {
-      setPendingPocketLinkBootstrap(null);
+      dispatchPocketLinkBootstrap({ type: "clear_qr" });
       showToast("PocketLink QR pairing code가 만료되었습니다. 새 QR을 스캔해 주세요.");
       return;
     }
     if (decision.kind === "device_mismatch") {
-      setPendingPocketLinkBootstrap(null);
+      dispatchPocketLinkBootstrap({ type: "clear_qr" });
       showToast("스캔한 QR의 Companion과 현재 연결된 Companion이 다릅니다.");
       return;
     }
     setPairingCode(decision.pairingCode);
-    setPendingPocketLinkBootstrap(null);
+    dispatchPocketLinkBootstrap({ type: "clear_qr" });
   }, [device, pairing, pendingPocketLinkBootstrap, showToast]);
 
   useEffect(() => {
     if (!pendingPocketLinkBootstrap) return;
     const remaining = Date.parse(pendingPocketLinkBootstrap.expiresAt) - Date.now();
     if (remaining <= 0) {
-      setPendingPocketLinkBootstrap(null);
+      dispatchPocketLinkBootstrap({ type: "clear_qr" });
       return;
     }
-    const timer = window.setTimeout(() => setPendingPocketLinkBootstrap(null), remaining);
+    const timer = window.setTimeout(() => dispatchPocketLinkBootstrap({ type: "clear_qr" }), remaining);
     return () => window.clearTimeout(timer);
   }, [pendingPocketLinkBootstrap]);
 
@@ -2274,7 +2280,7 @@ export function App() {
       setDeviceTargets(listDeviceTargets());
       setPairing(null);
       setPairingCode("");
-      setPendingPocketLinkBootstrap(null);
+      dispatchPocketLinkBootstrap({ type: "clear_qr" });
       initializedRef.current = false;
       setAuthRevision((current) => current + 1);
       showToast("안전한 페어링이 완료되었습니다.");
@@ -2288,7 +2294,7 @@ export function App() {
   function cancelPairing() {
     setPairing(null);
     setPairingCode("");
-    setPendingPocketLinkBootstrap(null);
+    dispatchPocketLinkBootstrap({ type: "clear_qr" });
   }
 
   async function refreshPocketLinkStatuses(targets = listDeviceTargets()) {
@@ -2529,8 +2535,8 @@ export function App() {
   }
 
   async function scanPocketLinkQr() {
-    if (!isNativeApp() || scanningPocketLinkQr) return;
-    setScanningPocketLinkQr(true);
+    if (!isNativeApp() || pocketLinkBootstrap.phase !== "idle") return;
+    dispatchPocketLinkBootstrap({ type: "start_qr" });
     try {
       const result = await NativeTunnel.scanPocketLinkQr();
       if (result.cancelled || !result.value) return;
@@ -2541,41 +2547,36 @@ export function App() {
       setNewPocketLinkPort(String(bootstrap.port));
       setNewPocketLinkPin(bootstrap.serverPublicKeyPin);
       setNewPocketLinkBackupPin("");
-      setPocketLinkDiscoveryCandidates([]);
-      setSelectedPocketLinkDiscovery(null);
-      setPendingPocketLinkBootstrap(bootstrap);
+      dispatchPocketLinkBootstrap({ type: "review_qr", bootstrap });
       showToast("PocketLink QR을 읽었습니다. PC 정보와 pin을 확인한 뒤 등록하세요.");
     } catch (error) {
-      setPendingPocketLinkBootstrap(null);
       showToast(errorMessage(error));
     } finally {
-      setScanningPocketLinkQr(false);
+      dispatchPocketLinkBootstrap({ type: "finish_qr" });
     }
   }
 
   async function discoverPocketLinks() {
-    if (!isNativeApp() || discoveringPocketLinks || scanningPocketLinkQr) return;
-    setDiscoveringPocketLinks(true);
-    setPocketLinkDiscoveryCandidates([]);
-    setSelectedPocketLinkDiscovery(null);
-    setPendingPocketLinkBootstrap(null);
+    if (!isNativeApp() || pocketLinkBootstrap.phase !== "idle") return;
+    dispatchPocketLinkBootstrap({ type: "start_discovery" });
     try {
       const result = await NativeTunnel.discoverPocketLinks();
       const candidates = parsePocketLinkDiscoveryResult(result);
       setNewDeviceTransport("pocketlink");
-      setPocketLinkDiscoveryCandidates(candidates);
+      dispatchPocketLinkBootstrap({ type: "review_discovery", candidates });
       showToast(candidates.length > 0
         ? `${candidates.length}개의 PocketLink 주소를 찾았습니다. PC 화면의 pin은 별도로 확인해야 합니다.`
         : "광고가 켜진 PocketLink Companion을 같은 LAN에서 찾지 못했습니다.");
     } catch (error) {
       showToast(errorMessage(error));
     } finally {
-      setDiscoveringPocketLinks(false);
+      dispatchPocketLinkBootstrap({ type: "finish_discovery" });
     }
   }
 
   function reviewPocketLinkDiscovery(candidate: PocketLinkDiscoveryCandidate) {
-    if (Date.now() >= candidate.expiresAt) {
+    const now = Date.now();
+    if (now >= candidate.expiresAt) {
       showToast("LAN 검색 결과가 만료되었습니다. 다시 검색해 주세요.");
       return;
     }
@@ -2585,8 +2586,7 @@ export function App() {
     setNewPocketLinkPort(String(candidate.port));
     setNewPocketLinkPin("");
     setNewPocketLinkBackupPin("");
-    setPendingPocketLinkBootstrap(null);
-    setSelectedPocketLinkDiscovery(candidate);
+    dispatchPocketLinkBootstrap({ type: "select_discovery", candidate, now });
     showToast("LAN 주소만 선택했습니다. Companion 화면의 SPKI pin을 직접 대조·입력하세요.");
   }
 
@@ -2603,13 +2603,6 @@ export function App() {
       )) {
         throw new Error("LAN 검색 결과가 만료되었거나 변경되었습니다. 다시 검색하거나 주소를 직접 입력해 주세요.");
       }
-      const qrBootstrap = newDeviceTransport === "pocketlink"
-        && matchesPocketLinkConnection(
-          pendingPocketLinkBootstrap,
-          newPocketLinkHost,
-          Number(newPocketLinkPort),
-          newPocketLinkPin,
-        ) ? pendingPocketLinkBootstrap : null;
       target = await addLinuxDevice(newDeviceName, localPort, newDeviceTransport);
       if (newDeviceTransport === "pocketlink") {
         if (!isNativeApp()) throw new Error("PocketLink 등록은 Android 앱에서만 할 수 있습니다.");
@@ -2623,15 +2616,20 @@ export function App() {
         });
         configuredPocketLinkPort = localPort;
       }
-      setPendingPocketLinkBootstrap(qrBootstrap ? { ...qrBootstrap, targetId: target.id } : null);
+      dispatchPocketLinkBootstrap({
+        type: "register",
+        targetId: target.id,
+        pocketLink: newDeviceTransport === "pocketlink",
+        host: newPocketLinkHost,
+        port: Number(newPocketLinkPort),
+        serverPublicKeyPin: newPocketLinkPin,
+      });
       setDeviceTargets(listDeviceTargets());
       setNewDeviceName("");
       setNewDevicePort(String(Number(newDevicePort) + 1));
       setNewPocketLinkHost("");
       setNewPocketLinkPin("");
       setNewPocketLinkBackupPin("");
-      setPocketLinkDiscoveryCandidates([]);
-      setSelectedPocketLinkDiscovery(null);
       setShowDeviceCreator(false);
       selectDevice(target.id);
       showToast(newDeviceTransport === "pocketlink"
@@ -3330,7 +3328,7 @@ export function App() {
                     </div>
                   )}
                   <div className="device-create-row">
-                    <input value={newDeviceName} maxLength={60} placeholder="예: 작업실 PC" aria-label="Linux PC 이름" onChange={(event) => { setNewDeviceName(event.target.value); setSelectedPocketLinkDiscovery(null); }} />
+                    <input value={newDeviceName} maxLength={60} placeholder="예: 작업실 PC" aria-label="Linux PC 이름" onChange={(event) => { setNewDeviceName(event.target.value); dispatchPocketLinkBootstrap({ type: "invalidate_discovery" }); }} />
                     <input value={newDevicePort} inputMode="numeric" maxLength={5} placeholder="8790" aria-label="로컬 터널 포트" onChange={(event) => setNewDevicePort(event.target.value.replace(/\D/g, ""))} />
                     {newDeviceTransport === "termux" && <button type="button" onClick={() => void createLinuxDevice()}>등록</button>}
                   </div>
@@ -3364,8 +3362,8 @@ export function App() {
                           <small>장치 {pendingPocketLinkBootstrap.deviceId.slice(0, 8)} · {new Date(pendingPocketLinkBootstrap.expiresAt).toLocaleTimeString()} 만료</small>
                         </div>
                       )}
-                      <input value={newPocketLinkHost} maxLength={253} autoCapitalize="none" spellCheck={false} placeholder="Companion LAN 호스트" aria-label="PocketLink Companion 호스트" onChange={(event) => { setNewPocketLinkHost(event.target.value); setSelectedPocketLinkDiscovery(null); }} />
-                      <input value={newPocketLinkPort} inputMode="numeric" maxLength={5} placeholder="8789" aria-label="PocketLink TLS 포트" onChange={(event) => { setNewPocketLinkPort(event.target.value.replace(/\D/g, "")); setSelectedPocketLinkDiscovery(null); }} />
+                      <input value={newPocketLinkHost} maxLength={253} autoCapitalize="none" spellCheck={false} placeholder="Companion LAN 호스트" aria-label="PocketLink Companion 호스트" onChange={(event) => { setNewPocketLinkHost(event.target.value); dispatchPocketLinkBootstrap({ type: "invalidate_discovery" }); }} />
+                      <input value={newPocketLinkPort} inputMode="numeric" maxLength={5} placeholder="8789" aria-label="PocketLink TLS 포트" onChange={(event) => { setNewPocketLinkPort(event.target.value.replace(/\D/g, "")); dispatchPocketLinkBootstrap({ type: "invalidate_discovery" }); }} />
                       <input className="pin" value={newPocketLinkPin} maxLength={51} autoCapitalize="none" spellCheck={false} placeholder="sha256/… 기본 SPKI pin" aria-label="PocketLink 기본 SPKI pin" onChange={(event) => setNewPocketLinkPin(event.target.value.trim())} />
                       <input className="pin" value={newPocketLinkBackupPin} maxLength={51} autoCapitalize="none" spellCheck={false} placeholder="sha256/… 교체용 pin · 선택" aria-label="PocketLink 교체용 SPKI pin" onChange={(event) => setNewPocketLinkBackupPin(event.target.value.trim())} />
                       <button type="button" onClick={() => void createLinuxDevice()}>pin 확인 후 등록</button>
