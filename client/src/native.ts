@@ -40,6 +40,7 @@ export interface PocketLinkStatus {
 }
 
 interface NativeTunnelPlugin {
+  scanPocketLinkQr(): Promise<{ cancelled: boolean; value?: string }>;
   start(options?: { localPort?: number }): Promise<NativeTunnelResult>;
   configurePocketLink(options: {
     label: string;

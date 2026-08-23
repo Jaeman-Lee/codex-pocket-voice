@@ -3,8 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("Android PocketLink keeps encrypted config native and pins a bounded mTLS forwarder", async () => {
-  const [manifest, plugin, service, store, identity, nativeApi, clientApi] = await Promise.all([
+  const [manifest, gradle, plugin, service, store, identity, nativeApi, clientApi] = await Promise.all([
     source("../android/app/src/main/AndroidManifest.xml"),
+    source("../android/app/build.gradle"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketTunnelPlugin.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketLinkService.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketLinkConfigStore.java"),
@@ -17,6 +18,9 @@ test("Android PocketLink keeps encrypted config native and pins a bounded mTLS f
   assert.match(manifest, /android\.permission\.FOREGROUND_SERVICE_CONNECTED_DEVICE/);
   assert.match(manifest, /android\.permission\.CHANGE_NETWORK_STATE/);
   assert.match(manifest, /android:name="\.PocketLinkService"[\s\S]*android:exported="false"/);
+  assert.match(manifest, /android\.permission\.CAMERA/);
+  assert.match(manifest, /android\.hardware\.camera" android:required="false"/);
+  assert.match(gradle, /zxing-android-embedded:4\.3\.0/);
 
   assert.match(store, /AndroidKeyStore/);
   assert.match(store, /AES\/GCM\/NoPadding/);
@@ -44,6 +48,11 @@ test("Android PocketLink keeps encrypted config native and pins a bounded mTLS f
 
   assert.match(plugin, /자동으로 SSH 연결로 우회하지 않습니다/);
   assert.match(plugin, /configurePocketLink/);
+  assert.match(plugin, /scanPocketLinkQr/);
+  assert.match(plugin, /setDesiredBarcodeFormats\(ScanOptions\.QR_CODE\)/);
+  assert.match(plugin, /setBarcodeImageEnabled\(false\)/);
+  assert.match(plugin, /contents\.length\(\) > 2048/);
+  assert.doesNotMatch(plugin, /ONE_D_CODE_TYPES|ALL_CODE_TYPES/);
   assert.match(plugin, /removePocketLink/);
   assert.match(plugin, /transport", "termux"/);
   assert.match(plugin, /transport", "pocketlink"/);

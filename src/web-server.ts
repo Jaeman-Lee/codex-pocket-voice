@@ -77,6 +77,7 @@ export interface RunningWebServer {
   host: string;
   port: number;
   deviceId: string;
+  deviceName: string;
   pairingCode: string;
   pairingExpiresAt: string;
   pocketLink?: {
@@ -236,6 +237,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     host,
     port: localPort,
     deviceId: auth.device.id,
+    deviceName: auth.device.name,
     pairingCode: auth.pairingCode,
     pairingExpiresAt: auth.pairingExpiresAt,
     ...(options.pocketLink && pocketLinkPort !== undefined ? {

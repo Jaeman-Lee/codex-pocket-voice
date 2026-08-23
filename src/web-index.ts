@@ -4,6 +4,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CodexAppServerClient } from "./app-server-client.js";
 import { PathPolicy } from "./path-policy.js";
+import { createPocketLinkBootstrapUri } from "./pocket-link-bootstrap.js";
+import { renderPocketLinkTerminalQr } from "./pocket-link-terminal-qr.js";
 import { loadPocketLinkTlsConfig } from "./pocket-link.js";
 import { startWebServer } from "./web-server.js";
 
@@ -40,6 +42,25 @@ if (running.pocketLink) {
     : running.pocketLink.advertiseHost;
   process.stderr.write(`[codex-web] PocketLink TLS: ${advertiseHost}:${running.pocketLink.port}\n`);
   process.stderr.write(`[codex-web] PocketLink SPKI pin: ${running.pocketLink.publicKeyPin}\n`);
+  const qrSetting = process.env.CODEX_POCKET_LINK_SHOW_QR;
+  if (qrSetting === "1" || (qrSetting !== "0" && process.stderr.isTTY)) {
+    try {
+      const bootstrap = createPocketLinkBootstrapUri({
+        host: running.pocketLink.advertiseHost,
+        port: running.pocketLink.port,
+        serverPublicKeyPin: running.pocketLink.publicKeyPin,
+        pairingCode: running.pairingCode,
+        deviceId: running.deviceId,
+        deviceName: running.deviceName.trim().slice(0, 60) || "Linux Companion",
+        expiresAt: running.pairingExpiresAt,
+      });
+      const rendered = renderPocketLinkTerminalQr(bootstrap);
+      process.stderr.write("[codex-web] PocketLink QR (10분 안에 Android에서 스캔):\n");
+      process.stderr.write(`${rendered}\n`);
+    } catch {
+      process.stderr.write("[codex-web] PocketLink QR을 만들 수 없습니다. 공개 연결 필드를 확인하세요.\n");
+    }
+  }
 }
 
 let closing = false;

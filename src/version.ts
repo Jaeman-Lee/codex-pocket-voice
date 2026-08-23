@@ -16,4 +16,5 @@ export const GATEWAY_CAPABILITIES = {
   journalManagement: true,
   pocketLinkTls: true,
   pocketLinkMtls: true,
+  pocketLinkQr: true,
 } as const;

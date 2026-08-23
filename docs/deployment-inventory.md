@@ -28,7 +28,7 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation, touch-only approvals and two-touch history deletion implemented; no field APK handed off |
 | Approved API tools | SHA-bound text replace + probed sandbox verifier | existing file only; check/test/build only; arbitrary command, create/delete/rename and network blocked |
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
-| PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | manual host/port/pin registration and Keystore P-256 device proof implemented; QR/relay/rotation and field validation pending |
+| PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | 10-minute reviewed QR and manual registration plus Keystore P-256 device proof implemented; relay/rotation and field validation pending |
 
 Read-only tool checkpoint decision: 기존 v2 Provider/Gateway 계약에 새 사용자 기능을 추가하는 2.0
 범위이므로 분류와 버전은 `breaking`/`2.0.0`, 대상 브랜치는 `feature/v2-control-plane`을 유지한다.
@@ -83,6 +83,13 @@ host/port/SPKI pin bootstrap만 구현하며 QR, 비대칭 device key/mTLS, rela
 background 계측은 남아 있다. source와 CI-only APK만 갱신하고 현장 APK를 전달·설치하거나 실행 중인
 Companion을 재시작·LAN에 노출하지 않는다. current v1 후보 1.8.2와 검증된 rollback 1.8.1,
 Termux/SSH transport를 그대로 보존한다.
+
+PocketLink QR checkpoint decision: camera-based reviewed bootstrap은 새 v2 user workflow이지만 이미 정한
+전송계층 breaking 범위 안이므로 분류와 버전은 `breaking`/`2.0.0`, Android `versionCode 20000`, 대상
+브랜치는 `feature/v2-control-plane`을 유지한다. QR은 기존 10분 pairing code와 공개 TLS/장치 정보만
+담고 Provider key·token·프로젝트 경로를 포함하지 않는다. Android scanner는 QR 전용, 이미지 미저장,
+2분 timeout이며 카메라 없는 단말에서는 기존 수동 입력을 유지한다. source와 CI-only APK만 갱신하고
+현장 설치·Companion 재시작·LAN 노출은 하지 않는다. current 1.8.2, rollback 1.8.1과 Termux/SSH를 보존한다.
 
 PocketLink device-proof checkpoint decision: Android non-exportable asymmetric identity와 Companion의
 client-certificate/bearer 결합을 추가하지만 v2 전송 계약의 호환 범위 안이므로 분류와 버전은 기존

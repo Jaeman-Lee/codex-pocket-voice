@@ -38,10 +38,27 @@ Companion은 다음 공개 정보만 터미널에 표시한다.
 
 private key, bearer token, Provider key와 프로젝트 정보는 출력하지 않는다.
 
+대화형 TTY에서는 같은 공개 연결 정보와 기존 10분 pairing code를 `codex-pocket://pair?...` QR로도
+표시한다. systemd/log 환경에서는 기본적으로 QR을 출력하지 않는다. 정말 필요한 제어 터미널에서만
+`CODEX_POCKET_LINK_SHOW_QR=1`로 강제할 수 있고, `0`은 TTY에서도 QR을 끈다. QR에는 다음 필드만 있다.
+QR matrix는 터미널 theme과 무관하도록 ANSI black/white contrast를 명시한다.
+
+- bundle version, advertise host, TLS port와 server SPKI pin
+- Companion device ID/name
+- 기존 8자리 pairing code와 동일한 만료 시각
+
+Provider credential, Gateway bearer token, Android device private key, workspace·thread·prompt는 QR에
+들어가지 않는다. QR도 pairing code와 같은 단기 비밀이므로 사진·로그·이슈에 보관하지 않는다.
+
 ## Android 등록
 
-AI 연결 센터의 `＋ PC`에서 `PocketLink · TLS pin 고정`을 선택하고 Companion이 표시한 host, port와
-SPKI pin을 입력한다. 선택적으로 서로 다른 교체용 backup pin도 미리 등록할 수 있다.
+AI 연결 센터의 `＋ PC`에서 `PocketLink QR 스캔`을 누르고 Companion의 QR을 읽는다. 앱은 camera에서
+QR_CODE만 읽고 barcode 이미지를 저장하지 않으며 2분 뒤 scanner를 닫는다. QR은 앱 메모리에서만
+2,048자로 제한해 파싱하고 version, 중복·알 수 없는 field, host, port, pin, 8자리 code, device와
+10분 이내 만료를 모두 검증한다. 등록 전 PC 이름·device ID·만료 시각과 host·port·pin을 다시 보여준다.
+
+카메라가 없거나 QR을 쓰지 않을 때는 `PocketLink · TLS pin 고정`을 선택하고 Companion이 표시한 host,
+port와 SPKI pin을 직접 입력할 수 있다. 선택적으로 서로 다른 교체용 backup pin도 미리 등록할 수 있다.
 
 - host·port·pin은 WebView/localStorage가 아니라 Android Keystore AES-GCM 설정에 저장한다.
 - 암호문은 local port 이름을 AAD로 묶어 다른 등록 항목으로 옮길 수 없다.
@@ -57,6 +74,8 @@ SPKI pin을 입력한다. 선택적으로 서로 다른 교체용 backup pin도 
 - pin 불일치나 설정 손상 때 Termux/SSH로 자동 downgrade하지 않는다.
 - Gateway bearer token은 기존처럼 Android 보안 저장소에 두며 Companion에는 hash만 남긴다.
 - PocketLink 등록을 삭제하면 암호화 연결 설정과 해당 local-port device identity를 함께 삭제한다.
+- QR에서 읽은 host·port·server pin 중 하나를 사용자가 편집하면 QR pairing code를 폐기한다. 연결 후
+  `/api/pairing/status`의 실제 Companion device ID가 QR과 달라도 code를 채우지 않는다.
 
 Gateway auth state는 1.8.1 rollback reader가 계속 열 수 있도록 schema version 1을 유지하고 client에
 선택적인 TLS pin field만 추가한다. 기존 token hash는 보존하지만 근거 없는 TLS binding을 만들지
@@ -67,15 +86,16 @@ Android target SDK 36에서는 외부 Linux 장치와 지속적인 네트워크 
 foreground-service type을 사용한다. `dataSync` service는 Android 15+의 시간 제한 대상이라 장시간 SSE
 transport에 사용하지 않는다. 관련 기준은 Android 공식 문서의
 [foreground service types](https://developer.android.com/develop/background-work/services/fgs/service-types)와
-[TLS/SSLSocket 주의사항](https://developer.android.com/privacy-and-security/security-ssl)을 따른다.
+[TLS/SSLSocket 주의사항](https://developer.android.com/privacy-and-security/security-ssl)을 따른다. QR
+camera는 Apache-2.0 [ZXing Android Embedded](https://github.com/journeyapps/zxing-android-embedded)의
+QR-only capture activity를 사용하며 barcode image output을 끈다.
 
 ## 현재 제한과 다음 단계
 
 이 checkpoint는 수동 LAN bootstrap이며 PocketLink의 최종 완료판이 아니다.
 
-- QR scanning, LAN discovery/P2P와 outbound relay fallback 미구현
+- LAN discovery/P2P와 outbound relay fallback 미구현
 - 기기별 key rotation protocol과 certificate 교체 UX/backup pin 승격 미구현
-- certificate 교체 UX와 backup pin 승격 미구현
 - 부팅 후 자동 복구, Android 계측 기반 CPU·메모리·배터리 release gate 미검증
 - 완료·승인·오류 알림 deep link 미구현
 

@@ -2,6 +2,7 @@ package io.github.jaemanlee.codexpocketvoice;
 
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import androidx.activity.result.ActivityResult;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
@@ -9,8 +10,12 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import com.journeyapps.barcodescanner.ScanContract;
+import com.journeyapps.barcodescanner.ScanIntentResult;
+import com.journeyapps.barcodescanner.ScanOptions;
 
 @CapacitorPlugin(
     name = "PocketTunnel",
@@ -19,6 +24,41 @@ import com.getcapacitor.annotation.PermissionCallback;
 public class PocketTunnelPlugin extends Plugin {
     private static final String TERMUX_PACKAGE = "com.termux";
     private static final String TERMUX_SERVICE = "com.termux.app.RunCommandService";
+
+    @PluginMethod
+    public void scanPocketLinkQr(PluginCall call) {
+        ScanOptions options = new ScanOptions()
+                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                .setPrompt("Linux Companion의 PocketLink QR을 스캔하세요")
+                .setBeepEnabled(false)
+                .setBarcodeImageEnabled(false)
+                .setOrientationLocked(false)
+                .setTimeout(120_000);
+        startActivityForResult(call, options.createScanIntent(getContext()), "scanPocketLinkQrResult");
+    }
+
+    @ActivityCallback
+    private void scanPocketLinkQrResult(PluginCall call, ActivityResult activityResult) {
+        if (call == null) return;
+        ScanIntentResult result = new ScanContract().parseResult(
+                activityResult.getResultCode(),
+                activityResult.getData()
+        );
+        String contents = result.getContents();
+        JSObject response = new JSObject();
+        if (contents == null) {
+            response.put("cancelled", true);
+            call.resolve(response);
+            return;
+        }
+        if (contents.length() > 2048 || !contents.startsWith("codex-pocket://pair?")) {
+            call.reject("Codex Pocket Voice용 PocketLink QR이 아닙니다.");
+            return;
+        }
+        response.put("cancelled", false);
+        response.put("value", contents);
+        call.resolve(response);
+    }
 
     @PluginMethod
     public void start(PluginCall call) {

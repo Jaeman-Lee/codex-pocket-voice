@@ -25,7 +25,7 @@
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 읽기 도구, SHA-bound 단일 파일 교체와 격리 npm 검증 구현; 다중 파일 patch·durable multi-turn 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, live branch/worktree identity, workspace export/protected delete 구현; 사용자 retention 설정·pin/archive·native 알림 잔여 |
-| Phase E | 진행 중 | opt-in LAN TLS listener, Android Keystore P-256 device certificate·server/client SPKI binding·connectedDevice loopback forward 구현; QR·relay·rotation·background release gate 잔여 |
+| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, Android Keystore P-256 device certificate·server/client SPKI binding·connectedDevice loopback forward 구현; relay·rotation·background release gate 잔여 |
 
 ## 2. 제품 정의
 
@@ -358,7 +358,10 @@ Termux/SSH로 자동 downgrade하지 않는다. Android 비대칭 device key와 
 Android는 local port별 non-exportable P-256 key로 TLS client
 certificate proof를 제공하고, Companion은 최초 pairing의 client SPKI pin을 bearer token hash와 결합한다.
 PocketLink 요청마다 인증서 유효기간과 binding을 확인하며 TLS session resume을 허용하지 않는다.
-QR/discovery, relay fallback, key rotation protocol과 실기기 background release gate는 남아 있다.
+Companion TTY는 공개 연결 정보와 기존 10분 pairing code만 담은 QR을 출력하고 Android는 QR_CODE만
+로컬 스캔한다. 앱은 QR을 저장하지 않고 등록 전 host·port·pin·device·만료를 검토시키며, 실제 연결의
+device ID가 다르면 pairing code를 사용하지 않는다. LAN discovery, relay fallback, key rotation
+protocol과 실기기 background release gate는 남아 있다.
 
 완료 조건: Termux 없이 핵심 흐름이 동작하고, 연결 실패 시 비밀정보를 노출하거나 다른 Provider로
 우회하지 않으며 1.8.1로 복구할 수 있다.

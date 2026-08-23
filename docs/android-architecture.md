@@ -41,8 +41,9 @@ v2 개발판은 명시적으로 설정한 경우 Android native foreground servi
 
 local port별 non-exportable P-256 identity도 AndroidKeyStore에서 만들고 TLS client certificate로
 Companion에 개인키 보유를 증명한다. 최초 Gateway pairing은 client SPKI pin과 bearer token hash를
-결합하며 이후 PocketLink 요청은 둘이 모두 일치해야 한다. 이 단계는 수동 LAN bootstrap이며 QR,
-discovery/P2P, relay와 자동 rotation은 아직 구현하지 않았다. 자세한 설정과 보안 경계는
+결합하며 이후 PocketLink 요청은 둘이 모두 일치해야 한다. 10분 QR bootstrap도 구현되어 Android의
+로컬 QR scanner가 host·port·server pin·device ID와 pairing code를 읽고 검토 후 등록한다. 자동
+discovery/P2P, relay와 rotation은 아직 구현하지 않았다. 자세한 설정과 보안 경계는
 [PocketLink TLS bootstrap](pocket-link.md)에 있다.
 
 ## 완전 독립형 SSH의 호환 후속 단계
