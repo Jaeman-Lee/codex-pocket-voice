@@ -1,6 +1,7 @@
 import { ClaudeProviderAdapter } from "./claude-provider.js";
 import { CodexProviderAdapter, type CodexProviderClient } from "./codex-provider.js";
 import { OpenAIProviderAdapter } from "./openai-provider.js";
+import type { ToolBroker } from "../tool-broker.js";
 import {
   ProviderError,
   type ModelProviderAdapter,
@@ -18,10 +19,14 @@ export { ProviderError } from "./types.js";
 export class ProviderRegistry {
   private readonly adapters: readonly ModelProviderAdapter[];
 
-  constructor(codex: CodexProviderClient, adapters?: readonly ModelProviderAdapter[]) {
+  constructor(
+    codex: CodexProviderClient,
+    adapters?: readonly ModelProviderAdapter[],
+    options: { toolBroker?: ToolBroker } = {},
+  ) {
     this.adapters = adapters ?? [
       new CodexProviderAdapter(codex),
-      new OpenAIProviderAdapter(),
+      new OpenAIProviderAdapter({ toolBroker: options.toolBroker }),
       new ClaudeProviderAdapter(),
     ];
   }

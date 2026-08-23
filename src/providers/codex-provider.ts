@@ -55,6 +55,7 @@ export class CodexProviderAdapter implements ModelProviderAdapter, ProviderRunti
         models: true,
         attachments: true,
         streaming: true,
+        toolCalling: true,
         approvals: false,
         workspaceRead: true,
         workspaceWrite: true,

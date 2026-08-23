@@ -35,6 +35,7 @@ export class ClaudeProviderAdapter implements ModelProviderAdapter {
         models: false,
         attachments: false,
         streaming: false,
+        toolCalling: false,
         approvals: false,
         workspaceRead: false,
         workspaceWrite: false,

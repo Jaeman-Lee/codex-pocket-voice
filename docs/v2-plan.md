@@ -22,7 +22,7 @@
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환 구현; UI 상태 모듈 분리 잔여 |
-| Phase B | 진행 중 | OpenAI chat-only streaming·이미지·사용량·중단, server-only key와 redaction 구현; 도구·durable replay 잔여 |
+| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key와 read-only 함수 도구 구현; write/command·durable journal 잔여 |
 | Phase C | 대기 | OpenRouter |
 | Phase D | 대기 | 모바일 운영판과 SQLite journal |
 | Phase E | 대기 | PocketLink와 출시 강화 |
@@ -278,6 +278,11 @@ SSE 부분 전달, Provider stream 중단과 폰 프로세스 회수 뒤에도 `
 - workspace-write와 command를 승인함 뒤에 단계적으로 활성화
 - `store: false` 로컬 상태 복구 및 중단·재연결 테스트
 
+현재 checkpoint에서는 `workspace_list/read/search`와 고정 Git `status/diff`만 observation 등급으로
+연결했다. strict schema, 단일 함수 호출, 8회 상한과 stateless reasoning replay를 적용했으며
+민감 경로·외부 symlink·Git 환경 override·외부 diff·과도한 출력은 차단한다. 이 checkpoint는
+개발용 2.0 source update이며 APK를 새 current 후보로 배포하지 않는다.
+
 완료 조건: 실제 프로젝트에서 조사 → diff 제안 → 승인된 patch → test → 결과 검토가 키 노출 없이
 한 run으로 완료된다.
 
@@ -376,6 +381,7 @@ SSE 부분 전달, Provider stream 중단과 폰 프로세스 회수 뒤에도 `
 기준 확인일은 2026-08-23이다. 구현을 시작할 때 API 동작과 개인정보 정책을 다시 확인한다.
 
 - [OpenAI Responses API — response 생성, 함수 도구와 streaming](https://developers.openai.com/api/reference/cli/resources/responses/methods/create)
+- [OpenAI function calling — strict schema와 tool output loop](https://developers.openai.com/api/docs/guides/function-calling)
 - [OpenAI API 데이터 보존과 `store` 정책](https://developers.openai.com/api/docs/guides/your-data#default-usage-policies-by-endpoint)
 - [OpenAI API key 보안 권고](https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety)
 - [OpenRouter tool/function calling](https://openrouter.ai/docs/guides/features/tool-calling)

@@ -3,17 +3,20 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { InMemoryApprovalBroker } from "../src/approval-broker.js";
 import type { ResponseCreateParamsStreaming, ResponseStreamEvent } from "openai/resources/responses/responses";
 import { GatewayAuth } from "../src/gateway-auth.js";
 import { MediaManager } from "../src/media-manager.js";
 import { PathPolicy } from "../src/path-policy.js";
 import { ProjectManager } from "../src/project-manager.js";
+import { createReadOnlyWorkspaceTools } from "../src/read-only-tools.js";
 import type { CodexProviderClient } from "../src/providers/codex-provider.js";
 import {
   OpenAIProviderAdapter,
   type OpenAIResponsesClient,
 } from "../src/providers/openai-provider.js";
 import { ProviderRegistry } from "../src/providers/registry.js";
+import { LocalToolBroker } from "../src/tool-broker.js";
 import { startWebServer, type WebCodexClient } from "../src/web-server.js";
 
 const cwd = process.cwd();
@@ -31,11 +34,15 @@ test("gateway injects OpenAI runtime and exposes only common safe events", async
     deviceName: "OpenAI Gateway Test",
   });
   const apiClient = new GatewayOpenAIClient();
+  const approvals = new InMemoryApprovalBroker();
+  t.after(() => approvals.close());
+  const toolBroker = new LocalToolBroker(createReadOnlyWorkspaceTools(paths), approvals, paths);
   const adapter = new OpenAIProviderAdapter({
     credentials: { async load() { return { apiKey: secret, source: "environment" }; } },
     clientFactory: () => apiClient,
     modelAllowlist: ["gpt-gateway-test"],
     defaultModel: "gpt-gateway-test",
+    toolBroker,
   });
   const codex = unusedCodexClient();
   const providers = new ProviderRegistry(codex, [adapter]);
@@ -92,17 +99,21 @@ test("gateway injects OpenAI runtime and exposes only common safe events", async
     && value.includes('"action":"completed"'));
   assert.match(frames, /"type":"provider"/);
   assert.match(frames, /"kind":"output\.delta"/);
+  assert.match(frames, /"kind":"tool\.started"/);
+  assert.match(frames, /"kind":"tool\.completed"/);
   assert.match(frames, /"kind":"usage\.updated"/);
-  assert.doesNotMatch(frames, /response\.created|sequence_number|sk-gateway|"params"/);
+  assert.doesNotMatch(frames, /response\.created|sequence_number|sk-gateway|hiddenSensitivePaths|"params"/);
 
   const completed = await waitForOperation(base, headers, completedRun.operation.id, "completed");
   assert.equal(completed.result.finalResponse, "gateway response");
-  assert.equal(completed.result.usage.totalTokens, 9);
+  assert.equal(completed.result.usage.totalTokens, 12);
   assert.equal(apiClient.requests[0]?.store, false);
   assert.equal(apiClient.requests[0]?.stream, true);
+  assert.equal(apiClient.requests[0]?.tools?.length, 5);
+  assert.match(JSON.stringify(apiClient.requests[1]?.input), /function_call_output/);
 
   const cancellable = await startRun(base, headers, "block until cancelled");
-  await waitFor(() => apiClient.responseCalls >= 2);
+  await waitFor(() => apiClient.responseCalls >= 3);
   const interrupted = await jsonFetch(`${base}/api/runs/${cancellable.operation.id}/interrupt`, {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json", Origin: "http://localhost" },
@@ -132,6 +143,33 @@ class GatewayOpenAIClient implements OpenAIResponsesClient {
     const call = this.responseCalls;
     if (call === 1) {
       return streamEvents([
+        responseEvent({
+          type: "response.completed",
+          sequence_number: 1,
+          response: {
+            id: "resp-gateway-tool",
+            output_text: "",
+            output: [{
+              type: "function_call",
+              id: "function-gateway",
+              call_id: "call-gateway-status",
+              name: "git_status",
+              arguments: "{}",
+              status: "completed",
+            }],
+            usage: {
+              input_tokens: 2,
+              input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+              output_tokens: 1,
+              output_tokens_details: { reasoning_tokens: 0 },
+              total_tokens: 3,
+            },
+          },
+        }),
+      ], signal);
+    }
+    if (call === 2) {
+      return streamEvents([
         responseEvent({ type: "response.created", sequence_number: 1, response: { id: "resp-gateway" } }),
         responseEvent({
           type: "response.output_text.delta",
@@ -159,7 +197,7 @@ class GatewayOpenAIClient implements OpenAIResponsesClient {
         }),
       ], signal);
     }
-    if (call === 2) return blockingStream(signal);
+    if (call === 3) return blockingStream(signal);
     throw Object.assign(new Error(`Authorization: Bearer ${secret}`), { status: 401 });
   }
 }

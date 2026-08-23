@@ -3,11 +3,17 @@ import { readFile, stat } from "node:fs/promises";
 import { extname } from "node:path";
 import OpenAI from "openai";
 import type {
+  FunctionTool,
+  Response,
   ResponseCreateParamsStreaming,
+  ResponseFunctionToolCall,
   ResponseInput,
+  ResponseInputItem,
+  ResponseOutputItem,
   ResponseStreamEvent,
   ResponseUsage,
 } from "openai/resources/responses/responses";
+import type { ToolBroker, ToolExecutionResult } from "../tool-broker.js";
 import {
   EnvironmentOpenAICredentialSource,
   OpenAICredentialError,
@@ -29,6 +35,13 @@ import {
 } from "./types.js";
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_TOOL_CALLS_PER_RUN = 8;
+const MAX_TOOL_OUTPUT_CHARS = 80_000;
+const READ_ONLY_TOOL_INSTRUCTIONS = [
+  "The available project tools are read-only.",
+  "Use them only when project context is required to answer the user.",
+  "They cannot modify files, run arbitrary commands, access credentials, or leave the selected project.",
+].join(" ");
 
 export interface OpenAIModelRecord { id: string }
 
@@ -47,6 +60,8 @@ export interface OpenAIProviderOptions {
   defaultModel?: string;
   modelAllowlist?: readonly string[];
   maxImageBytes?: number;
+  toolBroker?: ToolBroker;
+  maxToolCallsPerRun?: number;
 }
 
 interface ActiveOpenAIRun {
@@ -73,6 +88,9 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
   private readonly defaultModel?: string;
   private readonly modelAllowlist: ReadonlySet<string>;
   private readonly maxImageBytes: number;
+  private readonly toolBroker?: ToolBroker;
+  private readonly hasReadTools: boolean;
+  private readonly maxToolCallsPerRun: number;
 
   constructor(options: OpenAIProviderOptions = {}) {
     this.credentials = options.credentials ?? new EnvironmentOpenAICredentialSource();
@@ -86,6 +104,9 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
         ? [this.defaultModel]
         : []);
     this.maxImageBytes = options.maxImageBytes ?? MAX_IMAGE_BYTES;
+    this.toolBroker = options.toolBroker;
+    this.hasReadTools = options.toolBroker?.definitions().some((definition) => definition.risk === "observation") ?? false;
+    this.maxToolCallsPerRun = options.maxToolCallsPerRun ?? MAX_TOOL_CALLS_PER_RUN;
   }
 
   async describe(): Promise<ProviderDescriptor> {
@@ -123,8 +144,9 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
         models: configured,
         attachments: true,
         streaming: true,
+        toolCalling: this.hasReadTools,
         approvals: false,
-        workspaceRead: false,
+        workspaceRead: this.hasReadTools,
         workspaceWrite: false,
         commandExecution: false,
         usageAccounting: true,
@@ -199,6 +221,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
           conversationId,
           runId,
           model,
+          cwd: input.cwd,
           responseInput,
           timeoutMs: input.timeoutMs,
           active,
@@ -227,6 +250,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
     conversationId: string;
     runId: string;
     model: string;
+    cwd: string;
     responseInput: ResponseInput;
     timeoutMs?: number;
     active: ActiveOpenAIRun;
@@ -234,6 +258,9 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
     let sequence = 0;
     let finalResponse = "";
     let remoteResponseId: string | undefined;
+    let totalUsage: ProviderUsage | undefined;
+    let toolCallCount = 0;
+    const completedTools: Array<{ name: string; status: string; paths?: string[] }> = [];
     const emit = (event: ProviderEventPayload) => {
       sequence += 1;
       this.emit({
@@ -254,22 +281,57 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
     timer?.unref();
     try {
       emit({ kind: "run.started", status: "in_progress" });
-      const stream = await this.clientFactory(options.credential).createResponse({
-        model: options.model,
-        input: options.responseInput,
-        store: false,
-        stream: true,
-      }, options.active.controller.signal);
-      for await (const event of stream) {
-        if (event.type === "response.created") remoteResponseId = event.response.id;
-        if (event.type === "response.output_text.delta") {
-          finalResponse += event.delta;
-          emit({ kind: "output.delta", delta: event.delta, itemId: event.item_id });
-        } else if (event.type === "response.completed") {
-          remoteResponseId = event.response.id;
-          finalResponse = event.response.output_text || finalResponse;
-          const usage = providerUsage(event.response.usage);
-          if (usage) emit({ kind: "usage.updated", usage });
+      const client = this.clientFactory(options.credential);
+      const tools = providerTools(this.toolBroker);
+      const allowedToolNames = new Set(tools.map((tool) => tool.name));
+      const responseInput: ResponseInput = [...options.responseInput];
+      while (true) {
+        let completedResponse: Response | undefined;
+        let roundText = "";
+        const request: ResponseCreateParamsStreaming = {
+          model: options.model,
+          input: responseInput,
+          store: false,
+          stream: true,
+          ...(tools.length > 0 ? {
+            tools,
+            tool_choice: "auto" as const,
+            parallel_tool_calls: false,
+            include: ["reasoning.encrypted_content" as const],
+            instructions: READ_ONLY_TOOL_INSTRUCTIONS,
+          } : {}),
+        };
+        const stream = await client.createResponse(request, options.active.controller.signal);
+        for await (const event of stream) {
+          if (event.type === "response.created") remoteResponseId = event.response.id;
+          if (event.type === "response.output_text.delta") {
+            roundText += event.delta;
+            finalResponse += event.delta;
+            emit({ kind: "output.delta", delta: event.delta, itemId: event.item_id });
+          } else if (event.type === "response.completed") {
+            completedResponse = event.response;
+            remoteResponseId = event.response.id;
+            if (!roundText && event.response.output_text) finalResponse += event.response.output_text;
+            totalUsage = addUsage(totalUsage, providerUsage(event.response.usage));
+            if (totalUsage) emit({ kind: "usage.updated", usage: totalUsage });
+          } else if (event.type === "response.failed" || event.type === "response.incomplete") {
+            const message = event.type === "response.failed"
+              ? safeResponseFailure(event.response.error?.code)
+              : "OpenAI 응답이 완성되기 전에 종료되었습니다.";
+            emit({ kind: "run.failed", message });
+            return { status: "failed", result: { providerId: this.id, model: options.model, error: message } };
+          } else if (event.type === "error") {
+            const message = safeResponseFailure(event.code);
+            emit({ kind: "run.failed", message });
+            return { status: "failed", result: { providerId: this.id, model: options.model, error: message } };
+          }
+        }
+        if (!completedResponse) {
+          throw new ProviderError(502, "OpenAI 응답 스트림이 완료 이벤트 없이 종료되었습니다.");
+        }
+        const responseOutput = completedResponse.output ?? [];
+        const toolCalls = responseOutput.filter(isFunctionCall);
+        if (toolCalls.length === 0) {
           emit({ kind: "run.completed", status: "completed" });
           return {
             status: "completed",
@@ -280,22 +342,48 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
               remoteResponseId,
               model: options.model,
               finalResponse,
-              ...(usage ? { usage } : {}),
+              ...(totalUsage ? { usage: totalUsage } : {}),
+              ...(completedTools.length > 0 ? { tools: completedTools } : {}),
             },
           };
-        } else if (event.type === "response.failed" || event.type === "response.incomplete") {
-          const message = event.type === "response.failed"
-            ? safeResponseFailure(event.response.error?.code)
-            : "OpenAI 응답이 완성되기 전에 종료되었습니다.";
-          emit({ kind: "run.failed", message });
-          return { status: "failed", result: { providerId: this.id, model: options.model, error: message } };
-        } else if (event.type === "error") {
-          const message = safeResponseFailure(event.code);
+        }
+        if (!this.toolBroker || tools.length === 0) {
+          const message = "OpenAI가 활성화되지 않은 로컬 도구를 요청했습니다.";
           emit({ kind: "run.failed", message });
           return { status: "failed", result: { providerId: this.id, model: options.model, error: message } };
         }
+        if (toolCalls.length > 1 || toolCallCount + toolCalls.length > this.maxToolCallsPerRun) {
+          const message = "OpenAI 읽기 도구 호출이 안전 상한을 초과했습니다.";
+          emit({ kind: "run.failed", message });
+          return { status: "failed", result: { providerId: this.id, model: options.model, error: message } };
+        }
+        responseInput.push(...continuationItems(responseOutput));
+        for (const toolCall of toolCalls) {
+          toolCallCount += 1;
+          const paths = safeToolPaths(toolCall.arguments);
+          emit({
+            kind: "tool.started",
+            tool: { type: toolCall.name, id: toolCall.call_id, status: "in_progress", ...(paths ? { paths } : {}) },
+          });
+          const execution = await executeFunctionCall(this.toolBroker, allowedToolNames, toolCall, {
+            providerId: this.id,
+            conversationId: options.conversationId,
+            runId: options.runId,
+            cwd: options.cwd,
+            signal: options.active.controller.signal,
+          });
+          completedTools.push({ name: toolCall.name, status: execution.status, ...(paths ? { paths } : {}) });
+          emit({
+            kind: "tool.completed",
+            tool: { type: toolCall.name, id: toolCall.call_id, status: execution.status, ...(paths ? { paths } : {}) },
+          });
+          responseInput.push({
+            type: "function_call_output",
+            call_id: toolCall.call_id,
+            output: toolOutput(execution),
+          });
+        }
       }
-      throw new ProviderError(502, "OpenAI 응답 스트림이 완료 이벤트 없이 종료되었습니다.");
     } catch (error) {
       if (options.active.cancelled) {
         emit({ kind: "run.completed", status: "interrupted" });
@@ -311,6 +399,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
       throw classified;
     } finally {
       if (timer) clearTimeout(timer);
+      this.toolBroker?.clearRun(this.id, options.runId);
     }
   }
 
@@ -395,6 +484,110 @@ function providerUsage(usage: ResponseUsage | null | undefined): ProviderUsage |
     reasoningTokens: usage.output_tokens_details.reasoning_tokens,
     totalTokens: usage.total_tokens,
   };
+}
+
+function addUsage(current: ProviderUsage | undefined, next: ProviderUsage | undefined): ProviderUsage | undefined {
+  if (!next) return current;
+  if (!current) return next;
+  return {
+    inputTokens: (current.inputTokens ?? 0) + (next.inputTokens ?? 0),
+    cachedInputTokens: (current.cachedInputTokens ?? 0) + (next.cachedInputTokens ?? 0),
+    outputTokens: (current.outputTokens ?? 0) + (next.outputTokens ?? 0),
+    reasoningTokens: (current.reasoningTokens ?? 0) + (next.reasoningTokens ?? 0),
+    totalTokens: (current.totalTokens ?? 0) + (next.totalTokens ?? 0),
+  };
+}
+
+function providerTools(broker: ToolBroker | undefined): FunctionTool[] {
+  return broker?.definitions().filter((definition) => definition.risk === "observation").map((definition) => ({
+    type: "function",
+    name: definition.name,
+    description: definition.description,
+    parameters: definition.inputSchema,
+    strict: true,
+  })) ?? [];
+}
+
+function isFunctionCall(item: ResponseOutputItem): item is ResponseFunctionToolCall {
+  return item.type === "function_call";
+}
+
+function continuationItems(items: readonly ResponseOutputItem[]): ResponseInputItem[] {
+  return items.filter((item) =>
+    item.type === "message" || item.type === "reasoning" || item.type === "function_call",
+  ) as ResponseInputItem[];
+}
+
+async function executeFunctionCall(
+  broker: ToolBroker,
+  allowedToolNames: ReadonlySet<string>,
+  toolCall: ResponseFunctionToolCall,
+  context: {
+    providerId: string;
+    conversationId: string;
+    runId: string;
+    cwd: string;
+    signal: AbortSignal;
+  },
+): Promise<ToolExecutionResult> {
+  if (!allowedToolNames.has(toolCall.name)) {
+    return { toolCallId: toolCall.call_id, status: "failed", error: "허용되지 않은 읽기 도구입니다." };
+  }
+  if (toolCall.status && toolCall.status !== "completed") {
+    return { toolCallId: toolCall.call_id, status: "failed", error: "완성되지 않은 도구 요청입니다." };
+  }
+  if (toolCall.arguments.length > 16_384) {
+    return { toolCallId: toolCall.call_id, status: "failed", error: "도구 인자가 안전한 크기 상한을 초과했습니다." };
+  }
+  let input: unknown;
+  try {
+    input = JSON.parse(toolCall.arguments) as unknown;
+  } catch {
+    return { toolCallId: toolCall.call_id, status: "failed", error: "도구 인자가 올바른 JSON이 아닙니다." };
+  }
+  try {
+    return await broker.execute({
+      providerId: context.providerId,
+      conversationId: context.conversationId,
+      runId: context.runId,
+      toolCallId: toolCall.call_id,
+      name: toolCall.name,
+      input,
+    }, { cwd: context.cwd, signal: context.signal });
+  } catch {
+    return { toolCallId: toolCall.call_id, status: "failed", error: "허용되지 않거나 잘못된 읽기 도구 요청입니다." };
+  }
+}
+
+function toolOutput(result: ToolExecutionResult): string {
+  const serialized = JSON.stringify({
+    status: result.status,
+    ...(result.output === undefined ? {} : { output: result.output }),
+    ...(result.error ? { error: result.error } : {}),
+  });
+  if (serialized.length <= MAX_TOOL_OUTPUT_CHARS) return serialized;
+  return JSON.stringify({ status: "failed", error: "도구 결과가 안전한 출력 상한을 초과했습니다." });
+}
+
+function safeToolPaths(argumentsJson: string): string[] | undefined {
+  try {
+    const value = JSON.parse(argumentsJson) as unknown;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+    const requested = (value as Record<string, unknown>).path;
+    if (
+      typeof requested !== "string"
+      || requested.length > 500
+      || requested.startsWith("/")
+      || requested.includes("\\")
+      || requested.split("/").includes("..")
+      || requested === ".env"
+      || requested.startsWith(".env.")
+      || requested.split("/").includes(".git")
+    ) return undefined;
+    return [requested];
+  } catch {
+    return undefined;
+  }
 }
 
 function safeResponseFailure(code: string | null | undefined): string {

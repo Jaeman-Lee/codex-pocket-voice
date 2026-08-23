@@ -24,13 +24,24 @@ Responses·이미지·도구 capability를 추정하지 않으며, 허용 목록
 
 - `stream: true`, `store: false` 텍스트 응답과 PNG/JPEG/WebP/GIF 이미지 입력
 - 공통 `ProviderEvent`를 통한 텍스트 delta, 완료, 오류와 token usage 전달
+- strict JSON schema와 `parallel_tool_calls: false`를 사용하는 stateless 함수 호출 반복
+- 허용 root 내부의 `workspace_list`, `workspace_read`, `workspace_search`, `git_status`, `git_diff`
 - Gateway operation 단위 중단과 timeout
 - Models API 인증·목록 확인만 수행하는 무료 연결 테스트
 - 공급자 원본 JSON과 Authorization 값을 제거한 오류 분류
 
-아직 대화 재개, 로컬 파일 읽기, 명령 실행, patch와 함수 도구는 비활성화되어 있다. 따라서 현재
-OpenAI API 모드는 chat-only이며 프로젝트 workspace를 읽거나 변경할 권한이 없다. 다음 단계에서
-read-only Tool Broker를 먼저 연결하고, 쓰기와 명령은 터치 승인 뒤에만 활성화한다.
+현재 함수 도구는 읽기 전용이다. 프로젝트 밖 경로와 외부 symlink, `.git`, `.env`, 개인 키·keystore,
+credential 계열 파일을 거절하고 파일·검색·diff 결과에 크기와 시간 상한을 적용한다. Git 호출은 고정된
+`status`, `diff`, `rev-parse` 인자만 사용하며 외부 diff, textconv, fsmonitor와 외부 Git 환경 override를
+비활성화한다. 도구 원문 결과는 Gateway SSE로 보내지 않고 redacted summary만 전달한다.
+
+아직 대화 재개, 파일 변경, patch, 임의 명령과 network 도구는 비활성화되어 있다. 쓰기와 실행은
+durable journal 및 터치 승인함이 구현되고 별도 보안 검증을 통과한 뒤에만 활성화한다.
+
+`store: false` 함수 호출은 각 응답의 message·function call·reasoning 항목과
+`function_call_output`을 Companion이 다음 요청에 다시 전달한다. reasoning 모델을 위해
+`reasoning.encrypted_content`도 요청하지만, 원시 reasoning이나 Provider 응답 객체를 Android로
+전달하지 않는다. 한 run의 함수 호출은 최대 8회이며 병렬 호출은 비활성화한다.
 
 `store: false`는 Responses 객체 저장을 끄지만 일반적인 API abuse-monitoring 보존까지 없앤다는
 뜻은 아니다. 자세한 동작은 [Responses API reference](https://developers.openai.com/api/reference/cli/resources/responses/methods/create)와

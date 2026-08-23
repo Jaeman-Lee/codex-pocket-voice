@@ -3,6 +3,9 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { InMemoryApprovalBroker } from "../src/approval-broker.js";
+import { PathPolicy } from "../src/path-policy.js";
+import { LocalToolBroker, type RegisteredTool } from "../src/tool-broker.js";
 import type {
   ResponseCreateParamsStreaming,
   ResponseStreamEvent,
@@ -80,6 +83,150 @@ test("OpenAI provider streams a store:false response through the common runtime 
   assert.equal(client.requests[0]?.stream, true);
   assert.equal(client.requests[0]?.model, "gpt-test");
   assert.doesNotMatch(JSON.stringify(client.requests[0]), /sk-test-super-secret/);
+});
+
+test("OpenAI provider executes a stateless read-only function loop through LocalToolBroker", async (t) => {
+  const paths = await PathPolicy.fromEnvironment(process.cwd());
+  const approvals = new InMemoryApprovalBroker();
+  t.after(() => approvals.close());
+  let executions = 0;
+  const readTool: RegisteredTool<{ path: string }> = {
+    definition: {
+      name: "workspace_read",
+      description: "Read a safe project fixture",
+      inputSchema: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+        additionalProperties: false,
+      },
+      risk: "observation",
+    },
+    validate(input) {
+      assert.equal(typeof input, "object");
+      const requested = (input as { path?: unknown }).path;
+      assert.equal(typeof requested, "string");
+      return { path: requested as string };
+    },
+    approval: () => ({ redactedSummary: "read fixture" }),
+    async execute(input) {
+      executions += 1;
+      return { path: input.path, content: "read-only context" };
+    },
+  };
+  const hiddenWriteTool: RegisteredTool<Record<string, never>> = {
+    definition: {
+      name: "workspace_write",
+      description: "Must stay unavailable in the read-only milestone",
+      inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+      risk: "change",
+    },
+    validate: () => ({}),
+    approval: () => ({ redactedSummary: "write fixture" }),
+    async execute() { throw new Error("must not execute"); },
+  };
+  const broker = new LocalToolBroker([readTool, hiddenWriteTool], approvals, paths);
+  const client = new SequencedOpenAIClient([
+    [event({
+      type: "response.completed",
+      sequence_number: 1,
+      response: {
+        id: "resp-tool-call",
+        output_text: "",
+        output: [
+          { type: "reasoning", id: "reasoning-1", summary: [], encrypted_content: "encrypted-reasoning" },
+          {
+            type: "function_call",
+            id: "function-item-1",
+            call_id: "call-read-1",
+            name: "workspace_read",
+            arguments: JSON.stringify({ path: "package.json" }),
+            status: "completed",
+          },
+        ],
+        usage: usage(3, 2, 1),
+      },
+    })],
+    [
+      event({
+        type: "response.output_text.delta",
+        sequence_number: 1,
+        item_id: "message-final",
+        output_index: 0,
+        content_index: 0,
+        delta: "확인했습니다",
+        logprobs: [],
+      }),
+      event({
+        type: "response.completed",
+        sequence_number: 2,
+        response: {
+          id: "resp-final",
+          output_text: "확인했습니다",
+          output: [],
+          usage: usage(4, 3, 0),
+        },
+      }),
+    ],
+  ]);
+  const adapter = new OpenAIProviderAdapter({
+    credentials: staticCredentials("sk-test-tool-loop"),
+    clientFactory: () => client,
+    createId: sequentialIds("tool-conversation", "tool-run"),
+    modelAllowlist: ["gpt-tool-test"],
+    toolBroker: broker,
+  });
+  const events: ProviderEvent[] = [];
+  adapter.subscribe((providerEvent) => events.push(providerEvent));
+
+  const descriptor = await adapter.describe();
+  assert.equal(descriptor.capabilities.toolCalling, true);
+  assert.equal(descriptor.capabilities.workspaceRead, true);
+  assert.equal(descriptor.capabilities.workspaceWrite, false);
+  assert.equal(descriptor.capabilities.commandExecution, false);
+
+  const run = await adapter.startRun({
+    cwd: process.cwd(),
+    prompt: "Inspect package metadata",
+    model: "gpt-tool-test",
+  });
+  const completion = await run.completion;
+  assert.equal(completion.status, "completed");
+  assert.equal(completion.result.finalResponse, "확인했습니다");
+  assert.deepEqual(completion.result.usage, {
+    inputTokens: 7,
+    cachedInputTokens: 0,
+    outputTokens: 5,
+    reasoningTokens: 1,
+    totalTokens: 12,
+  });
+  assert.equal(executions, 1);
+  assert.equal(approvals.listPending().length, 0);
+  assert.deepEqual(events.map((providerEvent) => providerEvent.kind), [
+    "run.started",
+    "usage.updated",
+    "tool.started",
+    "tool.completed",
+    "output.delta",
+    "usage.updated",
+    "run.completed",
+  ]);
+  assert.equal(client.requests.length, 2);
+  assert.equal(client.requests[0]?.store, false);
+  assert.equal(client.requests[0]?.parallel_tool_calls, false);
+  assert.deepEqual(client.requests[0]?.include, ["reasoning.encrypted_content"]);
+  assert.deepEqual(client.requests[0]?.tools, [{
+    type: "function",
+    name: "workspace_read",
+    description: "Read a safe project fixture",
+    parameters: readTool.definition.inputSchema,
+    strict: true,
+  }]);
+  const continuation = JSON.stringify(client.requests[1]?.input);
+  assert.match(continuation, /encrypted-reasoning/);
+  assert.match(continuation, /function_call_output/);
+  assert.match(continuation, /read-only context/);
+  assert.doesNotMatch(continuation, /sk-test-tool-loop/);
 });
 
 test("OpenAI connection test lists models without creating a paid response", async () => {
@@ -239,6 +386,28 @@ class BlockingOpenAIClient implements OpenAIResponsesClient {
   }
 }
 
+class SequencedOpenAIClient implements OpenAIResponsesClient {
+  readonly requests: ResponseCreateParamsStreaming[] = [];
+
+  constructor(private readonly rounds: Array<readonly ResponseStreamEvent[]>) {}
+
+  async listModels() {
+    return [{ id: "gpt-tool-test" }];
+  }
+
+  async createResponse(request: ResponseCreateParamsStreaming, signal: AbortSignal) {
+    this.requests.push(request);
+    const events = this.rounds.shift();
+    if (!events) throw new Error("unexpected response round");
+    return (async function* () {
+      for (const responseEvent of events) {
+        if (signal.aborted) throw abortError();
+        yield responseEvent;
+      }
+    })();
+  }
+}
+
 function completedEvent(outputText: string): ResponseStreamEvent {
   return event({
     type: "response.completed",
@@ -259,6 +428,16 @@ function completedEvent(outputText: string): ResponseStreamEvent {
 
 function event(value: Record<string, unknown>): ResponseStreamEvent {
   return value as unknown as ResponseStreamEvent;
+}
+
+function usage(inputTokens: number, outputTokens: number, reasoningTokens: number) {
+  return {
+    input_tokens: inputTokens,
+    input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+    output_tokens: outputTokens,
+    output_tokens_details: { reasoning_tokens: reasoningTokens },
+    total_tokens: inputTokens + outputTokens,
+  };
 }
 
 function staticCredentials(apiKey: string): OpenAICredentialSource {

@@ -100,6 +100,7 @@ export interface ProviderDescriptor {
     models: boolean;
     attachments: boolean;
     streaming: boolean;
+    toolCalling: boolean;
     approvals: boolean;
     workspaceRead: boolean;
     workspaceWrite: boolean;

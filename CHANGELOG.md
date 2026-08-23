@@ -24,8 +24,11 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   `usage.updated` 등 공통 이벤트로 즉시 정규화하고 기존 Codex 모바일 이벤트 호환은 유지한다.
 - 공식 OpenAI JavaScript SDK로 server-only API key, `0600` key 파일, 명시적 모델 허용 목록,
   `store:false` chat-only streaming, 이미지 입력, 사용량·중단·timeout과 오류 redaction을 구현했다.
+- OpenAI Responses 함수 호출을 공통 `LocalToolBroker`에 연결하고, 허용 root 안의 파일 목록·읽기·검색과
+  고정 Git status/diff만 observation 도구로 제공한다. strict schema, 단일 호출, 8회 상한, stateless
+  reasoning replay, 민감 경로·symlink·Git 환경·출력 제한을 적용했으며 쓰기와 임의 명령은 계속 막는다.
 - 공개 검사는 실제 유료 AI 요청 없이 가짜 OpenAI stream과 Models 목록만 사용한다. OpenAI API
-  모드의 workspace 읽기·쓰기·명령·대화 재개는 Tool Broker와 durable journal 전까지 비활성화한다.
+  모드의 workspace 쓰기·명령·대화 재개는 승인함과 durable journal 전까지 비활성화한다.
 - 이 기준선은 CI·개발용이며 v1.8.1 설치본이나 실행 중인 Companion을 교체하지 않는다.
 
 ## 1.8.2 hotfix candidate — project-scoped session handoff

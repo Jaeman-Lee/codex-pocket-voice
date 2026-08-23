@@ -16,6 +16,9 @@ import { GatewayAuth, GatewayAuthError } from "./gateway-auth.js";
 import { APP_VERSION, GATEWAY_CAPABILITIES, GATEWAY_PROTOCOL_MINIMUM, GATEWAY_PROTOCOL_VERSION } from "./version.js";
 import { collectSystemDiagnostics } from "./system-diagnostics.js";
 import { SessionHandoffStore } from "./session-handoff-store.js";
+import { InMemoryApprovalBroker } from "./approval-broker.js";
+import { createReadOnlyWorkspaceTools } from "./read-only-tools.js";
+import { LocalToolBroker } from "./tool-broker.js";
 import {
   RunCoordinator,
   RunCoordinatorError,
@@ -102,7 +105,11 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   const handoffs = options.handoffs ?? await SessionHandoffStore.create(
     process.env.CODEX_POCKET_HANDOFF_STATE ?? join(dirname(auth.stateFile), "session-handoff.json"),
   );
-  const providers = options.providers ?? new ProviderRegistry(options.client);
+  const approvals = options.providers ? undefined : new InMemoryApprovalBroker();
+  const toolBroker = approvals
+    ? new LocalToolBroker(createReadOnlyWorkspaceTools(options.paths), approvals, options.paths)
+    : undefined;
+  const providers = options.providers ?? new ProviderRegistry(options.client, undefined, { toolBroker });
   const providerLogins = new ProviderLoginManager(providers);
   const runs = new RunCoordinator(providers, {
     assertWorkspace: (cwd) => options.paths.assertAllowed(cwd),
@@ -154,6 +161,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     async close() {
       clearInterval(heartbeat);
       providerLogins.close();
+      approvals?.close();
       unsubscribe();
       runs.close();
       for (const response of sseClients) response.end();
