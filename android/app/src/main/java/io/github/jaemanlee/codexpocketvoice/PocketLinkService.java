@@ -382,8 +382,6 @@ public class PocketLinkService extends Service {
                 for (byte[] expected : pins) {
                     if (MessageDigest.isEqual(actual, expected)) return;
                 }
-            } catch (CertificateException error) {
-                throw error;
             } catch (Exception error) {
                 throw new CertificateException("cannot verify server public key", error);
             }
