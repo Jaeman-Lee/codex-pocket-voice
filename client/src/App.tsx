@@ -55,6 +55,11 @@ import {
   type PendingPocketLinkBootstrap,
 } from "./pocket-link-pairing";
 import {
+  matchesPocketLinkDiscovery,
+  parsePocketLinkDiscoveryResult,
+  type PocketLinkDiscoveryCandidate,
+} from "./pocket-link-discovery";
+import {
   isRecentBackupPinObservation,
   pocketLinkSecurityStatus,
   POCKET_LINK_PIN_PROMOTION_MAX_AGE_MS,
@@ -212,6 +217,9 @@ export function App() {
   const [newPocketLinkPin, setNewPocketLinkPin] = useState("");
   const [newPocketLinkBackupPin, setNewPocketLinkBackupPin] = useState("");
   const [scanningPocketLinkQr, setScanningPocketLinkQr] = useState(false);
+  const [discoveringPocketLinks, setDiscoveringPocketLinks] = useState(false);
+  const [pocketLinkDiscoveryCandidates, setPocketLinkDiscoveryCandidates] = useState<PocketLinkDiscoveryCandidate[]>([]);
+  const [selectedPocketLinkDiscovery, setSelectedPocketLinkDiscovery] = useState<PocketLinkDiscoveryCandidate | null>(null);
   const [pendingPocketLinkBootstrap, setPendingPocketLinkBootstrap] = useState<PendingPocketLinkBootstrap | null>(null);
   const [pocketLinkStatuses, setPocketLinkStatuses] = useState<Partial<Record<DeviceId, PocketLinkStatus>>>({});
   const [pocketLinkStatusRevision, setPocketLinkStatusRevision] = useState(0);
@@ -2533,6 +2541,8 @@ export function App() {
       setNewPocketLinkPort(String(bootstrap.port));
       setNewPocketLinkPin(bootstrap.serverPublicKeyPin);
       setNewPocketLinkBackupPin("");
+      setPocketLinkDiscoveryCandidates([]);
+      setSelectedPocketLinkDiscovery(null);
       setPendingPocketLinkBootstrap(bootstrap);
       showToast("PocketLink QR을 읽었습니다. PC 정보와 pin을 확인한 뒤 등록하세요.");
     } catch (error) {
@@ -2543,11 +2553,56 @@ export function App() {
     }
   }
 
+  async function discoverPocketLinks() {
+    if (!isNativeApp() || discoveringPocketLinks || scanningPocketLinkQr) return;
+    setDiscoveringPocketLinks(true);
+    setPocketLinkDiscoveryCandidates([]);
+    setSelectedPocketLinkDiscovery(null);
+    setPendingPocketLinkBootstrap(null);
+    try {
+      const result = await NativeTunnel.discoverPocketLinks();
+      const candidates = parsePocketLinkDiscoveryResult(result);
+      setNewDeviceTransport("pocketlink");
+      setPocketLinkDiscoveryCandidates(candidates);
+      showToast(candidates.length > 0
+        ? `${candidates.length}개의 PocketLink 주소를 찾았습니다. PC 화면의 pin은 별도로 확인해야 합니다.`
+        : "광고가 켜진 PocketLink Companion을 같은 LAN에서 찾지 못했습니다.");
+    } catch (error) {
+      showToast(errorMessage(error));
+    } finally {
+      setDiscoveringPocketLinks(false);
+    }
+  }
+
+  function reviewPocketLinkDiscovery(candidate: PocketLinkDiscoveryCandidate) {
+    if (Date.now() >= candidate.expiresAt) {
+      showToast("LAN 검색 결과가 만료되었습니다. 다시 검색해 주세요.");
+      return;
+    }
+    setNewDeviceTransport("pocketlink");
+    setNewDeviceName(candidate.name);
+    setNewPocketLinkHost(candidate.host);
+    setNewPocketLinkPort(String(candidate.port));
+    setNewPocketLinkPin("");
+    setNewPocketLinkBackupPin("");
+    setPendingPocketLinkBootstrap(null);
+    setSelectedPocketLinkDiscovery(candidate);
+    showToast("LAN 주소만 선택했습니다. Companion 화면의 SPKI pin을 직접 대조·입력하세요.");
+  }
+
   async function createLinuxDevice() {
     let target: DeviceTarget | null = null;
     let configuredPocketLinkPort: number | null = null;
     try {
       const localPort = Number(newDevicePort);
+      if (selectedPocketLinkDiscovery && !matchesPocketLinkDiscovery(
+        selectedPocketLinkDiscovery,
+        newDeviceName,
+        newPocketLinkHost,
+        Number(newPocketLinkPort),
+      )) {
+        throw new Error("LAN 검색 결과가 만료되었거나 변경되었습니다. 다시 검색하거나 주소를 직접 입력해 주세요.");
+      }
       const qrBootstrap = newDeviceTransport === "pocketlink"
         && matchesPocketLinkConnection(
           pendingPocketLinkBootstrap,
@@ -2575,6 +2630,8 @@ export function App() {
       setNewPocketLinkHost("");
       setNewPocketLinkPin("");
       setNewPocketLinkBackupPin("");
+      setPocketLinkDiscoveryCandidates([]);
+      setSelectedPocketLinkDiscovery(null);
       setShowDeviceCreator(false);
       selectDevice(target.id);
       showToast(newDeviceTransport === "pocketlink"
@@ -3263,32 +3320,59 @@ export function App() {
                     {isNativeApp() && <option value="pocketlink">PocketLink · TLS pin 고정</option>}
                   </select>
                   {isNativeApp() && (
-                    <button type="button" className="pocket-link-qr-scan" disabled={scanningPocketLinkQr} onClick={() => void scanPocketLinkQr()}>
-                      {scanningPocketLinkQr ? "QR 카메라 여는 중…" : "PocketLink QR 스캔"}
-                    </button>
+                    <div className="pocket-link-bootstrap-actions">
+                      <button type="button" className="pocket-link-qr-scan" disabled={scanningPocketLinkQr || discoveringPocketLinks} onClick={() => void scanPocketLinkQr()}>
+                        {scanningPocketLinkQr ? "QR 카메라 여는 중…" : "PocketLink QR 스캔"}
+                      </button>
+                      <button type="button" className="pocket-link-lan-discovery" disabled={scanningPocketLinkQr || discoveringPocketLinks} onClick={() => void discoverPocketLinks()}>
+                        {discoveringPocketLinks ? "LAN 검색 중 · 8초…" : "같은 LAN에서 찾기"}
+                      </button>
+                    </div>
                   )}
                   <div className="device-create-row">
-                    <input value={newDeviceName} maxLength={60} placeholder="예: 작업실 PC" aria-label="Linux PC 이름" onChange={(event) => setNewDeviceName(event.target.value)} />
+                    <input value={newDeviceName} maxLength={60} placeholder="예: 작업실 PC" aria-label="Linux PC 이름" onChange={(event) => { setNewDeviceName(event.target.value); setSelectedPocketLinkDiscovery(null); }} />
                     <input value={newDevicePort} inputMode="numeric" maxLength={5} placeholder="8790" aria-label="로컬 터널 포트" onChange={(event) => setNewDevicePort(event.target.value.replace(/\D/g, ""))} />
                     {newDeviceTransport === "termux" && <button type="button" onClick={() => void createLinuxDevice()}>등록</button>}
                   </div>
                   {newDeviceTransport === "pocketlink" && (
                     <div className="pocket-link-fields">
+                      {pocketLinkDiscoveryCandidates.length > 0 && !selectedPocketLinkDiscovery && (
+                        <div className="pocket-link-discovery-list" aria-label="발견한 PocketLink Companion">
+                          <strong>발견한 주소 · 아직 신뢰되지 않음</strong>
+                          <small>PC를 고른 뒤에도 Companion 터미널의 SPKI pin을 직접 입력해야 합니다.</small>
+                          {pocketLinkDiscoveryCandidates.map((candidate) => (
+                            <button
+                              type="button"
+                              key={`${candidate.name}-${candidate.host}-${candidate.port}`}
+                              onClick={() => reviewPocketLinkDiscovery(candidate)}
+                            >
+                              <span>{candidate.name}</span>
+                              <small>{candidate.host}:{candidate.port}</small>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {selectedPocketLinkDiscovery && (
+                        <div className="pocket-link-discovery-review">
+                          <strong>LAN 주소만 선택됨 · pin은 미확인</strong>
+                          <small>{selectedPocketLinkDiscovery.host}:{selectedPocketLinkDiscovery.port} · Companion 화면과 SPKI pin을 별도 대조하세요.</small>
+                        </div>
+                      )}
                       {pendingPocketLinkBootstrap && (
                         <div className="pocket-link-qr-review">
                           <strong>QR에서 읽음 · 반드시 PC 화면과 대조</strong>
                           <small>장치 {pendingPocketLinkBootstrap.deviceId.slice(0, 8)} · {new Date(pendingPocketLinkBootstrap.expiresAt).toLocaleTimeString()} 만료</small>
                         </div>
                       )}
-                      <input value={newPocketLinkHost} maxLength={253} autoCapitalize="none" spellCheck={false} placeholder="Companion LAN 호스트" aria-label="PocketLink Companion 호스트" onChange={(event) => setNewPocketLinkHost(event.target.value)} />
-                      <input value={newPocketLinkPort} inputMode="numeric" maxLength={5} placeholder="8789" aria-label="PocketLink TLS 포트" onChange={(event) => setNewPocketLinkPort(event.target.value.replace(/\D/g, ""))} />
+                      <input value={newPocketLinkHost} maxLength={253} autoCapitalize="none" spellCheck={false} placeholder="Companion LAN 호스트" aria-label="PocketLink Companion 호스트" onChange={(event) => { setNewPocketLinkHost(event.target.value); setSelectedPocketLinkDiscovery(null); }} />
+                      <input value={newPocketLinkPort} inputMode="numeric" maxLength={5} placeholder="8789" aria-label="PocketLink TLS 포트" onChange={(event) => { setNewPocketLinkPort(event.target.value.replace(/\D/g, "")); setSelectedPocketLinkDiscovery(null); }} />
                       <input className="pin" value={newPocketLinkPin} maxLength={51} autoCapitalize="none" spellCheck={false} placeholder="sha256/… 기본 SPKI pin" aria-label="PocketLink 기본 SPKI pin" onChange={(event) => setNewPocketLinkPin(event.target.value.trim())} />
                       <input className="pin" value={newPocketLinkBackupPin} maxLength={51} autoCapitalize="none" spellCheck={false} placeholder="sha256/… 교체용 pin · 선택" aria-label="PocketLink 교체용 SPKI pin" onChange={(event) => setNewPocketLinkBackupPin(event.target.value.trim())} />
                       <button type="button" onClick={() => void createLinuxDevice()}>pin 확인 후 등록</button>
                     </div>
                   )}
                   <small>{newDeviceTransport === "pocketlink"
-                    ? "Companion 터미널 QR을 스캔하거나 호스트·포트·SPKI pin을 직접 입력합니다. QR 결과는 등록 전 다시 보여주며 설정은 Keystore로 보호되고 SSH로 자동 우회하지 않습니다."
+                    ? "QR을 스캔하거나 같은 LAN에서 주소만 찾을 수 있습니다. LAN 광고는 인증 수단이 아니므로 PC 화면의 SPKI pin을 별도로 대조합니다. 설정은 Keystore로 보호되고 SSH로 자동 우회하지 않습니다."
                     : "현재 검증된 Termux/SSH 연결을 rollback 호환 경로로 유지합니다."}</small>
                 </div>
               )}

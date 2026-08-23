@@ -23,12 +23,17 @@ export CODEX_POCKET_LINK_PORT=8789
 export CODEX_POCKET_LINK_ADVERTISE_HOST=<companion-host>
 export CODEX_POCKET_LINK_CERT_FILE=<private-config-directory>/pocket-link-cert.pem
 export CODEX_POCKET_LINK_KEY_FILE=<private-config-directory>/pocket-link-key.pem
+# 선택 사항: 같은 LAN에서 주소 검색 허용
+export CODEX_POCKET_LINK_DISCOVERY=1
 ```
 
 `CODEX_POCKET_LINK_HOST`는 listener bind 주소이고 `CODEX_POCKET_LINK_ADVERTISE_HOST`는 Android가 실제로
 접속하며 인증서 SAN에 포함된 주소다. private key의 디렉터리·소유자·mode, symlink/hardlink 여부,
 certificate/key 일치, 인증서 유효기간과 advertise host를 모두 검증하지 못하면 Companion은 시작하지
 않는다. TLS는 1.2 또는 1.3만 사용한다. 방화벽에서는 필요한 신뢰 LAN에서 이 포트만 허용한다.
+`CODEX_POCKET_LINK_DISCOVERY`는 생략하거나 `0`이면 꺼지고 정확히 `1`일 때만 DNS-SD 광고를 연다.
+광고는 `CODEX_DEVICE_NAME`으로 정한 PC 이름, TLS port와 discovery protocol version `1`만 담는다.
+SPKI pin, pairing code, device ID, token, Provider credential과 workspace·project 정보는 광고하지 않는다.
 
 Companion은 다음 공개 정보만 터미널에 표시한다.
 
@@ -59,6 +64,14 @@ QR_CODE만 읽고 barcode 이미지를 저장하지 않으며 2분 뒤 scanner�
 
 카메라가 없거나 QR을 쓰지 않을 때는 `PocketLink · TLS pin 고정`을 선택하고 Companion이 표시한 host,
 port와 SPKI pin을 직접 입력할 수 있다. 선택적으로 서로 다른 교체용 backup pin도 미리 등록할 수 있다.
+
+Companion에서 discovery를 켰다면 Android의 `같은 LAN에서 찾기`를 사용해 주소 입력만 줄일 수 있다.
+검색은 사용자가 누른 동안 전경에서 8초만 실행되고 최대 16개 후보와 private IPv4 또는 IPv6 ULA만
+받는다. 후보는 2분 뒤 만료되며, Android는 광고된 PC 이름·주소·port를 신뢰정보로 저장하지 않는다.
+후보를 골라도 pin 입력란은 비워 두고 Companion 터미널에 표시된 `sha256/...` SPKI pin을 별도 경로로
+직접 대조·입력해야 한다. 따라서 악성 LAN 광고가 있어도 자동 페어링·연결·SSH fallback은 일어나지
+않는다. 발견된 IP가 Companion 인증서 SAN에 없다면 QR 또는 수동 입력으로 인증서의 canonical host를
+사용한다.
 
 - host·port·pin은 WebView/localStorage가 아니라 Android Keystore AES-GCM 설정에 저장한다.
 - 암호문은 local port 이름을 AAD로 묶어 다른 등록 항목으로 옮길 수 없다.
@@ -139,11 +152,16 @@ transport에 사용하지 않는다. 관련 기준은 Android 공식 문서의
 camera는 Apache-2.0 [ZXing Android Embedded](https://github.com/journeyapps/zxing-android-embedded)의
 QR-only capture activity를 사용하며 barcode image output을 끈다.
 
+LAN 광고는 MIT `bonjour-service`를 사용하고 Android 검색은 platform `NsdManager`를 사용한다. 구형
+Android에서 mDNS 수신을 위해 `CHANGE_WIFI_MULTICAST_STATE`와 검색 시간에만 유지하는 multicast lock을
+사용한다. 현재 target SDK 36은 `INTERNET` 권한으로 같은 LAN 접근이 가능하다. target SDK를 37 이상으로
+올릴 때에는 Android의 local-network runtime permission과 system picker 경로를 다시 검토해야 한다.
+
 ## 현재 제한과 다음 단계
 
-이 checkpoint는 수동 LAN bootstrap이며 PocketLink의 최종 완료판이 아니다.
+이 checkpoint는 검토형 같은-LAN 주소 discovery까지 포함하지만 PocketLink의 최종 완료판이 아니다.
 
-- LAN discovery/P2P와 outbound relay fallback 미구현
+- DNS-SD 주소 discovery는 구현됐지만 Wi-Fi Direct 등 P2P와 outbound relay fallback은 미구현
 - 서버 인증서 staged pin 교체와 Android client identity A/B 교체는 구현됐지만 실기기·실제 LAN 전환
   acceptance 미검증
 - 부팅 후 자동 복구, Android 계측 기반 CPU·메모리·배터리 release gate 미검증

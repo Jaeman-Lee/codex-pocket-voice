@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 import { CodexAppServerClient } from "./app-server-client.js";
 import { PathPolicy } from "./path-policy.js";
 import { createPocketLinkBootstrapUri } from "./pocket-link-bootstrap.js";
+import {
+  pocketLinkDiscoveryEnabled,
+  startPocketLinkDiscoveryAdvertisement,
+} from "./pocket-link-discovery.js";
 import { renderPocketLinkTerminalQr } from "./pocket-link-terminal-qr.js";
 import { loadPocketLinkTlsConfig } from "./pocket-link.js";
 import { startWebServer } from "./web-server.js";
@@ -23,6 +27,10 @@ if (!staticDir) throw new Error("Could not find client/dist; run npm run build:c
 const port = Number(process.env.CODEX_WEB_PORT ?? "8787");
 if (!Number.isInteger(port) || port < 0 || port > 65_535) throw new Error("CODEX_WEB_PORT is invalid");
 const pocketLink = await loadPocketLinkTlsConfig();
+const discoveryEnabled = pocketLinkDiscoveryEnabled();
+if (discoveryEnabled && !pocketLink) {
+  throw new Error("CODEX_POCKET_LINK_DISCOVERY requires a configured PocketLink TLS listener");
+}
 const running = await startWebServer({
   client,
   paths,
@@ -31,6 +39,15 @@ const running = await startWebServer({
   port,
   pocketLink,
 });
+const discovery = discoveryEnabled && running.pocketLink
+  ? startPocketLinkDiscoveryAdvertisement({
+      deviceName: running.deviceName,
+      port: running.pocketLink.port,
+      onError: () => {
+        process.stderr.write("[codex-web] PocketLink LAN discovery advertisement failed\n");
+      },
+    })
+  : undefined;
 
 process.stderr.write(`[codex-web] Ready on http://${running.host}:${running.port}\n`);
 process.stderr.write(`[codex-web] Allowed roots: ${paths.roots.join(", ")}\n`);
@@ -67,6 +84,7 @@ let closing = false;
 async function close(): Promise<void> {
   if (closing) return;
   closing = true;
+  discovery?.close();
   await running.close();
   await client.close();
 }

@@ -53,6 +53,9 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   assert.match(pocketLinkFields, /minmax\(0,\s*1fr\)/);
   assert.match(css, /\.pocket-link-qr-review/);
   assert.match(css, /\.pocket-link-qr-scan/);
+  assert.match(css, /\.pocket-link-bootstrap-actions \{[^}]*minmax\(0,\s*1fr\)/);
+  assert.match(css, /\.pocket-link-discovery-list button span[^}]*overflow-wrap:\s*anywhere/);
+  assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.pocket-link-bootstrap-actions \{[^}]*minmax\(0,\s*1fr\)/);
   assert.match(css, /\.pin-staging-review > input/);
   assert.match(css, /\.pin-staging-review > div\.three-actions \{[^}]*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(css, /\.identity-rotation-review > div \{[^}]*minmax\(0,\s*1fr\)[^}]*minmax\(0,\s*2fr\)/);

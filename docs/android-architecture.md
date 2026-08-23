@@ -72,7 +72,12 @@ Companion에 개인키 보유를 증명한다. 최초 Gateway pairing은 client 
 Keystore-backed 보안 저장소에 두고, 현재 alias를 보존한 채 반대 A/B 슬롯에 새 non-exportable key를
 만든다. 새 key의 실제 TLS proof를 Companion이 영속화하고 이전 binding을 거부한 뒤에만 native 계층이
 이전 alias를 삭제한다. 암호화 pending 슬롯은 앱 process 회수와 응답 유실 뒤 복구되며, 불확실하면 두
-key를 유지하고 SSH로 자동 우회하지 않는다. 자동 discovery/P2P와 relay는 아직 구현하지 않았다.
+key를 유지하고 SSH로 자동 우회하지 않는다.
+같은 LAN 주소 discovery는 사용자가 누를 때만 Android `NsdManager`로 8초 동안 실행한다. native policy가
+service type과 TXT version을 exact-match하고 후보를 16개, private IPv4/IPv6 ULA로 제한한 뒤 2분짜리
+검토 hint만 WebView에 보낸다. 선택해도 pin은 비워 두므로 Companion 터미널의 SPKI pin을 수동으로
+대조해야 하며 자동 페어링·연결·SSH fallback은 없다. Wi-Fi Direct 같은 P2P와 relay는 아직 구현하지
+않았다.
 사용자가 연결 센터에서 명시적으로 켜고 Android runtime 권한을 허용하면, WebView의 live SSE가
 백그라운드에서 실행되는 동안 완료·승인·오류를 native private notification으로 전달한다. 알림에는
 프롬프트·경로·응답을 넣지 않으며 앱 전용 random action token과 device/operation ID만 사용한다. 탭하면

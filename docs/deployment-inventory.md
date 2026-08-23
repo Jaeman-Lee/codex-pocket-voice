@@ -16,7 +16,7 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | V2 development component | Version / revision | State |
 | --- | --- | --- |
 | Source version | `2.0.0` / Android `versionCode 20000` | development only; not field installed |
-| Target branch | `feature/v2-control-plane` | approved crash-recoverable text change tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, live branch/worktree identity and staged PocketLink rotations implemented; discovery/relay and model eval next |
+| Target branch | `feature/v2-control-plane` | approved crash-recoverable text change tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, live branch/worktree identity, staged PocketLink rotations and reviewed same-LAN discovery implemented; P2P/relay and model eval next |
 | Gateway protocol | maximum 3, minimum 2 | v1 rollout compatibility retained |
 | Codex app-server schema | `codex-cli 0.149.0` | generated bindings and no-model real integration verified |
 | Current v1 APK | 1.8.2 candidate | signed APK/checksum/SBOM prepared from hotfix PR #4; install not performed |
@@ -30,7 +30,7 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | Android work notifications | opt-in native channel | generic private completed/approval/error alerts and authenticated retained-operation navigation implemented while WebView SSE is alive; process-death delivery and field acceptance pending |
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
-| PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | reviewed QR, observed backup-pin server certificate promotion and recoverable Keystore A/B client identity rotation implemented; discovery/P2P, relay and field validation pending |
+| PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD address discovery, observed backup-pin server certificate promotion and recoverable Keystore A/B client identity rotation implemented; P2P, relay and field validation pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
 
 Official release discovery checkpoint decision: 공식 GitHub 정식판 조회·다운로드는 새 v2 user workflow이므로
@@ -200,6 +200,16 @@ Companion이 새 key proof를 확인하고 이전 binding을 거부한 뒤에만
 불확실하면 두 key를 보존하고 자동 rollback/downgrade하지 않는다. 이 checkpoint도 source/CI-only이며
 APK 전달·설치, Companion 재시작 또는 LAN 노출은 하지 않는다. current 1.8.2 후보와 rollback 1.8.1은
 변경하지 않는다.
+
+PocketLink LAN discovery checkpoint decision: 같은 LAN의 Companion 주소 후보를 찾는 새 user-visible
+workflow이므로 이미 정한 `breaking`/`2.0.0`, Android `versionCode 20000`, 대상
+`feature/v2-control-plane`을 유지한다. Companion 광고는 정확히 `CODEX_POCKET_LINK_DISCOVERY=1`일 때만
+PC 이름·TLS port·protocol version을 내보내고 신뢰 pin·pairing code·device ID·token·프로젝트 정보는
+내보내지 않는다. Android는 user-triggered 8초/16후보/private-address/2분 review만 제공하고 pin 수동
+대조 전에는 연결·페어링하지 않으며 SSH로 fallback하지 않는다. 이 변경은 source와 CI-only APK만
+갱신하며 아직 전달하지 않은 이전 v2 CI artifact를 같은 pre-handoff `2.0.0` candidate로 대체한다.
+APK를 현장 전달·설치하거나 Companion을 재시작·LAN에 노출하지 않고, current v1 후보 1.8.2와 별도
+staged 1.8.3, 검증된 rollback 1.8.1을 그대로 보존한다.
 
 Update decision: `1.8.0`은 새 교차 기기 세션 흐름과 Companion API를 추가하므로
 `feature`/minor 변경이다. Draft feature PR에서 유지하고 현장 승인 전에는 `main`에 병합하지

@@ -16,6 +16,8 @@ import com.getcapacitor.annotation.PermissionCallback;
 import com.journeyapps.barcodescanner.ScanContract;
 import com.journeyapps.barcodescanner.ScanIntentResult;
 import com.journeyapps.barcodescanner.ScanOptions;
+import java.util.List;
+import org.json.JSONArray;
 
 @CapacitorPlugin(
     name = "PocketTunnel",
@@ -25,6 +27,16 @@ public class PocketTunnelPlugin extends Plugin {
     private static final String TERMUX_PACKAGE = "com.termux";
     private static final String TERMUX_SERVICE = "com.termux.app.RunCommandService";
     private static final long PIN_PROMOTION_MAX_AGE_MS = 120_000L;
+    private static final long DISCOVERY_REVIEW_MAX_AGE_MS = 120_000L;
+    private PocketLinkNsdDiscovery activeDiscovery;
+
+    @Override
+    protected synchronized void handleOnDestroy() {
+        PocketLinkNsdDiscovery discovery = activeDiscovery;
+        activeDiscovery = null;
+        if (discovery != null) discovery.cancel();
+        super.handleOnDestroy();
+    }
 
     @PluginMethod
     public void scanPocketLinkQr(PluginCall call) {
@@ -59,6 +71,54 @@ public class PocketTunnelPlugin extends Plugin {
         response.put("cancelled", false);
         response.put("value", contents);
         call.resolve(response);
+    }
+
+    @PluginMethod
+    public synchronized void discoverPocketLinks(PluginCall call) {
+        if (activeDiscovery != null) {
+            call.reject("PocketLink LAN 검색이 이미 진행 중입니다.");
+            return;
+        }
+        activeDiscovery = new PocketLinkNsdDiscovery(getContext(), new PocketLinkNsdDiscovery.Callback() {
+            @Override
+            public void onComplete(List<PocketLinkDiscoveryPolicy.Candidate> candidates) {
+                resolvePocketLinkDiscovery(call, candidates);
+            }
+
+            @Override
+            public void onError() {
+                rejectPocketLinkDiscovery(call);
+            }
+        });
+        activeDiscovery.start();
+    }
+
+    private synchronized void resolvePocketLinkDiscovery(
+            PluginCall call,
+            List<PocketLinkDiscoveryPolicy.Candidate> candidates
+    ) {
+        if (activeDiscovery == null) return;
+        activeDiscovery = null;
+        long expiresAt = System.currentTimeMillis() + DISCOVERY_REVIEW_MAX_AGE_MS;
+        JSONArray values = new JSONArray();
+        for (PocketLinkDiscoveryPolicy.Candidate candidate : candidates) {
+            JSObject value = new JSObject();
+            value.put("name", candidate.name);
+            value.put("host", candidate.host);
+            value.put("port", candidate.port);
+            value.put("expiresAt", expiresAt);
+            values.put(value);
+        }
+        JSObject response = new JSObject();
+        response.put("candidates", values);
+        response.put("windowMs", PocketLinkNsdDiscovery.DISCOVERY_WINDOW_MS);
+        call.resolve(response);
+    }
+
+    private synchronized void rejectPocketLinkDiscovery(PluginCall call) {
+        if (activeDiscovery == null) return;
+        activeDiscovery = null;
+        call.reject("같은 LAN에서 PocketLink Companion을 찾지 못했습니다.");
     }
 
     @PluginMethod

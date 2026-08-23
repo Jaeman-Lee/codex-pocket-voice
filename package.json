@@ -29,6 +29,7 @@
     "@capacitor/core": "8.5.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "better-sqlite3": "11.10.0",
+    "bonjour-service": "1.4.4",
     "openai": "6.49.0",
     "qrcode-terminal": "0.12.0",
     "react": "19.2.8",

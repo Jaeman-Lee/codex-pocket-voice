@@ -156,13 +156,19 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   이후 PocketLink 요청에서 인증서 누락·만료·pin 불일치를 거부한다. 기존 v1 auth state는 version을
   바꾸지 않는 선택 필드로 확장하고 TLS binding을 임의로 만들지 않으며, TLS session resume을 꺼 매
   연결에서 새 proof를 요구한다.
-- 이 PocketLink checkpoint는 수동 LAN bootstrap이다. discovery/P2P, relay와 background 계측은 남아
-  있으며 Termux/SSH를 검증된 rollback adapter로 유지한다.
+- 이 PocketLink checkpoint는 검토형 같은-LAN 주소 bootstrap까지 포함한다. Wi-Fi Direct 등 P2P,
+  relay와 background 계측은 남아 있으며 Termux/SSH를 검증된 rollback adapter로 유지한다.
 - PocketLink QR bootstrap을 추가했다. TTY Companion은 host·TLS port·server SPKI pin·device ID/name과
   기존 10분 pairing code만 담은 QR을 출력하고 Provider key·프로젝트 경로는 포함하지 않는다. Android는
   Apache-2.0 ZXing embedded scanner를 로컬에서 QR_CODE 전용·이미지 미저장·2분 timeout으로 실행한다.
   앱은 2,048자/고정 field/version/host/port/pin/code/device/만료를 검증하고 등록 전 내용을 다시 보여준다.
   사용자가 host·port·pin을 편집하거나 실제 Companion device ID가 QR과 다르면 QR code를 폐기한다.
+- opt-in PocketLink DNS-SD 광고와 Android의 `같은 LAN에서 찾기`를 추가했다. Companion은 PC 이름,
+  TLS port와 protocol version만 광고하고 pin·pairing code·device ID·token·workspace는 보내지 않는다.
+  Android 검색은 사용자가 누른 전경 8초, 최대 16개, private IPv4/IPv6 ULA와 2분 review로 제한한다.
+  후보를 선택해도 pin은 비워 두고 Companion 터미널의 SPKI pin을 직접 대조해야 하며 자동 페어링·연결·
+  SSH fallback은 하지 않는다. 광고는 MIT `bonjour-service`, Android 검색은 platform `NsdManager`를
+  사용한다.
 - 기존 PocketLink 연결에 새 server backup SPKI pin을 준비하는 화면과 staged 인증서 교체를 추가했다.
   새 pin은 실제 HTTPS hostname/pin TLS handshake가 성공해도 자동 승격되지 않는다. 앱은 성공 슬롯과
   시각만 표시하고, 사용자가 2분 안에 대상·폐기 경고를 두 번 확인해야 native 계층이 새 pin을 primary로
