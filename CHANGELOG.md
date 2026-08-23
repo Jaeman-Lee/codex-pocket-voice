@@ -90,8 +90,13 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   Android `connectedDevice` foreground service는 Keystore AES-GCM으로 host·port·기본/교체용 SPKI pin을
   보호하고 `127.0.0.1`에만 bounded forward를 연다. 인증서 유효기간·HTTPS hostname·SPKI pin 중 하나라도
   맞지 않으면 연결을 거부하고 Termux/SSH로 자동 downgrade하지 않는다.
-- 이 PocketLink checkpoint는 수동 LAN bootstrap이다. QR/discovery, 비대칭 device key와 mTLS, relay,
-  자동 key rotation, background 계측은 남아 있으며 Termux/SSH를 검증된 rollback adapter로 유지한다.
+- AndroidKeyStore에 local-port별 non-exportable P-256 device identity를 만들고 TLS client certificate로
+  개인키 보유를 증명한다. Companion은 최초 pairing 때 client SPKI pin을 bearer token hash에 결합하고,
+  이후 PocketLink 요청에서 인증서 누락·만료·pin 불일치를 거부한다. 기존 v1 auth state는 version을
+  바꾸지 않는 선택 필드로 확장하고 TLS binding을 임의로 만들지 않으며, TLS session resume을 꺼 매
+  연결에서 새 proof를 요구한다.
+- 이 PocketLink checkpoint는 수동 LAN bootstrap이다. QR/discovery, relay, 자동 key rotation,
+  background 계측은 남아 있으며 Termux/SSH를 검증된 rollback adapter로 유지한다.
 - 이 기준선은 CI·개발용이며 v1.8.1 설치본이나 실행 중인 Companion을 교체하지 않는다.
 
 ## 1.8.2 hotfix candidate — project-scoped session handoff

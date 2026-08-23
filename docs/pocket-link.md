@@ -1,7 +1,7 @@
 # PocketLink TLS bootstrap
 
-v2의 첫 PocketLink checkpoint는 Termux 없이 같은 LAN의 Linux Companion에 연결할 수 있는 opt-in
-TLS transport다. 기본 `127.0.0.1:8787` Gateway와 Termux/SSH 경로는 rollback adapter로 계속 유지하며,
+v2 PocketLink checkpoint는 Termux 없이 같은 LAN의 Linux Companion에 연결할 수 있는 opt-in
+mTLS transport다. 기본 `127.0.0.1:8787` Gateway와 Termux/SSH 경로는 rollback adapter로 계속 유지하며,
 PocketLink listener는 인증서와 환경 변수를 명시적으로 준비한 경우에만 시작한다.
 
 ## Linux Companion 설정
@@ -45,11 +45,23 @@ SPKI pin을 입력한다. 선택적으로 서로 다른 교체용 backup pin도 
 
 - host·port·pin은 WebView/localStorage가 아니라 Android Keystore AES-GCM 설정에 저장한다.
 - 암호문은 local port 이름을 AAD로 묶어 다른 등록 항목으로 옮길 수 없다.
+- 등록 local port별 non-exportable P-256 private key와 self-signed client certificate를
+  AndroidKeyStore에 만든다. private key bytes는 Java·WebView·저장소로 내보내지 않는다.
 - foreground service는 `127.0.0.1:<local-port>`에만 bind하고 최대 8개 연결, 고정 16-thread pool로
   CPU·메모리 폭주를 제한한다.
 - remote certificate의 유효기간, HTTPS hostname과 leaf SPKI pin을 모두 확인한다.
+- Companion은 모든 PocketLink TLS 연결에서 client certificate를 요구한다. 최초 Gateway pairing 때
+  그 client SPKI pin을 bearer token hash에 결합하고 이후 두 proof가 모두 일치해야 API를 허용한다.
+- client certificate 누락·만료·pin 불일치는 401로 거부한다. TLS ticket/session resume을 끄고 매
+  연결에서 private-key proof를 새로 확인한다.
 - pin 불일치나 설정 손상 때 Termux/SSH로 자동 downgrade하지 않는다.
 - Gateway bearer token은 기존처럼 Android 보안 저장소에 두며 Companion에는 hash만 남긴다.
+- PocketLink 등록을 삭제하면 암호화 연결 설정과 해당 local-port device identity를 함께 삭제한다.
+
+Gateway auth state는 1.8.1 rollback reader가 계속 열 수 있도록 schema version 1을 유지하고 client에
+선택적인 TLS pin field만 추가한다. 기존 token hash는 보존하지만 근거 없는 TLS binding을 만들지
+않으므로, 이전 토큰을 PocketLink에서 사용하려면 같은 Android device certificate를 제시한 상태로
+pairing code를 다시 입력해야 한다. 기존 loopback/SSH rollback 경로에서는 종전 token 동작을 유지한다.
 
 Android target SDK 36에서는 외부 Linux 장치와 지속적인 네트워크 연결이므로 `connectedDevice`
 foreground-service type을 사용한다. `dataSync` service는 Android 15+의 시간 제한 대상이라 장시간 SSE
@@ -62,7 +74,7 @@ transport에 사용하지 않는다. 관련 기준은 Android 공식 문서의
 이 checkpoint는 수동 LAN bootstrap이며 PocketLink의 최종 완료판이 아니다.
 
 - QR scanning, LAN discovery/P2P와 outbound relay fallback 미구현
-- Android 비대칭 device key와 mTLS proof, 기기별 key rotation protocol 미구현
+- 기기별 key rotation protocol과 certificate 교체 UX/backup pin 승격 미구현
 - certificate 교체 UX와 backup pin 승격 미구현
 - 부팅 후 자동 복구, Android 계측 기반 CPU·메모리·배터리 release gate 미검증
 - 완료·승인·오류 알림 deep link 미구현

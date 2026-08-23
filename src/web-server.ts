@@ -1,8 +1,10 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
+import { constants as cryptoConstants } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
 import { basename, dirname, extname, isAbsolute, join, relative, sep } from "node:path";
+import { TLSSocket } from "node:tls";
 import type { ThreadListResponse } from "../generated/app-server/v2/ThreadListResponse";
 import type { ThreadReadResponse } from "../generated/app-server/v2/ThreadReadResponse";
 import type { CodexProviderClient } from "./providers/codex-provider.js";
@@ -29,7 +31,7 @@ import { createWorkspaceChangeTools } from "./workspace-change-tools.js";
 import { createWorkspaceExecutionTools } from "./workspace-execution-tools.js";
 import { LocalToolBroker } from "./tool-broker.js";
 import { EventJournal, EventJournalExportError, type JournalReplayEvent } from "./event-journal.js";
-import type { PocketLinkTlsConfig } from "./pocket-link.js";
+import { publicKeyPin, type PocketLinkTlsConfig } from "./pocket-link.js";
 import {
   RunCoordinator,
   RunCoordinatorError,
@@ -177,9 +179,14 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   });
 
   const requestListener = (request: IncomingMessage, response: ServerResponse) => {
-    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, sseClients).catch(
+    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, sseClients, undefined).catch(
       (error) => sendError(response, error),
     );
+  };
+  const pocketLinkRequestListener = (request: IncomingMessage, response: ServerResponse) => {
+    void Promise.resolve().then(() => pocketLinkClientPublicKeyPin(request)).then((tlsPublicKeyPin) => (
+      handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, sseClients, tlsPublicKeyPin)
+    )).catch((error) => sendError(response, error));
   };
   const server = createServer(requestListener);
   configureServer(server);
@@ -189,11 +196,15 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
         key: options.pocketLink.privateKey,
         minVersion: "TLSv1.2",
         maxVersion: "TLSv1.3",
-      }, requestListener)
+        requestCert: true,
+        rejectUnauthorized: false,
+        secureOptions: cryptoConstants.SSL_OP_NO_TICKET,
+      }, pocketLinkRequestListener)
     : undefined;
   if (pocketLinkServer) {
     configureServer(pocketLinkServer);
     pocketLinkServer.maxConnections = 64;
+    pocketLinkServer.on("resumeSession", (_sessionId, callback) => callback(null, null));
   }
 
   const heartbeat = setInterval(() => {
@@ -283,6 +294,21 @@ async function closeServer(server: ListeningServer | undefined): Promise<void> {
   });
 }
 
+function pocketLinkClientPublicKeyPin(request: IncomingMessage): string {
+  if (!(request.socket instanceof TLSSocket) || !request.socket.encrypted) {
+    throw new GatewayAuthError(401, "TLS_DEVICE_PROOF_REQUIRED", "PocketLink 단말 인증서가 필요합니다.");
+  }
+  const certificate = request.socket.getPeerX509Certificate();
+  if (!certificate) {
+    throw new GatewayAuthError(401, "TLS_DEVICE_PROOF_REQUIRED", "PocketLink 단말 인증서가 필요합니다.");
+  }
+  const now = Date.now();
+  if (now < Date.parse(certificate.validFrom) || now > Date.parse(certificate.validTo)) {
+    throw new GatewayAuthError(401, "TLS_DEVICE_PROOF_EXPIRED", "PocketLink 단말 인증서가 유효하지 않습니다.");
+  }
+  return publicKeyPin(certificate);
+}
+
 async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
@@ -297,6 +323,7 @@ async function handleRequest(
   approvals: ApprovalBroker,
   journal: EventJournal,
   sseClients: Set<ServerResponse>,
+  tlsPublicKeyPin: string | undefined,
 ): Promise<void> {
   setSecurityHeaders(response);
   const host = request.headers.host;
@@ -311,7 +338,7 @@ async function handleRequest(
       response.end();
       return;
     }
-    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, sseClients);
+    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, sseClients, tlsPublicKeyPin);
     return;
   }
   await serveStatic(request, response, url.pathname, options.staticDir);
@@ -332,6 +359,7 @@ async function handleApi(
   approvals: ApprovalBroker,
   journal: EventJournal,
   sseClients: Set<ServerResponse>,
+  tlsPublicKeyPin: string | undefined,
 ): Promise<void> {
   if (request.method === "GET" && url.pathname === "/api/status") {
     sendJson(response, 200, {
@@ -357,11 +385,11 @@ async function handleApi(
   if (request.method === "POST" && url.pathname === "/api/pairing/claim") {
     assertSameOrigin(request);
     const body = await readJson(request) as { code?: unknown; label?: unknown };
-    sendJson(response, 201, await auth.claim(body.code, body.label));
+    sendJson(response, 201, await auth.claim(body.code, body.label, tlsPublicKeyPin));
     return;
   }
 
-  const authenticatedClient = auth.requireAuthorization(request.headers.authorization);
+  const authenticatedClient = auth.requireAuthorization(request.headers.authorization, tlsPublicKeyPin);
 
   if (request.method === "GET" && url.pathname === "/api/health") {
     const initialized = await options.client.start();

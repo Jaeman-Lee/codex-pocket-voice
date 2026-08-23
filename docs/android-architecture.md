@@ -39,8 +39,11 @@ v2 개발판은 명시적으로 설정한 경우 Android native foreground servi
 표시된 SPKI pin과 host를 사용자가 화면에서 확인하며, 설정은 Android Keystore AES-GCM으로 보호한다.
 인증서 유효기간, hostname 또는 기본/교체용 pin 검증이 실패하면 SSH로 자동 우회하지 않는다.
 
-이 단계는 수동 LAN bootstrap이며 QR, discovery/P2P, 비대칭 device key/mTLS, relay와 자동 rotation은
-아직 구현하지 않았다. 자세한 설정과 보안 경계는 [PocketLink TLS bootstrap](pocket-link.md)에 있다.
+local port별 non-exportable P-256 identity도 AndroidKeyStore에서 만들고 TLS client certificate로
+Companion에 개인키 보유를 증명한다. 최초 Gateway pairing은 client SPKI pin과 bearer token hash를
+결합하며 이후 PocketLink 요청은 둘이 모두 일치해야 한다. 이 단계는 수동 LAN bootstrap이며 QR,
+discovery/P2P, relay와 자동 rotation은 아직 구현하지 않았다. 자세한 설정과 보안 경계는
+[PocketLink TLS bootstrap](pocket-link.md)에 있다.
 
 ## 완전 독립형 SSH의 호환 후속 단계
 

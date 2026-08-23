@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { request as httpsRequest } from "node:https";
+import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 import type { TLSSocket } from "node:tls";
 import test from "node:test";
 import type { Thread } from "../generated/app-server/v2/Thread";
@@ -33,6 +33,16 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   t.after(() => rm(authHome, { recursive: true, force: true }));
   t.after(() => rm(tlsHome, { recursive: true, force: true }));
   const tlsFiles = await createTestCertificate(tlsHome, "127.0.0.1");
+  const clientFiles = await createTestCertificate(tlsHome, "pocket-client.test", "client");
+  const otherClientFiles = await createTestCertificate(tlsHome, "other-client.test", "other-client");
+  const clientIdentity = {
+    certificate: await readFile(clientFiles.certificateFile),
+    privateKey: await readFile(clientFiles.privateKeyFile),
+  };
+  const otherClientIdentity = {
+    certificate: await readFile(otherClientFiles.certificateFile),
+    privateKey: await readFile(otherClientFiles.privateKeyFile),
+  };
   const pocketLink = await loadPocketLinkTlsConfig({
     CODEX_POCKET_LINK_HOST: "127.0.0.1",
     CODEX_POCKET_LINK_PORT: "8789",
@@ -66,12 +76,48 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   t.after(() => running.close());
   const base = `http://127.0.0.1:${running.port}`;
   assert.equal(running.pocketLink?.publicKeyPin, pocketLink.publicKeyPin);
-  const secureStatus = await secureJson(running.pocketLink!.port, `127.0.0.1:${running.port}`);
+  const missingDeviceProof = await secureJson(running.pocketLink!.port, `127.0.0.1:${running.port}`);
+  assert.equal(missingDeviceProof.status, 401);
+  assert.equal(missingDeviceProof.body.code, "TLS_DEVICE_PROOF_REQUIRED");
+  const secureStatus = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    clientIdentity,
+  );
   assert.equal(secureStatus.status, 200);
   assert.equal(secureStatus.body.appVersion, "2.0.0");
   assert.equal(secureStatus.peerPin, running.pocketLink?.publicKeyPin);
-  const blockedDirectHost = await secureJson(running.pocketLink!.port, "example.test");
+  const blockedDirectHost = await secureJson(running.pocketLink!.port, "example.test", clientIdentity);
   assert.equal(blockedDirectHost.status, 400);
+  const tlsPaired = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    clientIdentity,
+    {
+      path: "/api/pairing/claim",
+      method: "POST",
+      headers: { Origin: "http://localhost", "Content-Type": "application/json" },
+      body: JSON.stringify({ code: "12345678", label: "Pocket test app" }),
+    },
+  );
+  assert.equal(tlsPaired.status, 201);
+  assert.equal(tlsPaired.body.client.tlsBound, true);
+  const tlsHealth = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    clientIdentity,
+    { path: "/api/health", headers: { Authorization: `Bearer ${tlsPaired.body.token}` } },
+  );
+  assert.equal(tlsHealth.status, 200);
+  assert.equal(tlsHealth.body.client.tlsBound, true);
+  const wrongTlsIdentity = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    otherClientIdentity,
+    { path: "/api/health", headers: { Authorization: `Bearer ${tlsPaired.body.token}` } },
+  );
+  assert.equal(wrongTlsIdentity.status, 401);
+  assert.equal(wrongTlsIdentity.body.code, "TLS_DEVICE_MISMATCH");
 
   const page = await fetch(`${base}/`);
   assert.equal(page.status, 200);
@@ -625,24 +671,38 @@ async function jsonFetch(url: string, init?: RequestInit): Promise<any> {
   return value;
 }
 
-async function secureJson(port: number, hostHeader: string): Promise<{
+async function secureJson(
+  port: number,
+  hostHeader: string,
+  identity?: { certificate: Buffer; privateKey: Buffer },
+  options: {
+    path?: string;
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+  } = {},
+): Promise<{
   status: number;
   body: any;
   peerPin: string;
 }> {
   return new Promise((resolvePromise, rejectPromise) => {
+    const agent = new HttpsAgent({ maxCachedSessions: 0 });
     const request = httpsRequest({
       host: "127.0.0.1",
       port,
-      path: "/api/status",
-      method: "GET",
+      path: options.path ?? "/api/status",
+      method: options.method ?? "GET",
       rejectUnauthorized: false,
-      headers: { Host: hostHeader },
+      agent,
+      ...(identity ? { cert: identity.certificate, key: identity.privateKey } : {}),
+      headers: { Host: hostHeader, ...options.headers },
     }, (response) => {
       const chunks: Buffer[] = [];
       const peer = (response.socket as TLSSocket).getPeerX509Certificate();
       response.on("data", (chunk: Buffer) => chunks.push(chunk));
       response.on("end", () => {
+        agent.destroy();
         try {
           if (!peer) throw new Error("PocketLink TLS peer certificate is missing");
           resolvePromise({
@@ -655,8 +715,11 @@ async function secureJson(port: number, hostHeader: string): Promise<{
         }
       });
     });
-    request.once("error", rejectPromise);
-    request.end();
+    request.once("error", (error) => {
+      agent.destroy();
+      rejectPromise(error);
+    });
+    request.end(options.body);
   });
 }
 

@@ -76,11 +76,19 @@ public class PocketTunnelPlugin extends Plugin {
             return;
         }
         boolean saved = false;
+        boolean createdIdentity = false;
+        PocketLinkConfigStore.Config previous = null;
+        PocketLinkConfigStore configStore = new PocketLinkConfigStore(getContext());
+        PocketLinkIdentityStore identityStore = new PocketLinkIdentityStore();
         try {
+            previous = configStore.load(localPort);
+            boolean hadIdentity = identityStore.exists(localPort);
+            identityStore.ensure(localPort);
+            createdIdentity = !hadIdentity;
             PocketLinkConfigStore.Config config = new PocketLinkConfigStore.Config(
                     label, localPort, host, remotePort, primaryPin, backupPin, false
             );
-            new PocketLinkConfigStore(getContext()).save(config);
+            configStore.save(config);
             saved = true;
             startPocketLinkService(localPort);
             JSObject result = new JSObject();
@@ -90,9 +98,15 @@ public class PocketTunnelPlugin extends Plugin {
             call.resolve(result);
         } catch (Exception error) {
             if (saved) {
-                try { new PocketLinkConfigStore(getContext()).remove(localPort); } catch (Exception ignored) {}
+                try {
+                    if (previous == null) configStore.remove(localPort);
+                    else configStore.save(previous);
+                } catch (Exception ignored) {}
             }
-            call.reject("PocketLink 설정을 Android Keystore로 보호하지 못했습니다.", error);
+            if (createdIdentity && previous == null) {
+                try { identityStore.remove(localPort); } catch (Exception ignored) {}
+            }
+            call.reject("PocketLink 설정과 단말 identity를 Android Keystore로 보호하지 못했습니다.", error);
         }
     }
 
@@ -109,6 +123,7 @@ public class PocketTunnelPlugin extends Plugin {
             stop.putExtra(PocketLinkService.EXTRA_LOCAL_PORT, localPort);
             ContextCompat.startForegroundService(getContext(), stop);
             new PocketLinkConfigStore(getContext()).remove(localPort);
+            new PocketLinkIdentityStore().remove(localPort);
             call.resolve();
         } catch (Exception error) {
             call.reject("PocketLink 설정을 삭제하지 못했습니다.", error);

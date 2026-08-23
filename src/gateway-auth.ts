@@ -21,6 +21,7 @@ interface StoredClient {
   label: string;
   tokenHash: string;
   createdAt: string;
+  tlsPublicKeyPin?: string;
 }
 
 interface StoredGatewayState {
@@ -32,6 +33,7 @@ interface StoredGatewayState {
 export interface AuthenticatedClient {
   id: string;
   label: string;
+  tlsBound: boolean;
 }
 
 export interface PairingResult {
@@ -107,7 +109,7 @@ export class GatewayAuth {
     };
   }
 
-  requireAuthorization(header: string | undefined): AuthenticatedClient {
+  requireAuthorization(header: string | undefined, tlsPublicKeyPin?: string): AuthenticatedClient {
     if (!header?.startsWith("Bearer ")) {
       throw new GatewayAuthError(401, "PAIRING_REQUIRED", "이 단말과 먼저 페어링해 주세요.");
     }
@@ -116,10 +118,18 @@ export class GatewayAuth {
     const tokenHash = hashToken(token);
     const client = this.state.clients.find((item) => safeEqual(item.tokenHash, tokenHash));
     if (!client) throw new GatewayAuthError(401, "INVALID_TOKEN", "페어링이 만료되었거나 해제되었습니다.");
-    return { id: client.id, label: client.label };
+    if (tlsPublicKeyPin !== undefined) {
+      if (!client.tlsPublicKeyPin) {
+        throw new GatewayAuthError(401, "TLS_DEVICE_BINDING_REQUIRED", "PocketLink에서 이 단말을 다시 페어링해 주세요.");
+      }
+      if (!safeEqual(client.tlsPublicKeyPin, tlsPublicKeyPin)) {
+        throw new GatewayAuthError(401, "TLS_DEVICE_MISMATCH", "PocketLink 단말 인증서가 페어링 기록과 다릅니다.");
+      }
+    }
+    return { id: client.id, label: client.label, tlsBound: client.tlsPublicKeyPin !== undefined };
   }
 
-  async claim(code: unknown, label: unknown): Promise<PairingResult> {
+  async claim(code: unknown, label: unknown, tlsPublicKeyPin?: string): Promise<PairingResult> {
     this.trimFailedAttempts();
     if (this.failedAttempts.length >= MAX_PAIRING_ATTEMPTS) {
       throw new GatewayAuthError(429, "PAIRING_RATE_LIMITED", "잠시 후 페어링을 다시 시도해 주세요.");
@@ -134,16 +144,20 @@ export class GatewayAuth {
     const clientLabel = typeof label === "string" && label.trim()
       ? label.trim().slice(0, 80)
       : "Codex Pocket";
+    if (tlsPublicKeyPin !== undefined && !isPublicKeyPin(tlsPublicKeyPin)) {
+      throw new GatewayAuthError(400, "TLS_DEVICE_PROOF_INVALID", "PocketLink 단말 인증서가 올바르지 않습니다.");
+    }
     const token = randomBytes(32).toString("base64url");
     const client: StoredClient = {
       id: randomUUID(),
       label: clientLabel,
       tokenHash: hashToken(token),
       createdAt: new Date(this.now()).toISOString(),
+      ...(tlsPublicKeyPin ? { tlsPublicKeyPin } : {}),
     };
     this.state.clients.push(client);
     await this.persist();
-    return { token, client: { id: client.id, label: client.label }, device: this.device };
+    return { token, client: { id: client.id, label: client.label, tlsBound: tlsPublicKeyPin !== undefined }, device: this.device };
   }
 
   async revoke(clientId: string): Promise<void> {
@@ -197,7 +211,8 @@ function isStoredState(value: unknown): value is StoredGatewayState {
       if (!client || typeof client !== "object") return false;
       const item = client as Record<string, unknown>;
       return typeof item.id === "string" && typeof item.label === "string"
-        && typeof item.tokenHash === "string" && typeof item.createdAt === "string";
+        && typeof item.tokenHash === "string" && typeof item.createdAt === "string"
+        && (item.tlsPublicKeyPin === undefined || isPublicKeyPin(item.tlsPublicKeyPin));
     });
 }
 
@@ -211,6 +226,10 @@ function createPairingCode(): string {
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
+function isPublicKeyPin(value: unknown): value is string {
+  return typeof value === "string" && /^sha256\/[A-Za-z0-9+/]{43}=$/.test(value);
 }
 
 function safeEqual(left: string, right: string): boolean {

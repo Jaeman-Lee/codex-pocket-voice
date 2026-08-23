@@ -5,12 +5,12 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-export async function createTestCertificate(directory: string, host: string): Promise<{
+export async function createTestCertificate(directory: string, host: string, prefix = "server"): Promise<{
   certificateFile: string;
   privateKeyFile: string;
 }> {
-  const certificateFile = join(directory, "certificate.pem");
-  const privateKeyFile = join(directory, "private-key.pem");
+  const certificateFile = join(directory, `${prefix}-certificate.pem`);
+  const privateKeyFile = join(directory, `${prefix}-private-key.pem`);
   const subjectAltName = /^\d+(?:\.\d+){3}$/.test(host) ? `IP:${host}` : `DNS:${host}`;
   await execFileAsync("openssl", [
     "req", "-x509", "-newkey", "rsa:2048", "-sha256", "-nodes", "-days", "2",

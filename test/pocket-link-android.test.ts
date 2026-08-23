@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("Android PocketLink keeps encrypted config native and pins a bounded TLS forwarder", async () => {
-  const [manifest, plugin, service, store, nativeApi, clientApi] = await Promise.all([
+test("Android PocketLink keeps encrypted config native and pins a bounded mTLS forwarder", async () => {
+  const [manifest, plugin, service, store, identity, nativeApi, clientApi] = await Promise.all([
     source("../android/app/src/main/AndroidManifest.xml"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketTunnelPlugin.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketLinkService.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketLinkConfigStore.java"),
+    source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketLinkIdentityStore.java"),
     source("../client/src/native.ts"),
     source("../client/src/api.ts"),
   ]);
@@ -20,6 +21,12 @@ test("Android PocketLink keeps encrypted config native and pins a bounded TLS fo
   assert.match(store, /AndroidKeyStore/);
   assert.match(store, /AES\/GCM\/NoPadding/);
   assert.match(store, /updateAAD\(entry\.getBytes/);
+  assert.match(identity, /AndroidKeyStore/);
+  assert.match(identity, /KEY_ALGORITHM_EC/);
+  assert.match(identity, /secp256r1/);
+  assert.match(identity, /PURPOSE_SIGN \| KeyProperties\.PURPOSE_VERIFY/);
+  assert.match(identity, /X509KeyManager/);
+  assert.doesNotMatch(identity, /getEncoded\(\)|Base64|SharedPreferences/);
   assert.doesNotMatch(nativeApi, /privateKey|certificateFile/);
   assert.doesNotMatch(clientApi, /PocketLinkHost|primaryPin|backupPin/);
 
@@ -28,6 +35,7 @@ test("Android PocketLink keeps encrypted config native and pins a bounded TLS fo
   assert.match(service, /MAX_LINKS = 8/);
   assert.match(service, /newFixedThreadPool\(16\)/);
   assert.match(service, /setEndpointIdentificationAlgorithm\("HTTPS"\)/);
+  assert.match(service, /identity\.keyManagers\(\)/);
   assert.match(service, /checkValidity\(\)/);
   assert.match(service, /getPublicKey\(\)\.getEncoded\(\)/);
   assert.match(service, /MessageDigest\.isEqual/);

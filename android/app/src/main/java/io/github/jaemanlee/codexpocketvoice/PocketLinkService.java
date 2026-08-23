@@ -139,14 +139,16 @@ public class PocketLinkService extends Service {
             updateNotification("PocketLink 등록 한도를 초과했습니다.");
             return;
         }
-        Forwarder forwarder = new Forwarder(config, connectionExecutor);
+        Forwarder forwarder = null;
         try {
+            PocketLinkIdentityStore.Identity identity = new PocketLinkIdentityStore().ensure(config.localPort);
+            forwarder = new Forwarder(config, identity, connectionExecutor);
             forwarder.start();
             RUNNING.put(config.localPort, forwarder);
             ERRORS.remove(config.localPort);
             updateNotification(config.label + "의 암호화 요청을 기다리는 중");
         } catch (Exception error) {
-            forwarder.close();
+            if (forwarder != null) forwarder.close();
             ERRORS.put(config.localPort, safeError(error));
             updateNotification(config.label + " 연결을 열지 못했습니다.");
         }
@@ -223,6 +225,7 @@ public class PocketLinkService extends Service {
 
     private static final class Forwarder {
         private final PocketLinkConfigStore.Config config;
+        private final PocketLinkIdentityStore.Identity identity;
         private final ExecutorService connectionExecutor;
         private final Semaphore capacity = new Semaphore(MAX_CONNECTIONS_PER_LINK);
         private final AtomicBoolean running = new AtomicBoolean(false);
@@ -230,8 +233,13 @@ public class PocketLinkService extends Service {
         private ServerSocket listener;
         private Thread acceptThread;
 
-        Forwarder(PocketLinkConfigStore.Config config, ExecutorService connectionExecutor) {
+        Forwarder(
+                PocketLinkConfigStore.Config config,
+                PocketLinkIdentityStore.Identity identity,
+                ExecutorService connectionExecutor
+        ) {
             this.config = config;
+            this.identity = identity;
             this.connectionExecutor = connectionExecutor;
         }
 
@@ -278,24 +286,31 @@ public class PocketLinkService extends Service {
         private void connect(Socket local) {
             Socket remote = null;
             try {
-                remote = tlsSocket(config);
+                remote = tlsSocket(config, identity);
                 Connection connection = new Connection(local, remote, capacity, connections, connectionExecutor);
                 connections.add(connection);
                 connection.start();
                 return;
             } catch (Exception error) {
-                ERRORS.put(config.localPort, safeError(error instanceof Exception ? (Exception) error : new Exception(error)));
+                ERRORS.put(config.localPort, safeError(error));
             }
             closeQuietly(local);
             closeQuietly(remote);
             capacity.release();
         }
 
-        private static Socket tlsSocket(PocketLinkConfigStore.Config config) throws Exception {
+        private static Socket tlsSocket(
+                PocketLinkConfigStore.Config config,
+                PocketLinkIdentityStore.Identity identity
+        ) throws Exception {
             Socket transport = new Socket();
             transport.connect(new InetSocketAddress(config.host, config.remotePort), 10_000);
             SSLContext context = SSLContext.getInstance("TLS");
-            context.init(null, new TrustManager[] { new PinnedTrustManager(config.primaryPin, config.backupPin) }, new SecureRandom());
+            context.init(
+                    identity.keyManagers(),
+                    new TrustManager[] { new PinnedTrustManager(config.primaryPin, config.backupPin) },
+                    new SecureRandom()
+            );
             SSLSocketFactory factory = context.getSocketFactory();
             SSLSocket socket = (SSLSocket) factory.createSocket(transport, config.host, config.remotePort, true);
             socket.setSoTimeout(10_000);

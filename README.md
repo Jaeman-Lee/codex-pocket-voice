@@ -35,7 +35,7 @@ rollback 기준선입니다. `2.0.0` 소스는
 - React + Capacitor Android 앱과 설치 가능한 PWA
 - 앱 실행 시 Termux SSH 터널 자동 시작
 - Termux 터미널을 닫아도 유지되는 백그라운드 SSH 터널
-- v2 opt-in PocketLink LAN TLS listener와 Android SPKI-pin foreground tunnel (수동 bootstrap, CI 전용)
+- v2 opt-in PocketLink LAN TLS listener와 Android Keystore device-certificate/SPKI-pin mTLS foreground tunnel (수동 bootstrap, CI 전용)
 - 선택적으로 사용할 수 있는 안전 범위 MCP 서버
 - 만료되는 코드와 Android Keystore를 사용하는 장치 페어링
 - 여러 Linux Companion 등록과 앱 내 Linux 도구 진단
