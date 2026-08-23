@@ -13,6 +13,8 @@ current로 유지하고, 전달할 때 1.8.1을 rollback으로 승격하며 1.7.
 - 세션 인계를 프로젝트·대화별로 분리하고 현재 프로젝트와 일치하는 인계만 화면에 표시한다.
 - 중단·반납 대상 실행이 현재 workspace와 conversation에 속하는지 다시 검사한다.
 - 기존 단일 handoff 상태를 손실 없이 다중 상태로 이전하고, 이어받은 handoff는 서버에서도 정리한다.
+- 커밋 `d76e478`의 서명 APK와 SHA256SUMS, SBOM을 Actions run `32647238314`에서
+  검증해 1.8.2 current 설치 후보로 준비했으며 1.8.1은 rollback 세트로 보존했다.
 
 ## 1.8.1 patch candidate — mobile viewport containment
 
@@ -61,7 +63,8 @@ Candidate build history:
 | 1.7.3 | `c6b0440` | CI only | 연결 센터 모바일 레이아웃 수정 |
 | 1.7.4 | `91f27b4` | superseded field build | 구형 Git 프로젝트 생성 호환 |
 | 1.8.0 | `5c4d0bb` | superseded candidate | 교차 기기 세션 인계와 순차 배포 호환 |
-| 1.8.1 | `c5563ec` | current CI candidate | 스마트폰 뷰포트 수용과 조절 가능한 WebView |
+| 1.8.1 | `c5563ec` | rollback candidate | 스마트폰 뷰포트 수용과 조절 가능한 WebView |
+| 1.8.2 | `d76e478` | current install candidate | 프로젝트별 세션 인계와 종료 대상 격리 |
 
 ## 1.6.0 — 2026-08-16
 
