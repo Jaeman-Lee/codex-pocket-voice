@@ -218,6 +218,9 @@ select {
 .provider-badge.connected { color: var(--accent); background: rgba(62, 213, 165, 0.1); }
 .provider-badge.login_required { color: var(--warm); background: rgba(255, 203, 136, 0.1); }
 .provider-card > p { margin: 0.55rem 0; color: var(--muted); font-size: 0.72rem; line-height: 1.45; }
+.provider-capabilities { display: flex; min-width: 0; flex-wrap: wrap; gap: 0.32rem; margin: -0.05rem 0 0.6rem; }
+.provider-capabilities span { max-width: 100%; padding: 0.28rem 0.42rem; border-radius: 999px; color: var(--muted); background: rgba(146, 165, 168, 0.1); font-size: 0.58rem; line-height: 1; white-space: nowrap; }
+.provider-capabilities span.approval { color: var(--warm); background: rgba(255, 203, 136, 0.1); }
 .alias-field { display: block; margin-top: 0.65rem; }
 .alias-field small { font-weight: 500; }
 .alias-field input { width: 100%; height: 2.45rem; padding: 0 0.68rem; border: 1px solid var(--line); border-radius: 0.64rem; color: var(--text); background: var(--surface); outline: none; }
@@ -283,6 +286,7 @@ select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shad
 .approval-meta span { color: var(--warm); font-size: 0.63rem; font-weight: 800; }
 .approval-meta small { color: var(--muted); font-size: 0.59rem; }
 .approval-card > strong { display: block; font-size: 0.78rem; line-height: 1.45; overflow-wrap: anywhere; }
+.approval-context { display: block; margin-top: 0.18rem; overflow: hidden; color: var(--muted); font-size: 0.59rem; text-overflow: ellipsis; white-space: nowrap; }
 .approval-card pre { width: 100%; max-width: 100%; max-height: 10rem; min-width: 0; overflow: auto; margin: 0.55rem 0 0; padding: 0.55rem; border-radius: 0.55rem; color: #c8d9d7; background: #080d12; font: 0.61rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .approval-actions { display: grid; grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr); gap: 0.45rem; margin-top: 0.6rem; }
 .approval-actions button { min-width: 0; min-height: 2.5rem; border: 1px solid var(--line); border-radius: 0.62rem; cursor: pointer; font-size: 0.68rem; font-weight: 800; }

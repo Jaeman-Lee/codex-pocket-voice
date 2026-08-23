@@ -2150,6 +2150,13 @@ export function App() {
                       <span className={`provider-badge ${item.status}`}>{providerStatusLabel(item)}</span>
                     </div>
                     <p>{item.detail}</p>
+                    <div className="provider-capabilities" aria-label={`${item.name} 작업 권한`}>
+                      {item.capabilities.workspaceRead && <span>프로젝트 읽기</span>}
+                      {item.capabilities.workspaceWrite && <span className="approval">터치 승인 파일 변경</span>}
+                      {item.capabilities.commandExecution && <span className="approval">터치 승인 명령</span>}
+                      {item.capabilities.usageAccounting && <span>사용량 기록</span>}
+                      {!item.capabilities.workspaceWrite && item.capabilities.workspaceRead && <span>쓰기 차단</span>}
+                    </div>
 
                     <label className="alias-field">
                       <span>내 별명 <small>선택 · 이 폰에만 저장</small></span>

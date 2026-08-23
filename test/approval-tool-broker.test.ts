@@ -154,6 +154,7 @@ test("LocalToolBroker validates locally, gates changes, and deduplicates executi
     name: "apply_count",
     input: 4,
   }, { cwd: process.cwd() });
+  await Promise.resolve();
   const pending = approvals.listPending()[0];
   assert.equal(pending?.risk, "change");
   approvals.resolve(pending!.id, "approved", "voice");
@@ -190,5 +191,42 @@ test("LocalToolBroker blocks workspaces outside PathPolicy before tool execution
     }, { cwd: "/outside/allowed/root" }),
     /not allowed/,
   );
+  approvals.close();
+});
+
+test("LocalToolBroker resolves a pending approval as declined when the run is cancelled", async () => {
+  const paths = await PathPolicy.fromEnvironment(process.cwd());
+  const approvals = new InMemoryApprovalBroker({ createId: () => "approval-cancelled" });
+  const resolutions: string[] = [];
+  approvals.subscribe((event) => {
+    if (event.type === "resolved") resolutions.push(`${event.resolution.decision}:${event.resolution.source}`);
+  });
+  const tool: RegisteredTool<Record<string, never>> = {
+    definition: {
+      name: "change_after_review",
+      description: "Change only after review",
+      inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+      risk: "change",
+    },
+    validate: () => ({}),
+    approval: () => ({ redactedSummary: "Change after review", requiresTouch: true }),
+    async execute() { throw new Error("cancelled approval must never execute"); },
+  };
+  const broker = new LocalToolBroker([tool], approvals, paths);
+  const controller = new AbortController();
+  const result = broker.execute({
+    providerId: "openai",
+    conversationId: "cancel-conversation",
+    runId: "cancel-run",
+    toolCallId: "cancel-tool",
+    name: "change_after_review",
+    input: {},
+  }, { cwd: process.cwd(), signal: controller.signal });
+  await Promise.resolve();
+  assert.equal(approvals.listPending().length, 1);
+  controller.abort();
+  assert.equal((await result).status, "denied");
+  assert.deepEqual(resolutions, ["declined:system"]);
+  assert.equal(approvals.listPending().length, 0);
   approvals.close();
 });

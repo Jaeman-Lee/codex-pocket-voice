@@ -23,6 +23,8 @@ import {
   type ApprovalRequest,
 } from "./approval-broker.js";
 import { createReadOnlyWorkspaceTools } from "./read-only-tools.js";
+import { createWorkspaceChangeTools } from "./workspace-change-tools.js";
+import { createWorkspaceExecutionTools } from "./workspace-execution-tools.js";
 import { LocalToolBroker } from "./tool-broker.js";
 import { EventJournal, type JournalReplayEvent } from "./event-journal.js";
 import {
@@ -118,9 +120,14 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     { keyFile: process.env.CODEX_POCKET_EVENT_JOURNAL_KEY_FILE },
   );
   const approvals = options.approvals ?? new InMemoryApprovalBroker();
+  const executionTools = options.providers ? [] : await createWorkspaceExecutionTools(options.paths);
   const toolBroker = options.providers
     ? undefined
-    : new LocalToolBroker(createReadOnlyWorkspaceTools(options.paths), approvals, options.paths);
+    : new LocalToolBroker([
+        ...createReadOnlyWorkspaceTools(options.paths),
+        ...createWorkspaceChangeTools(options.paths),
+        ...executionTools,
+      ], approvals, options.paths);
   const providers = options.providers ?? new ProviderRegistry(options.client, undefined, { toolBroker });
   const providerLogins = new ProviderLoginManager(providers);
   const runs = new RunCoordinator(providers, {

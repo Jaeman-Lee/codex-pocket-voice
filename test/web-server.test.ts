@@ -86,6 +86,13 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(providerData.providers[0].canLogin, true);
   assert.equal(providerData.providers[0].capabilities.streaming, true);
   assert.equal(providerData.providers[0].capabilities.approvals, false);
+  const openAIProvider = providerData.providers.find((item: any) => item.id === "openai");
+  const openRouterProvider = providerData.providers.find((item: any) => item.id === "openrouter");
+  assert.equal(openAIProvider.capabilities.approvals, true);
+  assert.equal(openAIProvider.capabilities.workspaceWrite, true);
+  assert.equal(typeof openAIProvider.capabilities.commandExecution, "boolean");
+  assert.equal(openRouterProvider.capabilities.approvals, true);
+  assert.equal(openRouterProvider.capabilities.workspaceWrite, true);
   const providerTest = await jsonFetch(`${base}/api/providers/codex/test`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),

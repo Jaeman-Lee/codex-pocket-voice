@@ -26,12 +26,12 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   `store:false` chat-only streaming, 이미지 입력, 사용량·중단·timeout과 오류 redaction을 구현했다.
 - OpenAI Responses 함수 호출을 공통 `LocalToolBroker`에 연결하고, 허용 root 안의 파일 목록·읽기·검색과
   고정 Git status/diff만 observation 도구로 제공한다. strict schema, 단일 호출, 8회 상한, stateless
-  reasoning replay, 민감 경로·symlink·Git 환경·출력 제한을 적용했으며 쓰기와 임의 명령은 계속 막는다.
+  reasoning replay, 민감 경로·symlink·Git 환경·출력 제한을 적용했다.
 - 공개 검사는 실제 유료 AI 요청 없이 가짜 OpenAI stream과 Models 목록만 사용한다. OpenAI API
-  모드의 workspace 쓰기·명령·대화 재개는 승인함과 durable journal 전까지 비활성화한다.
+  모드의 대화 재개와 임의 명령은 계속 비활성화한다.
 - OpenRouter의 server-only key와 `0600` key 파일, user/ZDR 모델 catalog 교집합, 명시적 allowlist,
-  Chat Completions SSE와 usage·credit 비용 기록을 추가했다. 도구 capability가 확인된 모델만 기존
-  읽기 전용 ToolBroker를 받고 나머지는 chat-only로 제한한다.
+  Chat Completions SSE와 usage·credit 비용 기록을 추가했다. 도구 capability가 확인된 모델만
+  공통 ToolBroker를 받고 나머지는 chat-only로 제한한다.
 - OpenRouter 요청은 모델 하나, `allow_fallbacks:false`, `require_parameters:true`,
   `data_collection:deny`, `zdr:true`로 고정한다. 실제 upstream은 결과에 기록하지만 다른 모델이나
   Provider로 자동 우회하지 않으며, 공개 검사는 가짜 HTTP/SSE만 사용한다.
@@ -61,6 +61,18 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   않게 했다. 실제 operation 연결도 workspace·conversation 범위를 계속 검증한다.
 - Codex app-server 생성 타입 기준을 CLI 0.149.0으로 갱신하고 새 project/agent-delivery 계약을 반영했다.
   실제 app-server 연결 검사는 모델 turn 없이 수행한다.
+- OpenAI/OpenRouter용 `workspace_replace_text`가 기존 UTF-8 파일 한 개만 바꾼다. 모델은 먼저
+  `workspace_read`의 원본 SHA-256을 제시해야 하고 승인 전후 해시가 다르면 덮어쓰지 않는다. 변경 diff는
+  승인함에 redacted·bounded 형태로 표시하며 민감 경로, symlink/hardlink, 비밀정보 형태, 생성·삭제·
+  이름변경·권한변경은 거부한다. 승인된 교체는 같은 디렉터리에서 fsync 후 atomic rename한다.
+- `project_verify`는 기존 `package.json`의 `check`, `test`, `build` script만 터치 승인 뒤 실행한다.
+  package SHA-256으로 검토 후 script 변경을 차단하고, unprivileged user/mount/network namespace,
+  일회용 overlay, 빈 환경, 민감 파일 mask, 로컬 loopback만 있는 네트워크, 시간·process·fd·파일·출력
+  상한을 모두 probe한 Linux에서만 capability를 노출한다. 격리를 만들 수 없으면 명령 도구를 등록하지
+  않으며 임의 command/argument, 외부 network와 실제 workspace 변경은 허용하지 않는다.
+- run을 중단하면 대기 중인 도구 승인을 system decline으로 즉시 닫아 만료 때까지 작업이 매달리지 않는다.
+- AI 연결 센터는 Provider별 프로젝트 읽기, 터치 승인 파일 변경·명령, 사용량 기록 capability를 표시하고
+  승인 카드에는 정확한 프로젝트·Provider와 읽기 쉬운 script/diff를 표시한다.
 - 이 기준선은 CI·개발용이며 v1.8.1 설치본이나 실행 중인 Companion을 교체하지 않는다.
 
 ## 1.8.2 hotfix candidate — project-scoped session handoff

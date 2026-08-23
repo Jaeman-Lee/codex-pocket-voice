@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { realpath, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type { PathPolicy } from "./path-policy.js";
@@ -170,6 +171,7 @@ function workspaceReadTool(paths: PathPolicy): RegisteredTool<ReadInput> {
       const bounded = truncate(content, MAX_READ_BYTES);
       return {
         path: projectPath(cwd, file),
+        sha256: createHash("sha256").update(bytes).digest("hex"),
         startLine: input.startLine,
         endLine,
         totalLines: lines.length,

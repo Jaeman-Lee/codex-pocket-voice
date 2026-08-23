@@ -62,6 +62,7 @@ test("read-only workspace tools contain paths, hide secrets, and never request a
   });
   assert.equal(read.status, "completed");
   assert.match(JSON.stringify(read.output), /needle/);
+  assert.match((read.output as { sha256: string }).sha256, /^[a-f0-9]{64}$/);
   assert.match(JSON.stringify(read.output), /REDACTED API KEY/);
   assert.doesNotMatch(JSON.stringify(read.output), /sk-source-secret/);
 

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type {
   ApprovalBroker,
   ApprovalRequestInput,
+  ApprovalResolution,
   ApprovalRisk,
 } from "./approval-broker.js";
 import type { PathPolicy } from "./path-policy.js";
@@ -40,7 +41,7 @@ export interface RegisteredTool<Input = unknown> {
   approval(input: Input, context: ToolExecutionContext): Pick<
     ApprovalRequestInput,
     "redactedSummary" | "redactedDetails" | "requiresTouch"
-  >;
+  > | Promise<Pick<ApprovalRequestInput, "redactedSummary" | "redactedDetails" | "requiresTouch">>;
   execute(input: Input, context: ToolExecutionContext): Promise<unknown>;
 }
 
@@ -113,7 +114,7 @@ export class LocalToolBroker implements ToolBroker {
     const input = tool.validate(call.input);
 
     if (tool.definition.risk !== "observation") {
-      const approval = tool.approval(input, context);
+      const approval = await tool.approval(input, context);
       const handle = this.approvals.requestApproval({
         providerId: call.providerId,
         conversationId: call.conversationId,
@@ -124,7 +125,7 @@ export class LocalToolBroker implements ToolBroker {
         redactedDetails: approval.redactedDetails,
         requiresTouch: approval.requiresTouch,
       });
-      const resolution = await handle.decision;
+      const resolution = await this.waitForApproval(handle.request.id, handle.decision, context.signal);
       if (resolution.decision !== "approved") {
         return { toolCallId: call.toolCallId, status: "denied" };
       }
@@ -139,6 +140,24 @@ export class LocalToolBroker implements ToolBroker {
     } catch {
       return { toolCallId: call.toolCallId, status: "failed", error: "도구 실행에 실패했습니다." };
     }
+  }
+
+  private waitForApproval(
+    requestId: string,
+    decision: Promise<ApprovalResolution>,
+    signal?: AbortSignal,
+  ): Promise<ApprovalResolution> {
+    if (!signal) return decision;
+    const decline = () => {
+      try {
+        this.approvals.resolve(requestId, "declined", "system");
+      } catch {
+        // A simultaneous touch decision or expiry owns the existing resolution.
+      }
+    };
+    if (signal.aborted) decline();
+    else signal.addEventListener("abort", decline, { once: true });
+    return decision.finally(() => signal.removeEventListener("abort", decline));
   }
 }
 

@@ -85,7 +85,7 @@ test("OpenAI provider streams a store:false response through the common runtime 
   assert.doesNotMatch(JSON.stringify(client.requests[0]), /sk-test-super-secret/);
 });
 
-test("OpenAI provider executes a stateless read-only function loop through LocalToolBroker", async (t) => {
+test("OpenAI provider executes a stateless project-tool loop through LocalToolBroker", async (t) => {
   const paths = await PathPolicy.fromEnvironment(process.cwd());
   const approvals = new InMemoryApprovalBroker();
   t.after(() => approvals.close());
@@ -117,7 +117,7 @@ test("OpenAI provider executes a stateless read-only function loop through Local
   const hiddenWriteTool: RegisteredTool<Record<string, never>> = {
     definition: {
       name: "workspace_write",
-      description: "Must stay unavailable in the read-only milestone",
+      description: "Approval-gated write fixture",
       inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
       risk: "change",
     },
@@ -125,7 +125,18 @@ test("OpenAI provider executes a stateless read-only function loop through Local
     approval: () => ({ redactedSummary: "write fixture" }),
     async execute() { throw new Error("must not execute"); },
   };
-  const broker = new LocalToolBroker([readTool, hiddenWriteTool], approvals, paths);
+  const hiddenCommandTool: RegisteredTool<Record<string, never>> = {
+    definition: {
+      name: "project_verify",
+      description: "Approval-gated verification fixture",
+      inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+      risk: "execution",
+    },
+    validate: () => ({}),
+    approval: () => ({ redactedSummary: "verify fixture", requiresTouch: true }),
+    async execute() { throw new Error("must not execute"); },
+  };
+  const broker = new LocalToolBroker([readTool, hiddenWriteTool, hiddenCommandTool], approvals, paths);
   const client = new SequencedOpenAIClient([
     [event({
       type: "response.completed",
@@ -182,8 +193,9 @@ test("OpenAI provider executes a stateless read-only function loop through Local
   const descriptor = await adapter.describe();
   assert.equal(descriptor.capabilities.toolCalling, true);
   assert.equal(descriptor.capabilities.workspaceRead, true);
-  assert.equal(descriptor.capabilities.workspaceWrite, false);
-  assert.equal(descriptor.capabilities.commandExecution, false);
+  assert.equal(descriptor.capabilities.approvals, true);
+  assert.equal(descriptor.capabilities.workspaceWrite, true);
+  assert.equal(descriptor.capabilities.commandExecution, true);
 
   const run = await adapter.startRun({
     cwd: process.cwd(),
@@ -215,18 +227,80 @@ test("OpenAI provider executes a stateless read-only function loop through Local
   assert.equal(client.requests[0]?.store, false);
   assert.equal(client.requests[0]?.parallel_tool_calls, false);
   assert.deepEqual(client.requests[0]?.include, ["reasoning.encrypted_content"]);
-  assert.deepEqual(client.requests[0]?.tools, [{
-    type: "function",
-    name: "workspace_read",
-    description: "Read a safe project fixture",
-    parameters: readTool.definition.inputSchema,
-    strict: true,
-  }]);
+  assert.deepEqual(client.requests[0]?.tools?.map((tool) => "name" in tool ? tool.name : tool.type), [
+    "workspace_read",
+    "workspace_write",
+    "project_verify",
+  ]);
   const continuation = JSON.stringify(client.requests[1]?.input);
   assert.match(continuation, /encrypted-reasoning/);
   assert.match(continuation, /function_call_output/);
   assert.match(continuation, /read-only context/);
   assert.doesNotMatch(continuation, /sk-test-tool-loop/);
+});
+
+test("OpenAI pauses a change tool until the matching touch approval resolves", async (t) => {
+  const paths = await PathPolicy.fromEnvironment(process.cwd());
+  const approvals = new InMemoryApprovalBroker({ createId: () => "approval-openai-change" });
+  t.after(() => approvals.close());
+  let changes = 0;
+  const changeTool: RegisteredTool<Record<string, never>> = {
+    definition: {
+      name: "workspace_replace_text",
+      description: "Apply one reviewed change",
+      inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+      risk: "change",
+    },
+    validate: () => ({}),
+    approval: () => ({ redactedSummary: "Replace text in fixture", requiresTouch: true }),
+    async execute() {
+      changes += 1;
+      return { changed: true };
+    },
+  };
+  const broker = new LocalToolBroker([changeTool], approvals, paths);
+  const client = new SequencedOpenAIClient([
+    [event({
+      type: "response.completed",
+      sequence_number: 1,
+      response: {
+        id: "resp-change-call",
+        output_text: "",
+        output: [{
+          type: "function_call",
+          id: "change-item",
+          call_id: "change-call",
+          name: "workspace_replace_text",
+          arguments: "{}",
+          status: "completed",
+        }],
+        usage: usage(2, 1, 0),
+      },
+    })],
+    [event({
+      type: "response.completed",
+      sequence_number: 2,
+      response: { id: "resp-change-done", output_text: "변경 완료", output: [], usage: usage(2, 1, 0) },
+    })],
+  ]);
+  const adapter = new OpenAIProviderAdapter({
+    credentials: staticCredentials("sk-test-approved-change"),
+    clientFactory: () => client,
+    createId: sequentialIds("change-conversation", "change-run"),
+    modelAllowlist: ["gpt-tool-test"],
+    toolBroker: broker,
+  });
+  const run = await adapter.startRun({ cwd: process.cwd(), prompt: "Apply the reviewed change", model: "gpt-tool-test" });
+  await waitFor(() => approvals.listPending().length === 1);
+  assert.equal(changes, 0);
+  const pending = approvals.listPending()[0]!;
+  assert.equal(pending.toolCallId, "change-call");
+  assert.throws(() => approvals.resolve(pending.id, "approved", "voice"), /터치/);
+  approvals.resolve(pending.id, "approved", "touch");
+  const completion = await run.completion;
+  assert.equal(completion.status, "completed");
+  assert.equal(changes, 1);
+  assert.match(JSON.stringify(client.requests[1]?.input), /completed|changed/);
 });
 
 test("OpenAI connection test lists models without creating a paid response", async () => {

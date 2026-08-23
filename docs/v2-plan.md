@@ -22,8 +22,8 @@
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환, operation UI 상태 모듈 구현; 나머지 App 상태 분리 잔여 |
-| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key와 read-only 함수 도구 구현; write/command·durable multi-turn 잔여 |
-| Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, read-only broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
+| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 읽기 도구, SHA-bound 단일 파일 교체와 격리 npm 검증 구현; 다중 파일 patch·durable multi-turn 잔여 |
+| Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox 구현; branch/pin/archive·export/delete 잔여 |
 | Phase E | 대기 | PocketLink와 출시 강화 |
 
@@ -286,10 +286,13 @@ Companion 재시작 전에 `running`이던 operation은 `unknown`으로 전환�
 - workspace-write와 command를 승인함 뒤에 단계적으로 활성화
 - `store: false` 로컬 상태 복구 및 중단·재연결 테스트
 
-현재 checkpoint에서는 `workspace_list/read/search`와 고정 Git `status/diff`만 observation 등급으로
-연결했다. strict schema, 단일 함수 호출, 8회 상한과 stateless reasoning replay를 적용했으며
-민감 경로·외부 symlink·Git 환경 override·외부 diff·과도한 출력은 차단한다. 이 checkpoint는
-개발용 2.0 source update이며 APK를 새 current 후보로 배포하지 않는다.
+현재 checkpoint에서는 `workspace_list/read/search`와 고정 Git `status/diff`를 observation 등급으로
+연결했다. `workspace_replace_text`는 읽기에서 얻은 SHA-256과 승인 직전·실행 직전 파일을 묶어 기존
+UTF-8 파일 한 개만 atomic replace하며 민감 파일, link, secret 형태, 생성·삭제·이름변경은 막는다.
+`project_verify`는 검토한 package SHA와 check/test/build script만 namespace·network-off·secret-mask·
+disposable overlay sandbox에서 실행하고 probe 실패 시 capability 자체를 숨긴다. strict schema, 단일
+함수 호출, 8회 상한과 stateless reasoning replay도 유지한다. 이 checkpoint는 개발용 2.0 source
+update이며 APK를 새 current 후보로 배포하지 않는다.
 
 완료 조건: 실제 프로젝트에서 조사 → diff 제안 → 승인된 patch → test → 결과 검토가 키 노출 없이
 한 run으로 완료된다.
@@ -303,7 +306,7 @@ Companion 재시작 전에 `running`이던 operation은 `unknown`으로 전환�
 - 비용·quota·rate-limit 오류 분류
 
 현재 checkpoint에서는 server-only key, authenticated user model과 ZDR model의 교집합, 명시적
-allowlist, chat SSE와 read-only tool loop를 구현했다. `allow_fallbacks: false`,
+allowlist, chat SSE와 동일한 승인형 tool loop를 구현했다. `allow_fallbacks: false`,
 `require_parameters: true`, `data_collection: deny`, `zdr: true`를 강제하고 upstream Provider와
 token/credit usage를 공통 run 결과에 기록한다. 실제 모델별 contract/eval과 사용자가 확인하는
 routing 선택지는 남아 있다.

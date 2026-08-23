@@ -37,10 +37,10 @@ import {
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_TOOL_CALLS_PER_RUN = 8;
 const MAX_TOOL_OUTPUT_CHARS = 80_000;
-const READ_ONLY_TOOL_INSTRUCTIONS = [
-  "The available project tools are read-only.",
-  "Use them only when project context is required to answer the user.",
-  "They cannot modify files, run arbitrary commands, access credentials, or leave the selected project.",
+const PROJECT_TOOL_INSTRUCTIONS = [
+  "Project tools are restricted to the selected workspace and cannot access credentials.",
+  "Observation tools may run immediately; every file-changing or execution tool pauses for explicit on-screen user approval.",
+  "Never claim that a change or command ran until the corresponding tool result reports completed.",
 ].join(" ");
 
 export interface OpenAIModelRecord { id: string }
@@ -90,6 +90,9 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
   private readonly maxImageBytes: number;
   private readonly toolBroker?: ToolBroker;
   private readonly hasReadTools: boolean;
+  private readonly hasApprovalTools: boolean;
+  private readonly hasWriteTools: boolean;
+  private readonly hasCommandTools: boolean;
   private readonly maxToolCallsPerRun: number;
 
   constructor(options: OpenAIProviderOptions = {}) {
@@ -105,7 +108,11 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
         : []);
     this.maxImageBytes = options.maxImageBytes ?? MAX_IMAGE_BYTES;
     this.toolBroker = options.toolBroker;
-    this.hasReadTools = options.toolBroker?.definitions().some((definition) => definition.risk === "observation") ?? false;
+    const definitions = options.toolBroker?.definitions() ?? [];
+    this.hasReadTools = definitions.some((definition) => definition.risk === "observation");
+    this.hasApprovalTools = definitions.some((definition) => definition.risk !== "observation");
+    this.hasWriteTools = definitions.some((definition) => definition.risk === "change");
+    this.hasCommandTools = definitions.some((definition) => definition.risk === "execution" || definition.risk === "high_risk");
     this.maxToolCallsPerRun = options.maxToolCallsPerRun ?? MAX_TOOL_CALLS_PER_RUN;
   }
 
@@ -144,11 +151,11 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
         models: configured,
         attachments: true,
         streaming: true,
-        toolCalling: this.hasReadTools,
-        approvals: false,
+        toolCalling: this.hasReadTools || this.hasApprovalTools,
+        approvals: this.hasApprovalTools,
         workspaceRead: this.hasReadTools,
-        workspaceWrite: false,
-        commandExecution: false,
+        workspaceWrite: this.hasWriteTools,
+        commandExecution: this.hasCommandTools,
         usageAccounting: true,
       },
       installGuide: {
@@ -298,7 +305,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
             tool_choice: "auto" as const,
             parallel_tool_calls: false,
             include: ["reasoning.encrypted_content" as const],
-            instructions: READ_ONLY_TOOL_INSTRUCTIONS,
+            instructions: PROJECT_TOOL_INSTRUCTIONS,
           } : {}),
         };
         const stream = await client.createResponse(request, options.active.controller.signal);
@@ -353,7 +360,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
           return { status: "failed", result: { providerId: this.id, model: options.model, error: message } };
         }
         if (toolCalls.length > 1 || toolCallCount + toolCalls.length > this.maxToolCallsPerRun) {
-          const message = "OpenAI 읽기 도구 호출이 안전 상한을 초과했습니다.";
+          const message = "OpenAI 프로젝트 도구 호출이 안전 상한을 초과했습니다.";
           emit({ kind: "run.failed", message });
           return { status: "failed", result: { providerId: this.id, model: options.model, error: message } };
         }
@@ -499,7 +506,7 @@ function addUsage(current: ProviderUsage | undefined, next: ProviderUsage | unde
 }
 
 function providerTools(broker: ToolBroker | undefined): FunctionTool[] {
-  return broker?.definitions().filter((definition) => definition.risk === "observation").map((definition) => ({
+  return broker?.definitions().map((definition) => ({
     type: "function",
     name: definition.name,
     description: definition.description,
@@ -531,7 +538,7 @@ async function executeFunctionCall(
   },
 ): Promise<ToolExecutionResult> {
   if (!allowedToolNames.has(toolCall.name)) {
-    return { toolCallId: toolCall.call_id, status: "failed", error: "허용되지 않은 읽기 도구입니다." };
+    return { toolCallId: toolCall.call_id, status: "failed", error: "허용되지 않은 프로젝트 도구입니다." };
   }
   if (toolCall.status && toolCall.status !== "completed") {
     return { toolCallId: toolCall.call_id, status: "failed", error: "완성되지 않은 도구 요청입니다." };
@@ -555,7 +562,7 @@ async function executeFunctionCall(
       input,
     }, { cwd: context.cwd, signal: context.signal });
   } catch {
-    return { toolCallId: toolCall.call_id, status: "failed", error: "허용되지 않거나 잘못된 읽기 도구 요청입니다." };
+    return { toolCallId: toolCall.call_id, status: "failed", error: "허용되지 않거나 잘못된 프로젝트 도구 요청입니다." };
   }
 }
 

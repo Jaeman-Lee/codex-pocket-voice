@@ -22,7 +22,7 @@ import { LocalToolBroker, type RegisteredTool } from "../src/tool-broker.js";
 
 const secret = "sk-or-v1-test-super-secret-value";
 
-test("OpenRouter runs strict ZDR read-only tools and keeps unsupported models chat-only", async (t) => {
+test("OpenRouter runs strict ZDR project tools and keeps unsupported models chat-only", async (t) => {
   const paths = await PathPolicy.fromEnvironment(process.cwd());
   const approvals = new InMemoryApprovalBroker();
   t.after(() => approvals.close());
@@ -55,7 +55,7 @@ test("OpenRouter runs strict ZDR read-only tools and keeps unsupported models ch
   const hiddenWrite: RegisteredTool<Record<string, never>> = {
     definition: {
       name: "workspace_write",
-      description: "Must remain disabled",
+      description: "Approval-gated write fixture",
       inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
       risk: "change",
     },
@@ -63,7 +63,18 @@ test("OpenRouter runs strict ZDR read-only tools and keeps unsupported models ch
     approval: () => ({ redactedSummary: "write" }),
     async execute() { throw new Error("must not execute"); },
   };
-  const broker = new LocalToolBroker([readTool, hiddenWrite], approvals, paths);
+  const hiddenCommand: RegisteredTool<Record<string, never>> = {
+    definition: {
+      name: "project_verify",
+      description: "Approval-gated verification fixture",
+      inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+      risk: "execution",
+    },
+    validate: () => ({}),
+    approval: () => ({ redactedSummary: "verify fixture", requiresTouch: true }),
+    async execute() { throw new Error("must not execute"); },
+  };
+  const broker = new LocalToolBroker([readTool, hiddenWrite, hiddenCommand], approvals, paths);
   const client = new FakeOpenRouterClient([
     [
       chunk({
@@ -123,14 +134,15 @@ test("OpenRouter runs strict ZDR read-only tools and keeps unsupported models ch
   assert.equal(descriptor.available, true);
   assert.equal(descriptor.capabilities.toolCalling, true);
   assert.equal(descriptor.capabilities.workspaceRead, true);
-  assert.equal(descriptor.capabilities.workspaceWrite, false);
-  assert.equal(descriptor.capabilities.commandExecution, false);
+  assert.equal(descriptor.capabilities.approvals, true);
+  assert.equal(descriptor.capabilities.workspaceWrite, true);
+  assert.equal(descriptor.capabilities.commandExecution, true);
   const connection = await adapter.testConnection();
   assert.equal(connection.modelCount, 2);
   assert.equal(client.keyCalls, 1);
   assert.equal(client.chatCalls, 0);
   const listed = await adapter.listModels();
-  assert.match(listed.find((model) => model.id === "vendor/tool-model")!.description, /read-only/);
+  assert.match(listed.find((model) => model.id === "vendor/tool-model")!.description, /approved/);
   assert.match(listed.find((model) => model.id === "vendor/chat-model")!.description, /chat-only/);
 
   const run = await adapter.startRun({
@@ -172,12 +184,14 @@ test("OpenRouter runs strict ZDR read-only tools and keeps unsupported models ch
   });
   assert.equal(first.model, "vendor/tool-model");
   assert.equal(first.parallel_tool_calls, false);
-  assert.equal(first.tools?.length, 1);
+  assert.equal(first.tools?.length, 3);
   assert.equal(first.tools?.[0]?.function.name, "workspace_read");
+  assert.equal(first.tools?.[1]?.function.name, "workspace_write");
+  assert.equal(first.tools?.[2]?.function.name, "project_verify");
   assert.equal(first.tools?.[0]?.function.strict, true);
   const continuation = JSON.stringify(client.requests[1]?.messages);
   assert.match(continuation, /tool_calls|safe OpenRouter context/);
-  assert.doesNotMatch(continuation, /workspace_write|sk-or-v1/);
+  assert.doesNotMatch(continuation, /workspace_write|project_verify|sk-or-v1/);
 
   events.length = 0;
   const chatRun = await adapter.startRun({
@@ -189,6 +203,71 @@ test("OpenRouter runs strict ZDR read-only tools and keeps unsupported models ch
   const chatRequest = client.requests[2]!;
   assert.equal(chatRequest.tools, undefined);
   assert.deepEqual(chatRequest.messages, [{ role: "user", content: "Just chat" }]);
+});
+
+test("OpenRouter pauses a change tool until touch approval and reports the result to the same model", async (t) => {
+  const paths = await PathPolicy.fromEnvironment(process.cwd());
+  const approvals = new InMemoryApprovalBroker({ createId: () => "approval-openrouter-change" });
+  t.after(() => approvals.close());
+  let changes = 0;
+  const changeTool: RegisteredTool<Record<string, never>> = {
+    definition: {
+      name: "workspace_replace_text",
+      description: "Apply one reviewed change",
+      inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+      risk: "change",
+    },
+    validate: () => ({}),
+    approval: () => ({ redactedSummary: "Replace text in fixture", requiresTouch: true }),
+    async execute() {
+      changes += 1;
+      return { changed: true };
+    },
+  };
+  const broker = new LocalToolBroker([changeTool], approvals, paths);
+  const client = new FakeOpenRouterClient([
+    [chunk({
+      id: "router-change-call",
+      provider: "Provider A",
+      choices: [{
+        delta: { tool_calls: [{
+          index: 0,
+          id: "router-change-tool",
+          type: "function",
+          function: { name: "workspace_replace_text", arguments: "{}" },
+        }] },
+        finish_reason: "tool_calls",
+      }],
+      usage: usage(2, 1, 0, 0.001),
+    })],
+    [chunk({
+      id: "router-change-done",
+      provider: "Provider A",
+      choices: [{ delta: { content: "변경 완료" }, finish_reason: "stop" }],
+      usage: usage(2, 1, 0, 0.001),
+    })],
+  ], models());
+  const adapter = new OpenRouterProviderAdapter({
+    credentials: staticCredentials(secret),
+    clientFactory: () => client,
+    createId: sequentialIds("router-change-conversation", "router-change-run"),
+    modelAllowlist: ["vendor/tool-model"],
+    toolBroker: broker,
+  });
+  const run = await adapter.startRun({
+    cwd: process.cwd(),
+    prompt: "Apply the reviewed change",
+    model: "vendor/tool-model",
+  });
+  await waitFor(() => approvals.listPending().length === 1);
+  assert.equal(changes, 0);
+  const pending = approvals.listPending()[0]!;
+  assert.equal(pending.toolCallId, "router-change-tool");
+  approvals.resolve(pending.id, "approved", "touch");
+  const completion = await run.completion;
+  assert.equal(completion.status, "completed");
+  assert.equal(changes, 1);
+  assert.match(JSON.stringify(client.requests[1]?.messages), /completed|changed/);
 });
 
 test("OpenRouter rejects models outside the allowlist or current strict ZDR catalog", async () => {

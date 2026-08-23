@@ -122,6 +122,9 @@ function ApprovalCard({
         <small>{seconds}초 뒤 자동 거절</small>
       </div>
       <strong>{approval.redactedSummary}</strong>
+      <small className="approval-context" title={approval.cwd}>
+        {workspaceName(approval.cwd)} · {approval.providerId}
+      </small>
       {approval.redactedDetails && <pre>{safeDetails(approval.redactedDetails)}</pre>}
       <div className="approval-actions">
         <button type="button" className="decline" disabled={busy} onClick={() => onDecision(approval, "declined")}>거절</button>
@@ -195,7 +198,12 @@ function riskLabel(risk: ApprovalItem["risk"]): string {
 
 function safeDetails(details: Record<string, unknown>): string {
   try {
-    return JSON.stringify(details, null, 2);
+    const { diff, script, ...metadata } = details;
+    return [
+      Object.keys(metadata).length > 0 ? JSON.stringify(metadata, null, 2) : "",
+      typeof script === "string" ? `script:\n${script}` : "",
+      typeof diff === "string" ? `diff:\n${diff}` : "",
+    ].filter(Boolean).join("\n\n");
   } catch {
     return "검토 세부 정보를 표시할 수 없습니다.";
   }
@@ -208,4 +216,8 @@ function stringResult(result: Operation["result"], key: string): string | undefi
 
 function short(value: string, maximum: number): string {
   return value.length <= maximum ? value : `${value.slice(0, maximum - 1)}…`;
+}
+
+function workspaceName(value: string): string {
+  return value.split(/[\\/]/).filter(Boolean).at(-1) ?? value;
 }

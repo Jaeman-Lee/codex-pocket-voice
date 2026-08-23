@@ -31,10 +31,10 @@ const MAX_TOOL_OUTPUT_CHARS = 80_000;
 const MAX_RESPONSE_TEXT_CHARS = 2 * 1024 * 1024;
 const MAX_TOOL_CALLS_PER_RUN = 8;
 const MODEL_CACHE_MS = 10 * 60_000;
-const READ_ONLY_TOOL_INSTRUCTIONS = [
-  "The available project tools are read-only.",
-  "Use them only when project context is required to answer the user.",
-  "They cannot modify files, run arbitrary commands, access credentials, use the network, or leave the selected project.",
+const PROJECT_TOOL_INSTRUCTIONS = [
+  "Project tools are restricted to the selected workspace and cannot access credentials.",
+  "Observation tools may run immediately; every file-changing or execution tool pauses for explicit on-screen user approval.",
+  "Never claim that a change or command ran until the corresponding tool result reports completed.",
 ].join(" ");
 
 export interface OpenRouterModelRecord {
@@ -170,6 +170,9 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
   private readonly maxToolCallsPerRun: number;
   private readonly toolBroker?: ToolBroker;
   private readonly hasReadTools: boolean;
+  private readonly hasApprovalTools: boolean;
+  private readonly hasWriteTools: boolean;
+  private readonly hasCommandTools: boolean;
   private readonly now: () => number;
   private modelCache?: {
     credentialFingerprint: string;
@@ -191,7 +194,11 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     this.maxImageBytes = options.maxImageBytes ?? MAX_IMAGE_BYTES;
     this.maxToolCallsPerRun = options.maxToolCallsPerRun ?? MAX_TOOL_CALLS_PER_RUN;
     this.toolBroker = options.toolBroker;
-    this.hasReadTools = options.toolBroker?.definitions().some((definition) => definition.risk === "observation") ?? false;
+    const definitions = options.toolBroker?.definitions() ?? [];
+    this.hasReadTools = definitions.some((definition) => definition.risk === "observation");
+    this.hasApprovalTools = definitions.some((definition) => definition.risk !== "observation");
+    this.hasWriteTools = definitions.some((definition) => definition.risk === "change");
+    this.hasCommandTools = definitions.some((definition) => definition.risk === "execution" || definition.risk === "high_risk");
     this.now = options.now ?? Date.now;
   }
 
@@ -230,11 +237,11 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
         models: configured,
         attachments: true,
         streaming: true,
-        toolCalling: this.hasReadTools,
-        approvals: false,
+        toolCalling: this.hasReadTools || this.hasApprovalTools,
+        approvals: this.hasApprovalTools,
         workspaceRead: this.hasReadTools,
-        workspaceWrite: false,
-        commandExecution: false,
+        workspaceWrite: this.hasWriteTools,
+        commandExecution: this.hasCommandTools,
         usageAccounting: true,
       },
       installGuide: {
@@ -249,13 +256,13 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     const credential = await this.requireCredential();
     const models = await this.loadModels(credential.apiKey);
     return models.map((model, index) => {
-      const toolCapable = supportsTools(model) && this.hasReadTools;
+      const toolCapable = supportsTools(model) && (this.hasReadTools || this.hasApprovalTools);
       const imageCapable = model.inputModalities.includes("image");
       return {
         id: model.id,
         displayName: model.name || model.id,
         description: [
-          toolCapable ? "read-only project tools" : "chat-only",
+          toolCapable ? (this.hasApprovalTools ? "approved project tools" : "read-only project tools") : "chat-only",
           imageCapable ? "image input" : "text input",
           model.contextLength ? `${model.contextLength.toLocaleString()} context` : null,
         ].filter(Boolean).join(" · "),
@@ -301,7 +308,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     if (!model) {
       throw new ProviderError(409, "선택한 모델은 현재 계정의 strict ZDR routing에서 사용할 수 없습니다.");
     }
-    const toolEnabled = this.hasReadTools && supportsTools(model);
+    const toolEnabled = (this.hasReadTools || this.hasApprovalTools) && supportsTools(model);
     const messages = await buildInitialMessages(
       input.prompt,
       input.imagePaths ?? [],
@@ -479,7 +486,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
           return { status: "failed", result: { providerId: this.id, model: options.model.id, error: message } };
         }
         if (completedCalls.length > 1 || toolCallCount + completedCalls.length > this.maxToolCallsPerRun) {
-          const message = "OpenRouter 읽기 도구 호출이 안전 상한을 초과했습니다.";
+          const message = "OpenRouter 프로젝트 도구 호출이 안전 상한을 초과했습니다.";
           emit({ kind: "run.failed", message });
           return { status: "failed", result: { providerId: this.id, model: options.model.id, error: message } };
         }
@@ -722,7 +729,7 @@ async function buildInitialMessages(
   maxImageBytes: number,
 ): Promise<OpenRouterChatMessage[]> {
   const messages: OpenRouterChatMessage[] = [];
-  if (toolEnabled) messages.push({ role: "system", content: READ_ONLY_TOOL_INSTRUCTIONS });
+  if (toolEnabled) messages.push({ role: "system", content: PROJECT_TOOL_INSTRUCTIONS });
   if (imagePaths.length === 0) {
     messages.push({ role: "user", content: prompt });
     return messages;
@@ -744,7 +751,7 @@ async function buildInitialMessages(
 }
 
 function providerTools(broker: ToolBroker | undefined): NonNullable<OpenRouterChatRequest["tools"]> {
-  return broker?.definitions().filter((definition) => definition.risk === "observation").map((definition) => ({
+  return broker?.definitions().map((definition) => ({
     type: "function",
     function: {
       name: definition.name,
@@ -768,7 +775,7 @@ async function executeToolCall(
   },
 ): Promise<ToolExecutionResult> {
   if (!allowedToolNames.has(call.name)) {
-    return { toolCallId: call.id, status: "failed", error: "허용되지 않은 읽기 도구입니다." };
+    return { toolCallId: call.id, status: "failed", error: "허용되지 않은 프로젝트 도구입니다." };
   }
   let input: unknown;
   try {
@@ -786,7 +793,7 @@ async function executeToolCall(
       input,
     }, { cwd: context.cwd, signal: context.signal });
   } catch {
-    return { toolCallId: call.id, status: "failed", error: "허용되지 않거나 잘못된 읽기 도구 요청입니다." };
+    return { toolCallId: call.id, status: "failed", error: "허용되지 않거나 잘못된 프로젝트 도구 요청입니다." };
   }
 }
 
