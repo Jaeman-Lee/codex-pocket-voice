@@ -97,9 +97,33 @@ interface NativeNotificationsPlugin {
   consumePendingAction(): Promise<NativeNotificationAction>;
 }
 
+export interface NativeUpdateReview {
+  cancelled: false;
+  token: string;
+  applicationId: string;
+  version: string;
+  versionCode: number;
+  currentVersion: string;
+  currentVersionCode: number;
+  channel: string;
+  commit: string;
+  createdAt: string;
+  certificateSha256: string;
+  apkSha256: string;
+  apkBytes: number;
+  expiresAt: number;
+}
+
+interface NativeUpdatePlugin {
+  selectBundle(): Promise<NativeUpdateReview | { cancelled: true }>;
+  installVerified(options: { token: string }): Promise<{ launched: boolean; settingsRequired: boolean }>;
+  discard(): Promise<void>;
+}
+
 export const NativeSpeech = registerPlugin<NativeSpeechPlugin>("PocketSpeech");
 export const NativeTunnel = registerPlugin<NativeTunnelPlugin>("PocketTunnel");
 export const NativeNotifications = registerPlugin<NativeNotificationsPlugin>("PocketNotifications");
+export const NativeUpdate = registerPlugin<NativeUpdatePlugin>("PocketUpdate");
 
 export function isNativeApp(): boolean {
   return Capacitor.isNativePlatform();

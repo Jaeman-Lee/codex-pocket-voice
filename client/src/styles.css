@@ -183,6 +183,26 @@ select {
 .notification-preference { min-width: 0; }
 .notification-preference button { width: 100%; min-height: 2.45rem; padding: 0.42rem 0.55rem; border: 1px solid var(--line); border-radius: 0.55rem; color: var(--accent); background: var(--surface-2); cursor: pointer; font-size: 0.65rem; font-weight: 750; overflow-wrap: anywhere; }
 .notification-preference button[aria-pressed="true"] { border-color: rgba(62, 213, 165, 0.35); background: rgba(62, 213, 165, 0.08); }
+.update-manager { min-width: 0; margin-top: 0.75rem; padding: 0.72rem; border: 1px solid rgba(62, 213, 165, 0.25); border-radius: 0.8rem; background: rgba(62, 213, 165, 0.04); }
+.update-manager-head { display: flex; min-width: 0; align-items: center; gap: 0.65rem; }
+.update-manager-head > div { flex: 1; min-width: 0; }
+.update-manager-head strong, .update-manager-head small { display: block; overflow-wrap: anywhere; }
+.update-manager-head strong { font-size: 0.76rem; }
+.update-manager-head small, .update-manager > p { margin-top: 0.18rem; color: var(--muted); font-size: 0.61rem; line-height: 1.45; }
+.update-manager button { min-height: 2rem; padding: 0.35rem 0.55rem; border: 1px solid var(--line); border-radius: 0.55rem; color: var(--accent); background: var(--surface); cursor: pointer; font-size: 0.65rem; font-weight: 750; }
+.update-manager button:disabled { opacity: 0.4; cursor: not-allowed; }
+.update-review { min-width: 0; margin-top: 0.55rem; padding: 0.55rem; border: 1px solid rgba(62, 213, 165, 0.22); border-radius: 0.62rem; background: var(--surface-2); }
+.update-review > strong { color: var(--accent); font-size: 0.75rem; }
+.update-review dl { display: grid; gap: 0.25rem; margin: 0.5rem 0; }
+.update-review dl > div { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: 0.45rem; min-width: 0; }
+.update-review dt { color: var(--muted); font-size: 0.59rem; }
+.update-review dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 0.59rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.update-review > p { margin: 0.45rem 0; color: var(--muted); font-size: 0.61rem; line-height: 1.5; }
+.update-review .update-blocked { display: block; color: var(--warm); font-size: 0.61rem; line-height: 1.4; }
+.update-review-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 0.4rem; margin-top: 0.5rem; }
+.update-review-actions button { min-width: 0; white-space: normal; }
+.update-review-actions button.install { color: #06120e; border-color: transparent; background: var(--accent); }
+.update-manager .update-error { margin: 0.55rem 0 0; padding: 0.5rem; border: 1px solid rgba(255, 129, 124, 0.28); border-radius: 0.55rem; color: #ffd1d1; background: rgba(122, 36, 48, 0.24); overflow-wrap: anywhere; }
 .diagnostics { margin-top: 0.75rem; padding: 0.7rem; border: 1px solid var(--line); border-radius: 0.78rem; background: var(--surface-2); }
 .diagnostics.ok { border-color: rgba(62, 213, 165, 0.28); }
 .diagnostics.warning { border-color: rgba(255, 203, 136, 0.32); }
@@ -605,6 +625,7 @@ textarea::placeholder { color: #6f8285; }
   .operation-list { grid-template-columns: minmax(0, 1fr); }
   .retention-policy-fields { grid-template-columns: minmax(0, 1fr); }
   .journal-actions, .journal-delete-confirm > div { grid-template-columns: minmax(0, 1fr); }
+  .update-review-actions { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 380px) {

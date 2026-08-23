@@ -68,12 +68,20 @@ node scripts/verify-update-manifest.mjs \
 검증기는 manifest 분리 서명과 고정 fingerprint뿐 아니라 실제 APK의 signer도 같은 인증서인지 확인하고,
 낮은 versionCode와 기본 상태의 동일 versionCode를 거부한다. 동일 버전의 CI 재빌드를 이전 미전달
 산출물로 완전히 교체할 때만 `--allow-same-version`을 사용한다. Fork의 unsigned 산출물은 자동 업데이트
-신뢰 대상이 아니며 수동 검토자가 의도적으로 `--allow-unsigned`를 준 경우에만 검증된다. 앱 안의
-다운로드·설치 UI는 아직 구현되지 않았다.
+신뢰 대상이 아니며 수동 검토자가 의도적으로 `--allow-unsigned`를 준 경우에만 검증된다.
+
+v2 Android 앱에서는 연결 센터의 **Android 앱 업데이트 → ZIP 선택**으로 동일한 signed artifact ZIP을
+고를 수 있다. 앱은 top-level 6개 파일만 bounded app-private cache에 풀고 현재 설치 앱과 같은 signer와
+package, 정확한 manifest 서명·APK/SBOM hash와 더 높은 versionCode를 확인한다. 검토 결과는 10분 뒤
+폐기되며 **검증된 APK 설치 확인**을 다시 터치해야 Android package installer가 열린다. unknown-source
+허용과 최종 설치는 Android 시스템 화면에서 사용자가 직접 승인한다. 앱이 Release URL을 자동 검색하거나
+다운로드·무인 설치하지 않으며, 1.8.2 앱에는 importer가 없으므로 최초 2.0 candidate는 기존 수동 설치가
+필요하다.
 
 ## Field-test checklist
 
 - 기존 설치 위에 APK가 정상 업데이트된다.
+- signed ZIP importer가 변조·동일/낮은 versionCode·다른 package/signer를 거부하고 Android 설치 확인창만 연다.
 - Companion과 페어링되고 앱 재시작 후에도 인증이 유지된다.
 - 프로젝트 목록, 새 프로젝트 생성과 `main` 브랜치 초기화가 동작한다.
 - AI 연결 센터가 작은 화면과 키보드 표시 상태에서 내부 스크롤된다.

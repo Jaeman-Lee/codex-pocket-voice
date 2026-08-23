@@ -221,8 +221,11 @@ GitHub Actions의 APK는 저장소 비밀값에 보관된 고정 키로 서명�
 **Android stable APK** Actions 아티팩트에 ZIP으로 올라갑니다. v2 CI 산출물은 APK·체크섬·SBOM과 함께
 정규화된 `update-manifest.json`을 만들고, 공식 서명 빌드에는 같은 Android release key로 만든 분리
 서명과 공개 인증서도 포함합니다. 오프라인 검증기는 APK와 SBOM의 해시·크기, manifest 서명, APK
-서명 인증서와 versionCode 상승을 확인합니다. 이 기능은 공급망 검증 기반이며 앱 내부 자동 다운로드나
-무인 설치 기능은 아닙니다. 자세한 사용법은 [Release process](docs/release-process.md)에 있습니다.
+서명 인증서와 versionCode 상승을 확인합니다. v2 Android 앱은 이 전체 ZIP을 연결 센터에서 선택해
+현재 설치 앱과 같은 signer·package, 더 높은 versionCode인지 native에서 다시 확인하고, 두 번째 터치
+뒤 Android 시스템 설치 확인창을 엽니다. URL 자동 검색·다운로드와 무인 설치는 하지 않습니다. 최초
+1.8.2→2.0 전환은 1.8.2 앱에 이 기능이 없으므로 기존 방식으로 수동 설치해야 합니다. 자세한 사용법은
+[Release process](docs/release-process.md)에 있습니다.
 
 현재 APK는 SSH 키를 앱에 복제하지 않고 기존 Termux SSH 설정을 사용합니다. Termux 없이 동작하는 네이티브 SSH 단계와 보안 설계는 [Android 앱 구조](docs/android-architecture.md)에 정리했습니다.
 

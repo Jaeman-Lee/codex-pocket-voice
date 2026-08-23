@@ -126,7 +126,12 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   update manifest에 고정한다. 공식 build는 Android release key로 exact manifest를 RSA/ECDSA SHA-256
   서명하고 공개 인증서를 함께 제공한다. 오프라인 검증기는 별도로 고정한 인증서 fingerprint, manifest
   서명, 실제 APK signer, artifact 무결성과 downgrade를 확인하며 unsigned fork는 명시적 override 없이
-  거부한다. 앱 내부 자동 다운로드·설치는 아직 구현하지 않았다.
+  거부한다.
+- Android 연결 센터에서 signed artifact ZIP을 직접 선택하고 설치 전 검토할 수 있다. native importer는
+  top-level 6개 파일, entry/전체 크기와 중복을 제한하고 현재 설치 앱과 같은 signer·package, exact
+  manifest/APK/SBOM hash와 더 높은 versionCode만 허용한다. 검증된 APK는 random token과 함께 10분간
+  private cache에 두고 설치 직전 다시 hash를 확인한다. 두 번째 터치 뒤에도 Android unknown-source와
+  package installer의 사용자 승인을 요구하며 URL 자동 다운로드·background·무인 설치는 하지 않는다.
 - opt-in PocketLink LAN TLS listener를 추가했다. Companion은 `0700` 디렉터리의 `0600` 단일-link
   private key, certificate/key 일치, 유효기간과 advertise host를 검증하고 TLS 1.2/1.3으로만 듣는다.
   Android `connectedDevice` foreground service는 Keystore AES-GCM으로 host·port·기본/교체용 SPKI pin을

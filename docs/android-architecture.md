@@ -32,6 +32,22 @@ Codex Pocket APK
 - APK origin만 읽기 CORS와 쓰기 origin 검사를 통과합니다.
 - SSH 개인키와 Codex 인증 정보는 APK나 웹 저장소로 복사하지 않습니다.
 
+## 서명된 앱 업데이트
+
+v2의 `PocketUpdate` 플러그인은 사용자가 Actions 또는 Release에서 받은 전체 ZIP을 Android document
+picker로 직접 선택할 때만 동작한다. ZIP은 최상위 6개 파일과 APK 1 GiB·SBOM 64 MiB 등 항목별/전체
+상한을 적용해 app-private cache에 새 파일로 푼다. path traversal, 디렉터리, 중복·추가 항목과 unsigned
+manifest를 거부한다.
+
+native 검증기는 canonical manifest에 고정된 APK·SBOM SHA-256/크기, `SHA256SUMS`, RSA/ECDSA 분리
+서명과 인증서 유효기간을 확인한다. 그 인증서는 현재 설치 앱의 실제 signer와 같아야 하며, ZIP의 APK도
+같은 package/signer, manifest와 같은 SemVer/versionCode이고 현재 설치본보다 높은 versionCode여야 한다.
+검증된 APK와 random install token은 10분간 app-private cache에만 남고 설치 직전에 APK hash를 다시
+계산한다. 사용자가 화면에서 다시 터치해야 `FileProvider` read grant로 Android package installer를
+열며, unknown-source 권한과 최종 설치도 시스템 화면에서 별도 승인한다. URL discovery/download,
+background update와 무인 설치는 없다. Activity/process가 회수되면 token과 cache를 폐기하고 ZIP을 다시
+선택한다.
+
 ## v2 PocketLink TLS bootstrap
 
 v2 개발판은 명시적으로 설정한 경우 Android native foreground service가

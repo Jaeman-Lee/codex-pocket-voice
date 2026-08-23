@@ -12,6 +12,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(PocketSecureStoragePlugin.class);
         registerPlugin(PocketJournalPlugin.class);
         registerPlugin(PocketNotificationsPlugin.class);
+        registerPlugin(PocketUpdatePlugin.class);
         super.onCreate(savedInstanceState);
         PocketNotificationsPlugin.captureIntent(this, getIntent());
     }

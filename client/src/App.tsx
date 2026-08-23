@@ -29,11 +29,13 @@ import {
   NativeNotifications,
   NativeSpeech,
   NativeTunnel,
+  NativeUpdate,
   type NativeSpeechError,
   type NativeSpeechResult,
   type NativeSpeechState,
   type NativeNotificationAction,
   type NativeNotificationKind,
+  type NativeUpdateReview,
   type PocketLinkStatus,
 } from "./native";
 import { mergeSpeechSegments } from "./speech-utils";
@@ -186,6 +188,10 @@ export function App() {
   const [showConnectionCenter, setShowConnectionCenter] = useState(false);
   const [testingProvider, setTestingProvider] = useState<ProviderId | null>(null);
   const [connectionTest, setConnectionTest] = useState<Partial<Record<ProviderId, ProviderConnectionTest>>>({});
+  const [updateReview, setUpdateReview] = useState<NativeUpdateReview | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateError, setUpdateError] = useState("");
+  const [updateInstallPermissionRequired, setUpdateInstallPermissionRequired] = useState(false);
   const [loginSession, setLoginSession] = useState<ProviderLoginSession | null>(null);
   const [providerAliases, setProviderAliases] = useState<Partial<Record<ProviderId, string>>>({});
   const [journalRestored, setJournalRestored] = useState(false);
@@ -1261,6 +1267,65 @@ export function App() {
       showToast("앱이 화면에 없을 때 완료·승인·오류 알림을 표시합니다.");
     } catch (error) {
       showToast(errorMessage(error));
+    }
+  }
+
+  async function selectSignedUpdateBundle() {
+    if (!isNativeApp() || updateBusy) return;
+    setUpdateBusy(true);
+    setUpdateError("");
+    setUpdateInstallPermissionRequired(false);
+    try {
+      const selected = await NativeUpdate.selectBundle();
+      if (selected.cancelled) return;
+      setUpdateReview(selected);
+      showToast(`서명과 APK를 확인했습니다 · v${selected.version}`);
+    } catch (error) {
+      setUpdateReview(null);
+      setUpdateError(errorMessage(error));
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
+
+  async function discardSignedUpdateBundle() {
+    if (!isNativeApp() || updateBusy) return;
+    setUpdateBusy(true);
+    try {
+      await NativeUpdate.discard();
+      setUpdateReview(null);
+      setUpdateError("");
+      setUpdateInstallPermissionRequired(false);
+    } catch (error) {
+      setUpdateError(errorMessage(error));
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
+
+  async function installSignedUpdate() {
+    if (!isNativeApp() || !updateReview || updateBusy) return;
+    if (Date.now() >= updateReview.expiresAt) {
+      setUpdateError("10분 검토 시간이 만료되었습니다. 업데이트 ZIP을 다시 선택해 주세요.");
+      setUpdateReview(null);
+      void NativeUpdate.discard();
+      return;
+    }
+    setUpdateBusy(true);
+    setUpdateError("");
+    setUpdateInstallPermissionRequired(false);
+    try {
+      const result = await NativeUpdate.installVerified({ token: updateReview.token });
+      if (result.settingsRequired) {
+        setUpdateInstallPermissionRequired(true);
+        setUpdateError("Android 설정에서 ‘이 출처 허용’을 켠 뒤 돌아와 설치를 다시 눌러 주세요.");
+      } else if (result.launched) {
+        showToast("Android 설치 확인창을 열었습니다. 버전과 앱 이름을 다시 확인해 주세요.");
+      }
+    } catch (error) {
+      setUpdateError(errorMessage(error));
+    } finally {
+      setUpdateBusy(false);
     }
   }
 
@@ -2712,6 +2777,13 @@ export function App() {
   openOperationFromDashboardRef.current = openOperationFromDashboard;
 
   const pendingApprovalCount = activeApprovals(approvalInbox).length;
+  const updateInstallBlockedReason = prompt.trim() || attachments.length > 0
+    ? "전송하지 않은 입력·첨부를 먼저 보내거나 지워 주세요."
+    : mediaBusy
+      ? "첨부 처리가 끝난 뒤 설치할 수 있습니다."
+      : rotatingIdentityTarget !== null
+        ? "단말 key 교체를 마친 뒤 설치할 수 있습니다."
+        : "";
 
   return (
     <div className="app-shell">
@@ -2985,6 +3057,49 @@ export function App() {
                 </label>
               )}
             </section>
+
+            {isNativeApp() && (
+              <section className="update-manager" aria-label="Android 앱 업데이트">
+                <div className="update-manager-head">
+                  <div>
+                    <strong>Android 앱 업데이트</strong>
+                    <small>Actions 또는 Release에서 받은 전체 ZIP 묶음을 선택합니다.</small>
+                  </div>
+                  <button type="button" disabled={updateBusy} onClick={() => void selectSignedUpdateBundle()}>
+                    {updateBusy ? "검증 중…" : updateReview ? "다른 ZIP" : "ZIP 선택"}
+                  </button>
+                </div>
+                {!updateReview && !updateError && (
+                  <p>현재 앱 signer와 같은 인증서, 분리 manifest 서명, APK·SBOM 해시와 더 높은 versionCode를 모두 확인합니다.</p>
+                )}
+                {updateReview && (
+                  <div className="update-review">
+                    <strong>v{updateReview.currentVersion} → v{updateReview.version}</strong>
+                    <dl>
+                      <div><dt>versionCode</dt><dd>{updateReview.currentVersionCode} → {updateReview.versionCode}</dd></div>
+                      <div><dt>APK</dt><dd>{formatBytes(updateReview.apkBytes)} · {updateReview.apkSha256.slice(0, 12)}…</dd></div>
+                      <div><dt>Signer</dt><dd>{updateReview.certificateSha256.slice(0, 12)}… · 현재 앱과 일치</dd></div>
+                      <div><dt>Build</dt><dd>{updateReview.channel} · {updateReview.commit.slice(0, 12)}</dd></div>
+                    </dl>
+                    <p>
+                      검증 결과는 10분간 이 앱의 비공개 cache에만 유지됩니다. 설치하면 앱이 닫힐 수 있지만
+                      Linux Companion의 실행 중 작업은 중단하지 않습니다. Android 시스템 확인 없이 자동 설치하지 않습니다.
+                    </p>
+                    {updateInstallBlockedReason && <small className="update-blocked">{updateInstallBlockedReason}</small>}
+                    <div className="update-review-actions">
+                      <button type="button" disabled={updateBusy} onClick={() => void discardSignedUpdateBundle()}>취소·파일 폐기</button>
+                      <button
+                        type="button"
+                        className="install"
+                        disabled={updateBusy || Boolean(updateInstallBlockedReason)}
+                        onClick={() => void installSignedUpdate()}
+                      >{updateInstallPermissionRequired ? "권한 확인 후 설치 다시 열기" : "검증된 APK 설치 확인"}</button>
+                    </div>
+                  </div>
+                )}
+                {updateError && <p className="update-error" role="alert">{updateError}</p>}
+              </section>
+            )}
 
             {diagnostics && (
               <section className={`diagnostics ${diagnostics.ok ? "ok" : "warning"}`}>
@@ -3609,6 +3724,12 @@ function short(text: string, length: number): string {
 function formatPairingCode(value: string): string {
   const digits = value.replace(/\D/g, "").slice(0, 8);
   return digits.length > 4 ? `${digits.slice(0, 4)} ${digits.slice(4)}` : digits;
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  if (value < 1024 * 1024) return `${Math.ceil(value / 1024)} KiB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 function isPocketLinkPin(value: string): boolean {
