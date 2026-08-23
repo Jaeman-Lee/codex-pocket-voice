@@ -160,6 +160,7 @@ export function App() {
   const [handoff, setHandoff] = useState<SessionHandoff | null>(null);
   const [showHandoffDialog, setShowHandoffDialog] = useState(false);
   const [handoffBusy, setHandoffBusy] = useState(false);
+  const [handoffSupported, setHandoffSupported] = useState(false);
   const [journal] = useState(createWorkJournal);
   const tr = (key: MessageKey) => translate(uiLanguage, key);
 
@@ -336,8 +337,11 @@ export function App() {
         api<WorkspaceResponse>("/api/workspaces"),
         api<ProviderResponse>("/api/providers"),
         api<ModelResponse>("/api/models?provider=codex"),
-        api<{ handoff: SessionHandoff | null; operation: Operation | null }>("/api/session/handoff"),
-        api<{ operations: Operation[] }>("/api/runs?status=running"),
+        api<{ handoff: SessionHandoff | null; operation: Operation | null }>("/api/session/handoff")
+          .then((data) => ({ ...data, supported: true }))
+          .catch(() => ({ handoff: null, operation: null, supported: false })),
+        api<{ operations: Operation[] }>("/api/runs?status=running")
+          .catch(() => ({ operations: [] })),
       ]);
       setConnectionText(`${health.device.name} · ${health.userAgent}`);
       setConnection("online");
@@ -345,6 +349,7 @@ export function App() {
       setCreationLocations(workspaceData.creationLocations);
       setModels(modelData.models);
       setProviders(providerData.providers);
+      setHandoffSupported(handoffData.supported);
       const storedProvider = localStorage.getItem(storageKey("provider", deviceRef.current));
       const selectedProvider = providerData.providers.find((item) => item.id === storedProvider && item.available)
         ?? providerData.providers.find((item) => item.id === "codex")
@@ -1132,6 +1137,7 @@ export function App() {
     setJournalRestored(false);
     setHandoff(null);
     setShowHandoffDialog(false);
+    setHandoffSupported(false);
   }
 
   function selectModel(nextModel: string) {
@@ -1470,8 +1476,8 @@ export function App() {
             className="icon-button handoff-button"
             type="button"
             aria-label="현재 세션 반납"
-            title="세션 반납 · 다른 기기에서 이어가기"
-            disabled={handoffBusy || (!threadId && !operation)}
+            title={handoffSupported ? "세션 반납 · 다른 기기에서 이어가기" : "Companion 1.8.0 이상에서 사용할 수 있습니다"}
+            disabled={!handoffSupported || handoffBusy || (!threadId && !operation)}
             onClick={() => setShowHandoffDialog(true)}
           >⇥</button>
           <button
