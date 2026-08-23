@@ -13,10 +13,13 @@ Session scope hotfix decision: 다른 프로젝트의 인계 세션이 현재 �
 그대로 유지한다. 최초 1.8.2 현장 설치 시 1.8.1을 rollback으로 두고 1.7.4는 복구 가능한
 archive로 이동한다. Companion 재시작은 활성 Codex turn이 없고 사용자가 확인한 뒤에만 수행한다.
 
-Candidate handoff: 2026-08-24에 커밋 `d76e478`의 서명 APK, SHA256SUMS와 CycloneDX
-SBOM을 Android stable APK Actions run `32647238314`에서 내려받아 체크섬을 검증했다.
-1.8.2를 current 설치 후보로, 1.8.1을 rollback 세트로 준비했다. Android 설치와 Companion
-재시작은 수행하지 않았으며, 1.7.4는 복구 가능한 이전 후보로만 남긴다.
+Artifact recovery decision: 소스와 APK 바이트를 변경하지 않는 배포 자산 복원이므로
+기존 `patch`/`1.8.2`, Android `versionCode 10802`, `hotfix/1.8.2-session-scope` 결정을
+유지한다. 2026-08-24에 커밋 `676e1ef`의 서명 APK, SHA256SUMS와 CycloneDX
+SBOM을 Android stable APK Actions run `32648034017`에서 Linux PC 현장 전달 폴더로
+다시 내려받아 체크섬을 검증했다. 1.8.2를 current 설치 후보로, 1.8.1을
+rollback 세트로 보존했다. Android 설치와 Companion 재시작은 수행하지 않았으며,
+1.7.4는 복구 가능한 이전 후보로만 남긴다.
 
 Update decision: `1.8.0`은 새 교차 기기 세션 흐름과 Companion API를 추가하므로
 `feature`/minor 변경이다. Draft feature PR에서 유지하고 현장 승인 전에는 `main`에 병합하지
@@ -49,7 +52,7 @@ candidate로 분류한다. 실행 중인 Codex turn을 끊지 않기 위해 Linu
 | Primary development workspace | Linux PC Git clone; v2 worktree active | 1.8.2 hotfix is isolated on its scoped branch |
 | Termux workspace | lightweight Git mirror at `f08d9e7` | reproducible dependencies and build output scheduled for removal |
 | Pull request | PR #4 into `main` | Linux Node 20/22 and Android checks passing; field test pending |
-| Android APK | 1.8.2 signed candidate | current installer set prepared from Actions run `32647238314`; install pending |
+| Android APK | 1.8.2 signed candidate | current installer set restored from Actions run `32648034017`; install pending |
 | Android rollback APK | 1.8.1 signed candidate | rollback set prepared from Actions run `32645200906`; already field-tested by the user |
 | Linux Companion | 1.8.1 | active for the user's other project; restart to 1.8.2 deferred until explicit confirmation |
 | Pairing | one Android client | paired; secrets remain outside Git |
