@@ -24,7 +24,7 @@
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환, operation UI 상태 모듈 구현; 나머지 App 상태 분리 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
-| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive 구현; 사용자 retention 설정·native 알림 잔여 |
+| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, opt-in native 알림·retained run 열기 구현; 사용자 retention 설정·process-death background 알림·실기기 acceptance 잔여 |
 | Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion과 recoverable A/B client-key rotation 구현; discovery/P2P·relay·background release gate 잔여 |
 
 ## 2. 제품 정의
@@ -357,8 +357,12 @@ ahead/behind와 linked worktree를 수집한다. 대시보드와 세션 반납 �
 표시하고 run 시작 시점 snapshot은 암호화 event journal에 함께 보존한다. Gateway는 run/release/claim의
 thread cwd가 선택한 workspace와 다르면 409로 차단한다.
 작업 카드는 한 줄 120자 목표 이름, retained 범위 내 최대 50개 pin과 보관·복원을 제공한다. metadata는
-Companion 재시작 뒤 복원되고 SSE로 다른 연결 기기에 전파된다. 사용자 retention 설정과 native 알림
-deep link는 다음 단계다.
+Companion 재시작 뒤 복원되고 SSE로 다른 연결 기기에 전파된다. 사용자가 직접 켜는 Android
+완료·승인·오류 알림도 구현했다. 잠금 화면에는 generic 상태만 표시하고
+app-private random token으로 PendingIntent를 검증한다. 알림을 탭하면 device/operation ID로 선택한
+Companion의 retained snapshot을 다시 조회한 뒤 정확한 작업을 연다. replay 중에는 알리지 않는다.
+사용자 retention 설정, WebView process 종료 뒤 독립 background 수신과 실기기 deep-link acceptance는
+다음 단계다.
 
 완료 조건: 여러 프로젝트 run을 동시에 추적하고 앱 종료·네트워크 전환 후 정확한 상태로 복구한다.
 

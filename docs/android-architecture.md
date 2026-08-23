@@ -49,6 +49,11 @@ Keystore-backed 보안 저장소에 두고, 현재 alias를 보존한 채 반대
 만든다. 새 key의 실제 TLS proof를 Companion이 영속화하고 이전 binding을 거부한 뒤에만 native 계층이
 이전 alias를 삭제한다. 암호화 pending 슬롯은 앱 process 회수와 응답 유실 뒤 복구되며, 불확실하면 두
 key를 유지하고 SSH로 자동 우회하지 않는다. 자동 discovery/P2P와 relay는 아직 구현하지 않았다.
+사용자가 연결 센터에서 명시적으로 켜고 Android runtime 권한을 허용하면, WebView의 live SSE가
+백그라운드에서 실행되는 동안 완료·승인·오류를 native private notification으로 전달한다. 알림에는
+프롬프트·경로·응답을 넣지 않으며 앱 전용 random action token과 device/operation ID만 사용한다. 탭하면
+등록된 Linux PC에서 retained operation을 다시 조회해 일치하는 작업을 연다. WebView process가 종료된
+상태의 독립 background event 수신은 아직 구현하지 않았다.
 자세한 설정과 보안 경계는
 [PocketLink TLS bootstrap](pocket-link.md)에 있다.
 

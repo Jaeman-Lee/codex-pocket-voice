@@ -81,8 +81,25 @@ interface NativeTunnelPlugin {
   status(options: { localPort: number }): Promise<PocketLinkStatus>;
 }
 
+export type NativeNotificationKind = "completed" | "approval" | "failed";
+export type NativeNotificationPermission = "granted" | "denied" | "prompt";
+
+export interface NativeNotificationAction {
+  pending: boolean;
+  deviceId?: string;
+  operationId?: string;
+}
+
+interface NativeNotificationsPlugin {
+  checkPermission(): Promise<{ state: NativeNotificationPermission }>;
+  requestPermission(): Promise<{ state: NativeNotificationPermission }>;
+  post(options: { kind: NativeNotificationKind; deviceId: string; operationId: string }): Promise<{ posted: boolean }>;
+  consumePendingAction(): Promise<NativeNotificationAction>;
+}
+
 export const NativeSpeech = registerPlugin<NativeSpeechPlugin>("PocketSpeech");
 export const NativeTunnel = registerPlugin<NativeTunnelPlugin>("PocketTunnel");
+export const NativeNotifications = registerPlugin<NativeNotificationsPlugin>("PocketNotifications");
 
 export function isNativeApp(): boolean {
   return Capacitor.isNativePlatform();

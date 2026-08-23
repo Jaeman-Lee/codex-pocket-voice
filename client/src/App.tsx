@@ -26,11 +26,14 @@ import {
 } from "./api";
 import {
   isNativeApp,
+  NativeNotifications,
   NativeSpeech,
   NativeTunnel,
   type NativeSpeechError,
   type NativeSpeechResult,
   type NativeSpeechState,
+  type NativeNotificationAction,
+  type NativeNotificationKind,
   type PocketLinkStatus,
 } from "./native";
 import { mergeSpeechSegments } from "./speech-utils";
@@ -152,6 +155,9 @@ export function App() {
   const [operation, setOperation] = useState<Operation | null>(null);
   const [activity, setActivity] = useState<ActivityState>({ running: false, text: "", detail: "" });
   const [tts, setTts] = useState(() => localStorage.getItem("codex-pocket-tts") === "true");
+  const [notificationsEnabled, setNotificationsEnabled] = useState(
+    () => localStorage.getItem("codex-pocket-notifications") === "true",
+  );
   const [networkAccess, setNetworkAccess] = useState(false);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [providers, setProviders] = useState<ProviderOption[]>([]);
@@ -257,6 +263,10 @@ export function App() {
   const handleEventRef = useRef<(event: CodexEvent) => void>(() => undefined);
   const initializeRef = useRef<() => Promise<void>>(async () => undefined);
   const replayingEventsRef = useRef(false);
+  const notificationsEnabledRef = useRef(notificationsEnabled);
+  const notifiedNativeEventsRef = useRef(new Set<string>());
+  const pendingNotificationActionRef = useRef<NativeNotificationAction | null>(null);
+  const openOperationFromDashboardRef = useRef<(operation: Operation) => void>(() => undefined);
 
   useEffect(() => { workspaceRef.current = workspace; }, [workspace]);
   useEffect(() => {
@@ -269,6 +279,10 @@ export function App() {
   useEffect(() => { operationRef.current = operation; }, [operation]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { handsFreeRef.current = handsFree; }, [handsFree]);
+  useEffect(() => {
+    notificationsEnabledRef.current = notificationsEnabled;
+    localStorage.setItem("codex-pocket-notifications", String(notificationsEnabled));
+  }, [notificationsEnabled]);
   useEffect(() => {
     if (provider === "codex") return;
     const available = providerConversationThreads(operationSnapshots, provider, workspace);
@@ -374,6 +388,16 @@ export function App() {
     setToast(text);
     toastTimerRef.current = window.setTimeout(() => setToast(""), 4_000);
   }, []);
+
+  useEffect(() => {
+    if (!isNativeApp()) return;
+    const consume = () => {
+      if (document.visibilityState === "visible") void consumeNativeNotificationAction();
+    };
+    consume();
+    document.addEventListener("visibilitychange", consume);
+    return () => document.removeEventListener("visibilitychange", consume);
+  }, [showToast]);
 
   const requestPairing = useCallback(async () => {
     try {
@@ -620,6 +644,7 @@ export function App() {
           handleOperationEvent(operationAction(activeOperation), activeOperation);
         }
       }
+      resolvePendingNotificationAction(runData.operations);
       initializedRef.current = true;
       if (!onboardingShownRef.current && localStorage.getItem("codex-pocket-onboarding-complete") !== "true") {
         onboardingShownRef.current = true;
@@ -1100,12 +1125,16 @@ export function App() {
       return;
     }
     if (event.type === "operation" && event.operation) {
+      if (event.action === "completed" || event.action === "failed") {
+        maybePostNativeNotification(event.action === "failed" ? "failed" : "completed", event.operation.id);
+      }
       handleOperationEvent(event.action ?? "", event.operation);
       return;
     }
     if (event.type === "approval" && event.approval) {
       setApprovalInbox((current) => applyApprovalEvent(current, event));
       if (event.action === "requested" && !replayingEventsRef.current) {
+        maybePostNativeNotification("approval", event.approval.operationId);
         setShowOperationsDashboard(true);
         showToast("화면에서 검토해야 할 도구 승인이 도착했습니다.");
       }
@@ -1186,6 +1215,79 @@ export function App() {
         showToast(stringValue(params.message) || "Codex 처리 중 오류가 발생했습니다.");
         break;
     }
+  }
+
+  function maybePostNativeNotification(kind: NativeNotificationKind, operationId: string) {
+    if (!isNativeApp() || !notificationsEnabledRef.current || document.visibilityState === "visible"
+      || replayingEventsRef.current) return;
+    const key = `${deviceRef.current}\u0000${kind}\u0000${operationId}`;
+    if (notifiedNativeEventsRef.current.has(key)) return;
+    if (notifiedNativeEventsRef.current.size >= 1_000) notifiedNativeEventsRef.current.clear();
+    notifiedNativeEventsRef.current.add(key);
+    void NativeNotifications.post({ kind, deviceId: deviceRef.current, operationId }).catch(() => {
+      notificationsEnabledRef.current = false;
+      setNotificationsEnabled(false);
+    });
+  }
+
+  async function toggleNativeNotifications() {
+    if (!isNativeApp()) return;
+    if (notificationsEnabledRef.current) {
+      notificationsEnabledRef.current = false;
+      setNotificationsEnabled(false);
+      showToast("Android 작업 알림을 껐습니다.");
+      return;
+    }
+    try {
+      const permission = await NativeNotifications.requestPermission();
+      if (permission.state !== "granted") {
+        showToast(permission.state === "denied"
+          ? "Android 설정에서 Codex Pocket Voice 알림을 허용해 주세요."
+          : "작업 알림 권한을 허용해야 켤 수 있습니다.");
+        return;
+      }
+      notificationsEnabledRef.current = true;
+      setNotificationsEnabled(true);
+      showToast("앱이 화면에 없을 때 완료·승인·오류 알림을 표시합니다.");
+    } catch (error) {
+      showToast(errorMessage(error));
+    }
+  }
+
+  async function consumeNativeNotificationAction() {
+    try {
+      const action = await NativeNotifications.consumePendingAction();
+      if (!action.pending || !action.deviceId || !action.operationId) return;
+      const target = listDeviceTargets().find((item) => item.id === action.deviceId);
+      if (!target) {
+        showToast("알림의 Linux PC 등록을 찾을 수 없습니다.");
+        return;
+      }
+      pendingNotificationActionRef.current = action;
+      if (action.deviceId !== deviceRef.current) {
+        selectDevice(action.deviceId);
+        return;
+      }
+      if (initializingRef.current) return;
+      const data = await api<{ operations: Operation[] }>("/api/runs");
+      setOperationSnapshots(data.operations);
+      resolvePendingNotificationAction(data.operations);
+    } catch (error) {
+      showToast(errorMessage(error));
+    }
+  }
+
+  function resolvePendingNotificationAction(operations: readonly Operation[]) {
+    const action = pendingNotificationActionRef.current;
+    if (!action?.pending || action.deviceId !== deviceRef.current || !action.operationId) return;
+    pendingNotificationActionRef.current = null;
+    const target = operations.find((operation) => operation.id === action.operationId);
+    if (!target) {
+      setShowOperationsDashboard(true);
+      showToast("알림의 작업이 현재 Companion 보존 범위에 없습니다.");
+      return;
+    }
+    openOperationFromDashboardRef.current(target);
   }
 
   handleEventRef.current = handleEvent;
@@ -2567,6 +2669,8 @@ export function App() {
       .catch(() => undefined);
   }
 
+  openOperationFromDashboardRef.current = openOperationFromDashboard;
+
   const pendingApprovalCount = activeApprovals(approvalInbox).length;
 
   return (
@@ -2827,6 +2931,16 @@ export function App() {
                   <option value="es-ES">Español</option>
                 </select>
               </label>
+              {isNativeApp() && (
+                <label className="notification-preference">
+                  <span>백그라운드 작업 알림</span>
+                  <button
+                    type="button"
+                    aria-pressed={notificationsEnabled}
+                    onClick={() => void toggleNativeNotifications()}
+                  >{notificationsEnabled ? "켜짐 · 끄기" : "꺼짐 · 권한 확인 후 켜기"}</button>
+                </label>
+              )}
             </section>
 
             {diagnostics && (

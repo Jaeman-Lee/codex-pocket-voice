@@ -63,6 +63,11 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   `metadata_updated` SSE로 연결된 화면에 동기화한다. 보관한 작업은 기본 대시보드에서 숨기되 다시
   표시·복원할 수 있으며, 실행·승인·미확인 작업은 보관할 수 없다. 고정은 7일/500 operation 보존
   상한을 우회하지 않고, 명시적인 프로젝트 기록 삭제는 고정·보관 작업도 함께 지운다.
+- Android에서 사용자가 직접 켠 경우에만 앱이 화면에 없을 때 완료·승인·오류 알림을 표시한다. 잠금
+  화면 알림에는 프롬프트·프로젝트 경로·Provider 응답을 넣지 않고 generic 상태만 표시한다. 알림의
+  PendingIntent는 앱 전용 random token과 bounded device/operation ID로 검증하며, 누르면 해당 Linux PC의
+  현재 retained operation을 다시 조회한 뒤 정확한 작업만 연다. SSE replay와 같은 operation 이벤트는
+  중복 알림을 만들지 않는다. WebView process가 종료된 뒤의 독립 background 수신은 아직 포함하지 않는다.
 - 승인 요청은 run과 workspace가 일치할 때만 승인함에 노출한다. redacted summary/details의 크기와 JSON
   형식을 제한하고, approve/decline 모두 same-origin 화면 터치 API로만 처리한다. 음성 source를 보내도
   서버가 `touch`로 고정하며 만료·거절·재연결 중 자동 승인은 없다.
