@@ -229,6 +229,13 @@ select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shad
   cursor: pointer;
 }
 .icon-button:active { transform: scale(0.96); }
+.icon-button:disabled { opacity: 0.32; cursor: not-allowed; }
+.handoff-button { color: var(--warm); font-size: 1.15rem; font-weight: 850; }
+
+.handoff-summary { display: grid; gap: 0.45rem; padding: 0.72rem; border: 1px solid var(--line); border-radius: 0.72rem; background: var(--surface-2); }
+.handoff-summary span { display: grid; grid-template-columns: 5rem minmax(0, 1fr); gap: 0.55rem; color: var(--muted); font-size: 0.72rem; overflow-wrap: anywhere; }
+.handoff-summary strong { color: var(--text); }
+.handoff-note { margin: 0; color: var(--muted); font-size: 0.67rem; line-height: 1.5; }
 
 .transcript {
   min-width: 0;
@@ -245,6 +252,13 @@ select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shad
 .journal-banner { display: flex; align-items: center; gap: 0.55rem; margin: 0 0 0.9rem; padding: 0.62rem 0.72rem; border: 1px solid rgba(255, 203, 136, 0.24); border-radius: 0.72rem; background: rgba(48, 37, 25, 0.68); }
 .journal-banner strong { flex: 0 0 auto; color: var(--warm); font-size: 0.68rem; }
 .journal-banner span { min-width: 0; color: var(--muted); font-size: 0.65rem; line-height: 1.4; }
+.handoff-banner { display: flex; align-items: center; gap: 0.65rem; margin: 0 0 0.9rem; padding: 0.68rem 0.72rem; border: 1px solid rgba(157, 242, 213, 0.3); border-radius: 0.72rem; background: rgba(23, 64, 55, 0.48); }
+.handoff-banner > div { flex: 1; min-width: 0; }
+.handoff-banner strong, .handoff-banner span { display: block; }
+.handoff-banner strong { color: var(--accent); font-size: 0.72rem; }
+.handoff-banner span { margin-top: 0.18rem; overflow: hidden; color: var(--muted); font-size: 0.64rem; text-overflow: ellipsis; white-space: nowrap; }
+.handoff-banner button { flex: 0 0 auto; min-height: 2.1rem; padding: 0.38rem 0.62rem; border: 0; border-radius: 0.58rem; color: #06120e; background: var(--accent); cursor: pointer; font-size: 0.68rem; font-weight: 800; }
+.handoff-banner button:disabled { opacity: 0.42; cursor: not-allowed; }
 
 .empty-state { max-width: 30rem; margin: 12vh auto 0; text-align: center; }
 .empty-state h2 { margin: 1.1rem 0 0.6rem; font-size: clamp(1.35rem, 6vw, 2rem); letter-spacing: -0.035em; }
@@ -388,6 +402,12 @@ textarea::placeholder { color: #6f8285; }
 
 @media (max-width: 560px) {
   .app-shell { border: 0; }
+  .topbar { padding-inline: 0.72rem; }
+  .top-actions { gap: 0.38rem; }
+  .top-actions .icon-button { width: 2.35rem; height: 2.35rem; }
+  .brand { min-width: 0; }
+  .brand > div { min-width: 0; }
+  .brand p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .selectors { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); max-height: 12rem; padding-inline: 0.7rem; }
   .model-bar { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); }
   .model-bar > label:last-child { grid-column: 1 / -1; }

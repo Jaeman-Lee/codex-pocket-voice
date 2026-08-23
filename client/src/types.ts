@@ -146,6 +146,16 @@ export interface Operation {
   result?: RunResult;
 }
 
+export interface SessionHandoff {
+  id: string;
+  workspace: string;
+  threadId: string;
+  operationId?: string;
+  releasedBy: { id: string; label: string };
+  releasedAt: string;
+  expiresAt: string;
+}
+
 export type MediaStatus = "uploaded" | "queued" | "analyzing" | "ready" | "failed";
 
 export interface MediaItem {
@@ -201,6 +211,7 @@ export interface CodexEvent {
   type: string;
   action?: string;
   operation?: Operation;
+  handoff?: SessionHandoff;
   method?: string;
   params?: Record<string, unknown>;
   media?: MediaItem;

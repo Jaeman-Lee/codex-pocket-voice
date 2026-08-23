@@ -46,6 +46,7 @@ import type {
   ProviderResponse,
   QueuedPrompt,
   RunResult,
+  SessionHandoff,
   SystemDiagnostics,
   ThreadDetail,
   ThreadSummary,
@@ -156,6 +157,9 @@ export function App() {
   const [uiLanguage, setUiLanguage] = useState<UiLanguage>(initialUiLanguage);
   const [speechLanguage, setSpeechLanguage] = useState(initialSpeechLanguage);
   const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null);
+  const [handoff, setHandoff] = useState<SessionHandoff | null>(null);
+  const [showHandoffDialog, setShowHandoffDialog] = useState(false);
+  const [handoffBusy, setHandoffBusy] = useState(false);
   const [journal] = useState(createWorkJournal);
   const tr = (key: MessageKey) => translate(uiLanguage, key);
 
@@ -327,11 +331,13 @@ export function App() {
     if (initializingRef.current) return;
     initializingRef.current = true;
     try {
-      const [health, workspaceData, providerData, modelData] = await Promise.all([
+      const [health, workspaceData, providerData, modelData, handoffData, runData] = await Promise.all([
         api<{ userAgent: string; device: { name: string } }>("/api/health"),
         api<WorkspaceResponse>("/api/workspaces"),
         api<ProviderResponse>("/api/providers"),
         api<ModelResponse>("/api/models?provider=codex"),
+        api<{ handoff: SessionHandoff | null; operation: Operation | null }>("/api/session/handoff"),
+        api<{ operations: Operation[] }>("/api/runs?status=running"),
       ]);
       setConnectionText(`${health.device.name} · ${health.userAgent}`);
       setConnection("online");
@@ -384,6 +390,10 @@ export function App() {
           // The local work journal effect restores the last saved copy.
         }
       }
+      const dismissedHandoff = localStorage.getItem(handoffDismissedKey(deviceRef.current));
+      setHandoff(handoffData.handoff?.id === dismissedHandoff ? null : handoffData.handoff);
+      const activeOperation = runData.operations.find((item) => item.threadId === threadRef.current);
+      if (activeOperation) handleOperationEvent("started", activeOperation);
       initializedRef.current = true;
       if (!onboardingShownRef.current && localStorage.getItem("codex-pocket-onboarding-complete") !== "true") {
         onboardingShownRef.current = true;
@@ -657,6 +667,7 @@ export function App() {
 
   function handleOperationEvent(action: string, nextOperation: Operation) {
     if (action === "started" && !operationRef.current) {
+      if (nextOperation.cwd !== workspaceRef.current || nextOperation.threadId !== threadRef.current) return;
       operationRef.current = nextOperation;
       setOperation(nextOperation);
       ensureLiveMessage();
@@ -696,6 +707,12 @@ export function App() {
     }
     if (event.type === "operation" && event.operation) {
       handleOperationEvent(event.action ?? "", event.operation);
+      return;
+    }
+    if (event.type === "session" && event.action === "released" && event.handoff) {
+      if (localStorage.getItem(handoffDismissedKey(deviceRef.current)) !== event.handoff.id) {
+        setHandoff(event.handoff);
+      }
       return;
     }
     const current = operationRef.current;
@@ -982,6 +999,112 @@ export function App() {
     }
   }
 
+  async function releaseSession() {
+    if (handoffBusy) return;
+    if (promptQueueRef.current.length > 0) {
+      showToast("이 기기에만 저장된 대기열이 있습니다. 모두 실행하거나 취소한 뒤 세션을 반납하세요.");
+      return;
+    }
+    const currentOperation = operationRef.current;
+    const currentThreadId = threadRef.current || currentOperation?.threadId || "";
+    if (!currentThreadId) {
+      detachLocalSession();
+      showToast("아직 저장된 Codex 대화가 없어 이 기기의 새 대화만 닫았습니다.");
+      return;
+    }
+    if (connection !== "online") {
+      showToast("PC에 연결된 상태에서 세션을 반납할 수 있습니다.");
+      return;
+    }
+    setHandoffBusy(true);
+    try {
+      if (workspaceRef.current && messagesRef.current.length > 0) {
+        await journal.saveConversation({
+          key: conversationKey(deviceRef.current, workspaceRef.current, currentThreadId),
+          device: deviceRef.current,
+          workspace: workspaceRef.current,
+          threadId: currentThreadId,
+          messages: messagesRef.current,
+          syncState: currentOperation?.status === "running" ? "running" : "synced",
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      const data = await api<{ handoff: SessionHandoff }>("/api/session/handoff", {
+        method: "POST",
+        body: {
+          workspace: workspaceRef.current || currentOperation?.cwd,
+          threadId: currentThreadId,
+          operationId: currentOperation?.status === "running" ? currentOperation.id : undefined,
+        },
+      });
+      localStorage.setItem(handoffDismissedKey(deviceRef.current), data.handoff.id);
+      setHandoff(null);
+      detachLocalSession();
+      showToast(currentOperation?.status === "running"
+        ? "세션을 반납했습니다. PC 작업은 계속되며 다른 기기에서 이어받을 수 있습니다."
+        : "세션을 반납했습니다. 다른 기기에서 이어받을 수 있습니다.");
+    } catch (error) {
+      showToast(errorMessage(error));
+    } finally {
+      setHandoffBusy(false);
+    }
+  }
+
+  function detachLocalSession() {
+    if (pollTimerRef.current !== null) window.clearTimeout(pollTimerRef.current);
+    pollTimerRef.current = null;
+    operationRef.current = null;
+    setOperation(null);
+    stopRunning();
+    setThreadId("");
+    threadRef.current = "";
+    localStorage.removeItem(storageKey("thread", deviceRef.current));
+    setMessages([]);
+    messagesRef.current = [];
+    setJournalRestored(false);
+    setShowHandoffDialog(false);
+  }
+
+  async function resumeHandoff() {
+    const pending = handoff;
+    if (!pending || handoffBusy) return;
+    if (promptQueueRef.current.length > 0) {
+      showToast("현재 기기의 대기열을 먼저 실행하거나 취소한 뒤 인계받으세요.");
+      return;
+    }
+    setHandoffBusy(true);
+    try {
+      if (!workspaces.some((item) => item.path === pending.workspace)) {
+        throw new Error("인계된 프로젝트가 현재 PC의 허용 목록에 없습니다.");
+      }
+      setWorkspace(pending.workspace);
+      workspaceRef.current = pending.workspace;
+      localStorage.setItem(storageKey("workspace", deviceRef.current), pending.workspace);
+      await loadThreads(pending.workspace, false, pending.threadId);
+      const data = await api<{ thread: ThreadDetail }>(`/api/threads/${encodeURIComponent(pending.threadId)}`);
+      setThreadId(pending.threadId);
+      threadRef.current = pending.threadId;
+      localStorage.setItem(storageKey("thread", deviceRef.current), pending.threadId);
+      const restored = historyMessages(data.thread);
+      messagesRef.current = restored;
+      setMessages(restored);
+      setJournalRestored(false);
+      if (pending.operationId) {
+        const active = await api<{ operation: Operation }>(`/api/runs/${encodeURIComponent(pending.operationId)}`)
+          .catch(() => null);
+        if (active?.operation.status === "running") handleOperationEvent("started", active.operation);
+        else if (active?.operation.status === "failed") handleOperationEvent("failed", active.operation);
+      }
+      localStorage.setItem(handoffDismissedKey(deviceRef.current), pending.id);
+      setHandoff(null);
+      showToast(pending.operationId ? "실행 중인 세션을 이어받았습니다." : "세션을 이어받았습니다.");
+    } catch (error) {
+      showToast(errorMessage(error));
+    } finally {
+      setHandoffBusy(false);
+    }
+  }
+
   function selectDevice(nextDevice: DeviceId) {
     if (nextDevice === deviceRef.current) return;
     setApiDevice(nextDevice);
@@ -1007,6 +1130,8 @@ export function App() {
     journalQueueReadyRef.current = null;
     queueDispatchingRef.current = false;
     setJournalRestored(false);
+    setHandoff(null);
+    setShowHandoffDialog(false);
   }
 
   function selectModel(nextModel: string) {
@@ -1342,6 +1467,14 @@ export function App() {
         </div>
         <div className="top-actions">
           <button
+            className="icon-button handoff-button"
+            type="button"
+            aria-label="현재 세션 반납"
+            title="세션 반납 · 다른 기기에서 이어가기"
+            disabled={handoffBusy || (!threadId && !operation)}
+            onClick={() => setShowHandoffDialog(true)}
+          >⇥</button>
+          <button
             className="icon-button"
             type="button"
             aria-label="AI 연결 센터 열기"
@@ -1391,6 +1524,32 @@ export function App() {
               {pairingBusy ? "확인 중…" : "안전하게 연결"}
             </button>
             <small>장치 ID {pairing.device.id.slice(0, 8)} · 인증정보는 이 기기의 보안 저장소에 보관됩니다.</small>
+          </div>
+        </section>
+      )}
+
+      {showHandoffDialog && (
+        <section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="handoff-dialog-title">
+          <div className="project-dialog-card handoff-dialog-card">
+            <div className="project-dialog-head">
+              <div>
+                <strong id="handoff-dialog-title">이 기기에서 세션 반납</strong>
+                <small>대화와 프로젝트 파일은 PC에 그대로 보존됩니다.</small>
+              </div>
+              <button type="button" aria-label="닫기" onClick={() => setShowHandoffDialog(false)}>×</button>
+            </div>
+            <div className="handoff-summary">
+              <span><strong>프로젝트</strong>{workspaceName(workspaceRef.current)}</span>
+              <span><strong>대화</strong>{threadId ? short(threads.find((item) => item.id === threadId)?.name || threads.find((item) => item.id === threadId)?.preview || threadId, 42) : "새 대화"}</span>
+              <span><strong>PC 작업</strong>{operation?.status === "running" ? "반납 후에도 계속 실행" : "현재 실행 중인 작업 없음"}</span>
+            </div>
+            {promptQueue.length > 0 && (
+              <p className="project-dialog-error">대기열 {promptQueue.length}건은 이 기기에만 저장되어 있습니다. 먼저 실행하거나 취소해야 안전하게 반납할 수 있습니다.</p>
+            )}
+            <button className="create-project-button" type="button" disabled={handoffBusy || promptQueue.length > 0} onClick={() => void releaseSession()}>
+              {handoffBusy ? "반납 중…" : "세션 반납"}
+            </button>
+            <p className="handoff-note">‘작업 중단’과 다릅니다. 실행 중인 Codex는 PC에서 계속되고, 다른 폰이나 노트북이 이 세션에 다시 붙을 수 있습니다.</p>
           </div>
         </section>
       )}
@@ -1670,6 +1829,15 @@ export function App() {
       )}
 
       <main ref={transcriptRef} className="transcript" aria-live="polite">
+        {handoff && (
+          <div className="handoff-banner" role="status">
+            <div>
+              <strong>다른 기기에서 반납한 세션</strong>
+              <span>{workspaceName(handoff.workspace)} · {handoff.operationId ? "PC 작업 실행 중" : "대화 이어가기"}</span>
+            </div>
+            <button type="button" disabled={handoffBusy} onClick={() => void resumeHandoff()}>{handoffBusy ? "연결 중…" : "이어받기"}</button>
+          </div>
+        )}
         {(journalRestored || (connection !== "online" && (messages.length > 0 || promptQueue.length > 0))) && (
           <div className="journal-banner" role="status">
             <strong>{connection === "online" ? "로컬 기록 복원됨" : "오프라인 기록"}</strong>
@@ -1978,6 +2146,10 @@ function mediaStatusText(item: PendingAttachment, device: DeviceId): string {
 
 function providerAliasKey(device: DeviceId, provider: ProviderId): string {
   return `codex-pocket-provider-alias-${device}-${provider}`;
+}
+
+function handoffDismissedKey(device: DeviceId): string {
+  return `codex-pocket-handoff-dismissed-${device}`;
 }
 
 function providerStatusLabel(provider: ProviderOption): string {

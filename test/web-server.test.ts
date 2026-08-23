@@ -162,6 +162,22 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(nativeHealth.headers.get("access-control-allow-origin"), "http://localhost");
 
   const operationId = started.operation.id;
+  const activeRuns = await jsonFetch(`${base}/api/runs?status=running`, { headers: authorized() });
+  assert.equal(activeRuns.operations.length, 1);
+  assert.equal(activeRuns.operations[0].id, operationId);
+  const released = await jsonFetch(`${base}/api/session/handoff`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ workspace: cwd, threadId: "thread-web", operationId }),
+  });
+  assert.equal(released.handoff.threadId, "thread-web");
+  assert.equal(released.handoff.operationId, operationId);
+  assert.equal(released.operation.status, "running");
+  assert.equal(fake.interrupted, undefined);
+  const availableHandoff = await jsonFetch(`${base}/api/session/handoff`, { headers: authorized() });
+  assert.equal(availableHandoff.handoff.id, released.handoff.id);
+  assert.equal(availableHandoff.operation.id, operationId);
+
   const interrupted = await jsonFetch(`${base}/api/runs/${operationId}/interrupt`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: base }),
@@ -211,6 +227,7 @@ class FakeWebClient implements WebCodexClient {
         defaultReasoningEffort: "medium",
         inputModalities: ["text"],
         supportsPersonality: false,
+        multiAgentVersion: null,
         additionalSpeedTiers: [],
         serviceTiers: [],
         defaultServiceTier: null,

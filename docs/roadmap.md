@@ -59,6 +59,7 @@ Implementation status: v1.6 introduces the versioned `WorkJournal` boundary, Ind
 ## Phase 4 — first-class remote PC workflow
 
 - Add PC project creation, file browsing, diff review, test output, Git status, and recovery from interrupted background work.
+- Let one client release a durable Codex thread and let another paired phone or laptop resume it without interrupting the PC turn.
 - Keep every resource-intensive process, including Codex, Node.js, ffmpeg, and Ollama, off Android.
 - Measure Android CPU, memory, battery, and background wake time as release gates.
 - Make offline and reconnect states explicit without starting a fallback phone runtime.

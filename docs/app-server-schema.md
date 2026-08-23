@@ -1,7 +1,7 @@
 # Codex app-server schema
 
 The checked-in TypeScript bindings under `generated/app-server` are generated,
-not hand edited. They were verified against `codex-cli 0.147.3` on 2026-08-17:
+not hand edited. They were verified against `codex-cli 0.148.1` on 2026-08-23:
 
 ```sh
 codex app-server generate-ts --experimental --out generated/app-server

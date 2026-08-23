@@ -1,7 +1,7 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { basename, extname, join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { InitializeResponse } from "../generated/app-server/InitializeResponse";
 import type { ModelListResponse } from "../generated/app-server/v2/ModelListResponse";
@@ -23,6 +23,7 @@ import { ProviderLoginManager } from "./provider-login-manager.js";
 import { GatewayAuth, GatewayAuthError } from "./gateway-auth.js";
 import { APP_VERSION, GATEWAY_CAPABILITIES, GATEWAY_PROTOCOL_MINIMUM, GATEWAY_PROTOCOL_VERSION } from "./version.js";
 import { collectSystemDiagnostics } from "./system-diagnostics.js";
+import { SessionHandoffStore } from "./session-handoff-store.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_EVENT_TEXT = 80_000;
@@ -56,6 +57,7 @@ export interface WebServerOptions {
   media?: MediaManager;
   projects?: ProjectManager;
   auth?: GatewayAuth;
+  handoffs?: SessionHandoffStore;
 }
 
 export interface RunningWebServer {
@@ -119,6 +121,9 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   await media.initialize();
   const projects = options.projects ?? await ProjectManager.fromEnvironment(options.paths);
   const auth = options.auth ?? await GatewayAuth.create();
+  const handoffs = options.handoffs ?? await SessionHandoffStore.create(
+    process.env.CODEX_POCKET_HANDOFF_STATE ?? join(dirname(auth.stateFile), "session-handoff.json"),
+  );
   const providers = new ProviderRegistry(options.client);
   const providerLogins = new ProviderLoginManager(providers);
   const unsubscribe = options.client.subscribe((event) => {
@@ -127,7 +132,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   });
 
   const server = createServer((request, response) => {
-    void handleRequest(request, response, options, auth, media, projects, providers, providerLogins, operations, activeThreads, sseClients).catch(
+    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, operations, activeThreads, sseClients).catch(
       (error) => sendError(response, error),
     );
   });
@@ -175,6 +180,7 @@ async function handleRequest(
   response: ServerResponse,
   options: WebServerOptions,
   auth: GatewayAuth,
+  handoffs: SessionHandoffStore,
   media: MediaManager,
   projects: ProjectManager,
   providers: ProviderRegistry,
@@ -196,7 +202,7 @@ async function handleRequest(
       response.end();
       return;
     }
-    await handleApi(request, response, url, options, auth, media, projects, providers, providerLogins, operations, activeThreads, sseClients);
+    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, operations, activeThreads, sseClients);
     return;
   }
   await serveStatic(request, response, url.pathname, options.staticDir);
@@ -208,6 +214,7 @@ async function handleApi(
   url: URL,
   options: WebServerOptions,
   auth: GatewayAuth,
+  handoffs: SessionHandoffStore,
   media: MediaManager,
   projects: ProjectManager,
   providers: ProviderRegistry,
@@ -259,6 +266,7 @@ async function handleApi(
         retentionHours: Math.round(media.retentionMs / 60 / 60_000),
       },
       device: auth.device,
+      client: authenticatedClient,
       gateway: {
         appVersion: APP_VERSION,
         protocolVersion: GATEWAY_PROTOCOL_VERSION,
@@ -353,6 +361,46 @@ async function handleApi(
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/session/handoff") {
+    const handoff = handoffs.current();
+    const operation = handoff?.operationId ? operations.get(handoff.operationId) : undefined;
+    sendJson(response, 200, {
+      handoff,
+      operation: operation ? publicOperation(operation) : null,
+    });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/session/handoff") {
+    assertSameOrigin(request);
+    const body = await readJson(request) as { workspace?: unknown; threadId?: unknown; operationId?: unknown };
+    const requestedOperationId = optionalString(body.operationId, "operationId", 200);
+    const operation = requestedOperationId ? operations.get(requestedOperationId) : undefined;
+    if (requestedOperationId && !operation) throw new HttpError(404, "Operation not found");
+    const threadId = optionalString(body.threadId, "threadId", 200) ?? operation?.threadId;
+    if (!threadId) throw new HttpError(400, "threadId is required");
+    const read = await options.client.readThread(threadId, false);
+    options.paths.assertAllowed(read.thread.cwd);
+    const workspace = await options.paths.resolveWorkspace(
+      optionalString(body.workspace, "workspace", 4_096) ?? operation?.cwd ?? read.thread.cwd,
+    );
+    if (operation && (operation.threadId !== threadId || operation.cwd !== workspace)) {
+      throw new HttpError(409, "Operation does not belong to this session");
+    }
+    const handoff = await handoffs.release({
+      workspace,
+      threadId,
+      ...(operation ? { operationId: operation.id } : {}),
+      releasedBy: authenticatedClient,
+    });
+    broadcast(sseClients, { type: "session", action: "released", handoff });
+    sendJson(response, 201, {
+      handoff,
+      operation: operation ? publicOperation(operation) : null,
+    });
+    return;
+  }
+
   const threadMatch = url.pathname.match(/^\/api\/threads\/([^/]+)$/);
   if (request.method === "GET" && threadMatch) {
     const threadId = decodeURIComponent(threadMatch[1]!);
@@ -409,6 +457,19 @@ async function handleApi(
   if (request.method === "GET" && frameMatch) {
     const path = media.getFrame(decodeURIComponent(frameMatch[1]!), Number(frameMatch[2]));
     await serveFile(request, response, path, "image/jpeg", "private, max-age=3600");
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/runs") {
+    cleanupOperations(operations);
+    const status = url.searchParams.get("status");
+    const workspace = url.searchParams.get("workspace");
+    if (workspace) options.paths.assertAllowed(workspace);
+    const listed = [...operations.values()]
+      .filter((operation) => (!status || operation.status === status) && (!workspace || operation.cwd === workspace))
+      .sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt))
+      .map(publicOperation);
+    sendJson(response, 200, { operations: listed });
     return;
   }
 
