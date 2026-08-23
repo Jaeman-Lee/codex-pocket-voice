@@ -56,11 +56,12 @@ candidate로 분류한다. 실행 중인 Codex turn을 끊지 않기 위해 Linu
 
 | Component | Version / revision | State |
 | --- | --- | --- |
-| Runtime code baseline | pending on `hotfix/1.8.3-writer-release` | local release check passed; push and CI pending |
+| Runtime code baseline | `e0f6ea1` on `hotfix/1.8.3-writer-release` | pushed; local release gate and CI passing |
 | Primary development workspace | Linux PC Git clone; v2 worktree active | 1.8.3 hotfix is isolated in a separate PC worktree |
 | Termux workspace | lightweight Git mirror at `f08d9e7` | reproducible dependencies and build output scheduled for removal |
-| Pull request | pending for `hotfix/1.8.3-writer-release` | will be stacked on the 1.8.2 hotfix until its base is merged |
-| Android APK | 1.8.2 signed candidate | preserved current installer; 1.8.3 has not been built or handed off |
+| Pull request | Draft PR #5 into `hotfix/1.8.2-session-scope` | Linux Node 20/22 and Android checks passing; stacked until the 1.8.2 base is merged |
+| Android staged APK | 1.8.3 signed candidate | Actions run `32671707088`; checksum-verified in separate PC candidate folder; not installed |
+| Android current APK | 1.8.2 signed candidate | current installer set preserved unchanged |
 | Android rollback APK | 1.8.1 signed candidate | rollback set prepared from Actions run `32645200906`; already field-tested by the user |
 | Linux Companion | 1.8.1 | active for the user's other project; restart to a verified hotfix deferred until explicit confirmation |
 | Pairing | one Android client | paired; secrets remain outside Git |

@@ -17,6 +17,9 @@ Update decision: 사용자가 세션을 반납한 뒤에도 Companion의 app-ser
 - 다른 workspace/thread의 handoff에는 영향을 주지 않으며, 반환 실패 시 기존 handoff와 세션을 보존한다.
 - PC Codex CLI `0.149.0` 기준으로 app-server TypeScript 바인딩을 재생성하고 실제
   app-server에서 존재하지 않는 thread의 안전한 unsubscribe 응답을 검증한다.
+- 커밋 `e0f6ea1`의 Linux Node 20/22와 Android stable APK CI가 통과했다. Actions run
+  `32671707088`의 서명 APK·SHA256SUMS·SBOM을 PC의 별도 1.8.3 candidate 폴더에 내려받아
+  SHA-256을 확인했으며, 현재 1.8.2와 rollback 1.8.1 세트는 변경하지 않았다.
 
 ## 1.8.2 hotfix candidate — project-scoped session handoff
 
@@ -82,7 +85,7 @@ Candidate build history:
 | 1.8.0 | `5c4d0bb` | superseded candidate | 교차 기기 세션 인계와 순차 배포 호환 |
 | 1.8.1 | `c5563ec` | rollback candidate | 스마트폰 뷰포트 수용과 조절 가능한 WebView |
 | 1.8.2 | `d76e478` | preserved current candidate | 프로젝트별 세션 인계와 종료 대상 격리 |
-| 1.8.3 | pending | source candidate | 반납한 thread의 app-server writer 반환 |
+| 1.8.3 | `e0f6ea1` | staged install candidate | 반납한 thread의 app-server writer 반환 |
 
 ## 1.6.0 — 2026-08-16
 
