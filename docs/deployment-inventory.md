@@ -1,11 +1,25 @@
 # Deployment inventory
 
-Last verified: 2026-08-23 KST
+Last verified: 2026-08-24 KST
 
 이 문서는 공개 가능한 배포 기준선만 기록한다. 사용자명, 파일 절대 경로, 네트워크 주소,
 기기 ID, 인증 토큰, 페어링 코드는 기록하지 않는다.
 
 ## Current candidate and deployed baseline
+
+Session scope hotfix decision: 다른 프로젝트의 인계 세션이 현재 프로젝트의 세션 종료·반납 대상으로
+보이는 버그이므로 `patch`/`1.8.2`, Android `versionCode 10802`로 분류한다. 대상 브랜치는
+`hotfix/1.8.2-session-scope`이다. 1.8.2를 전달하기 전에는 1.8.1 current와 1.7.4 rollback을
+그대로 유지한다. 최초 1.8.2 현장 설치 시 1.8.1을 rollback으로 두고 1.7.4는 복구 가능한
+archive로 이동한다. Companion 재시작은 활성 Codex turn이 없고 사용자가 확인한 뒤에만 수행한다.
+
+Artifact recovery decision: 소스와 APK 바이트를 변경하지 않는 배포 자산 복원이므로
+기존 `patch`/`1.8.2`, Android `versionCode 10802`, `hotfix/1.8.2-session-scope` 결정을
+유지한다. 2026-08-24에 커밋 `676e1ef`의 서명 APK, SHA256SUMS와 CycloneDX
+SBOM을 Android stable APK Actions run `32648034017`에서 Linux PC 현장 전달 폴더로
+다시 내려받아 체크섬을 검증했다. 1.8.2를 current 설치 후보로, 1.8.1을
+rollback 세트로 보존했다. Android 설치와 Companion 재시작은 수행하지 않았으며,
+1.7.4는 복구 가능한 이전 후보로만 남긴다.
 
 Update decision: `1.8.0`은 새 교차 기기 세션 흐름과 Companion API를 추가하므로
 `feature`/minor 변경이다. Draft feature PR에서 유지하고 현장 승인 전에는 `main`에 병합하지
@@ -34,13 +48,13 @@ candidate로 분류한다. 실행 중인 Codex turn을 끊지 않기 위해 Linu
 
 | Component | Version / revision | State |
 | --- | --- | --- |
-| Runtime code baseline | `c5563ec` on `agent/react-capacitor-android` | pushed; local and PR checks passing |
-| Primary development workspace | Linux PC Git clone at `c5563ec` | build, 18 tests and 3 real integrations passing |
+| Runtime code baseline | `d76e478` on `hotfix/1.8.2-session-scope` | pushed; PR #4 Linux and Android checks passing |
+| Primary development workspace | Linux PC Git clone; v2 worktree active | 1.8.2 hotfix is isolated on its scoped branch |
 | Termux workspace | lightweight Git mirror at `f08d9e7` | reproducible dependencies and build output scheduled for removal |
-| Pull request | Draft PR #1 into `main` | Linux and Android checks passing; field test pending |
-| Android APK | 1.8.1 signed CI candidate | APK, checksum and CycloneDX SBOM retained in Actions for 14 days; field install pending |
-| Android rollback APK | 1.7.4 | sole validated rollback set; 1.8.0 is superseded rather than promoted to rollback |
-| Linux Companion | 1.8.0 | running from the PC Git clone; restart to 1.8.1 deferred until no Codex turn is active |
+| Pull request | PR #4 into `main` | Linux Node 20/22 and Android checks passing; field test pending |
+| Android APK | 1.8.2 signed candidate | current installer set restored from Actions run `32648034017`; install pending |
+| Android rollback APK | 1.8.1 signed candidate | rollback set prepared from Actions run `32645200906`; already field-tested by the user |
+| Linux Companion | 1.8.1 | active for the user's other project; restart to 1.8.2 deferred until explicit confirmation |
 | Pairing | one Android client | paired; secrets remain outside Git |
 | Previous Companion | 0.2.0 directory snapshot | retained temporarily for rollback |
 | Superseded Companion | 1.7.4 working directory | moved to recoverable trash after the 1.8.0 cutover |
@@ -59,8 +73,8 @@ PC Codex CLI `0.149.0`은 저장소의 app-server schema 기준 `0.148.1`보다 
 모바일 뷰포트 수정과 섞어 자동 갱신하지 않으며, 별도 후속 patch 후보로 분류해 바인딩 재생성, 실제
 app-server 통합 검사와 새 APK 판단을 거친다.
 
-`1.8.1`은 아직 정식 Release가 아니다. 사용자 현장 테스트가 끝난 뒤 PR을 병합하고 같은
-병합 커밋에 `v1.8.1` 태그와 GitHub Release를 만들어야 한다. Companion을 1.8.1로 재시작하면
+`1.8.2`는 아직 정식 Release가 아니다. 사용자 현장 테스트가 끝난 뒤 PR을 병합하고 같은
+병합 커밋에 `v1.8.2` 태그와 GitHub Release를 만들어야 한다. Companion을 1.8.2로 재시작하면
 실행 중인 기존 run이 중단될 수 있으므로, 활성 작업이 없을 때만 배포한다.
 
 ## Artifact classes
@@ -76,7 +90,7 @@ app-server 통합 검사와 새 APK 판단을 거친다.
 
 ## Cleanup gates
 
-1. 현장 테스트 중에는 `v1.8.1` 태그를 만들거나 Draft PR을 병합하지 않는다.
+1. 현장 테스트 중에는 `v1.8.2` 태그를 만들거나 PR을 병합하지 않는다.
 2. 프로젝트 생성, AI 연결 센터 스크롤, 재연결, 음성 입력, 기존 대화 복구와 기기 간 세션 인계를 확인한다.
 3. 승인 후 정식 Release를 만들고 APK 체크섬을 Release asset과 다시 대조한다.
 4. 정식 Release 확인 후 PC의 0.2.0 rollback snapshot을 제거한다.

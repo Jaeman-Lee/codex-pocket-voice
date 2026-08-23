@@ -362,7 +362,10 @@ async function handleApi(
   }
 
   if (request.method === "GET" && url.pathname === "/api/session/handoff") {
-    const handoff = handoffs.current();
+    const workspace = url.searchParams.get("workspace") || undefined;
+    const threadId = url.searchParams.get("threadId") || undefined;
+    if (workspace) options.paths.assertAllowed(workspace);
+    const handoff = handoffs.current({ workspace, threadId });
     const operation = handoff?.operationId ? operations.get(handoff.operationId) : undefined;
     sendJson(response, 200, {
       handoff,
@@ -398,6 +401,20 @@ async function handleApi(
       handoff,
       operation: operation ? publicOperation(operation) : null,
     });
+    return;
+  }
+
+  const claimHandoffMatch = url.pathname.match(/^\/api\/session\/handoffs\/([^/]+)\/claim$/);
+  if (request.method === "POST" && claimHandoffMatch) {
+    assertSameOrigin(request);
+    await readJson(request, true);
+    const handoffId = decodeURIComponent(claimHandoffMatch[1]!);
+    const existing = handoffs.list().find((item) => item.id === handoffId);
+    if (!existing) throw new HttpError(404, "Session handoff not found");
+    options.paths.assertAllowed(existing.workspace);
+    const claimed = await handoffs.claim(handoffId);
+    broadcast(sseClients, { type: "session", action: "claimed", handoffId });
+    sendJson(response, 200, { claimed });
     return;
   }
 
