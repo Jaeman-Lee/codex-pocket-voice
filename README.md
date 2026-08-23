@@ -217,6 +217,13 @@ GitHub Actions의 APK는 저장소 비밀값에 보관된 고정 키로 서명�
 이후 버전은 앱 데이터와 설정을 유지한 채 덮어쓸 수 있습니다. 서명키 파일이나 암호는 저장소에
 커밋하지 않습니다.
 
+정식 Release 전의 APK 후보는 GitHub의 **Releases**가 아니라 해당 Draft PR의 성공한
+**Android stable APK** Actions 아티팩트에 ZIP으로 올라갑니다. v2 CI 산출물은 APK·체크섬·SBOM과 함께
+정규화된 `update-manifest.json`을 만들고, 공식 서명 빌드에는 같은 Android release key로 만든 분리
+서명과 공개 인증서도 포함합니다. 오프라인 검증기는 APK와 SBOM의 해시·크기, manifest 서명, APK
+서명 인증서와 versionCode 상승을 확인합니다. 이 기능은 공급망 검증 기반이며 앱 내부 자동 다운로드나
+무인 설치 기능은 아닙니다. 자세한 사용법은 [Release process](docs/release-process.md)에 있습니다.
+
 현재 APK는 SSH 키를 앱에 복제하지 않고 기존 Termux SSH 설정을 사용합니다. Termux 없이 동작하는 네이티브 SSH 단계와 보안 설계는 [Android 앱 구조](docs/android-architecture.md)에 정리했습니다.
 
 향후 사용자별 SSH·네트워크·경로 정보를 온보딩 화면에서 설정하는 작업과, Termux·Tailscale이 담당하는 보안 연결 기능을 독립 모듈로 내재화하는 최종 목표는 [로드맵](docs/roadmap.md)에 정리했습니다. 실제 프로젝트와 CLI는 Linux PC에만 두고 스마트폰은 저부하 클라이언트로 유지합니다. 실제 사용자 정보나 비밀키는 공개 저장소에 저장하지 않습니다.

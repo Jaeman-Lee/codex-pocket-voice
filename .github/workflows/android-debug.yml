@@ -10,6 +10,10 @@ on:
       - "capacitor.config.ts"
       - "package.json"
       - "package-lock.json"
+      - "scripts/ReleaseManifestSigner.java"
+      - "scripts/create-update-manifest.mjs"
+      - "scripts/verify-update-manifest.mjs"
+      - "test/update-manifest.test.ts"
 
 permissions:
   contents: read
@@ -99,7 +103,76 @@ jobs:
       - name: Generate dependency SBOM
         run: npm sbom --sbom-format cyclonedx > android/app/build/outputs/apk/release/codex-pocket-sbom.json
 
-      - name: Upload APK, checksum, and SBOM
+      - name: Create and verify signed update manifest
+        if: steps.signing.outputs.available == 'true'
+        env:
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          release_dir="android/app/build/outputs/apk/release"
+          keystore="$RUNNER_TEMP/codex-pocket-release.jks"
+          apk="$release_dir/Codex-Pocket-Voice-v${{ steps.app.outputs.version }}-stable.apk"
+          certificate="$release_dir/update-manifest-cert.pem"
+          manifest="$release_dir/update-manifest.json"
+          signature="$release_dir/update-manifest.sig"
+          apk_certificates="$RUNNER_TEMP/apk-certificates.txt"
+          keytool -exportcert -rfc \
+            -keystore "$keystore" \
+            -alias "$ANDROID_KEY_ALIAS" \
+            -storepass:env ANDROID_KEYSTORE_PASSWORD \
+            -file "$certificate"
+          node scripts/create-update-manifest.mjs \
+            --apk "$apk" \
+            --sbom "$release_dir/codex-pocket-sbom.json" \
+            --output "$manifest" \
+            --version "${{ steps.app.outputs.version }}" \
+            --version-code "$(node -p "const [a,b,c]='${{ steps.app.outputs.version }}'.split('.').map(Number); a*10000+b*100+c")" \
+            --application-id "${POCKET_APPLICATION_ID:-io.github.jaemanlee.codexpocketvoice.stable}" \
+            --channel ci \
+            --commit "$GITHUB_SHA" \
+            --certificate "$certificate"
+          mkdir -p "$RUNNER_TEMP/release-manifest-signer"
+          javac -d "$RUNNER_TEMP/release-manifest-signer" scripts/ReleaseManifestSigner.java
+          java -cp "$RUNNER_TEMP/release-manifest-signer" ReleaseManifestSigner sign "$keystore" "$manifest" "$signature"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" > "$apk_certificates"
+          certificate_sha=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$apk_certificates")
+          node -e "if (!/^[a-f0-9]{64}$/i.test(process.argv[1])) process.exit(1)" "$certificate_sha"
+          node scripts/verify-update-manifest.mjs \
+            --manifest "$manifest" \
+            --signature "$signature" \
+            --certificate "$certificate" \
+            --expected-certificate-sha256 "$certificate_sha" \
+            --artifact-dir "$release_dir" \
+            --apksigner "$ANDROID_HOME/build-tools/36.0.0/apksigner" \
+            --current-version-code "$(node -p "const [a,b,c]='${{ steps.app.outputs.version }}'.split('.').map(Number); a*10000+b*100+c")" \
+            --allow-same-version
+
+      - name: Create unsigned fork update manifest
+        if: steps.signing.outputs.available == 'false'
+        run: |
+          release_dir="android/app/build/outputs/apk/release"
+          apk="$release_dir/Codex-Pocket-Voice-v${{ steps.app.outputs.version }}-unsigned.apk"
+          manifest="$release_dir/update-manifest.json"
+          version_code=$(node -p "const [a,b,c]='${{ steps.app.outputs.version }}'.split('.').map(Number); a*10000+b*100+c")
+          node scripts/create-update-manifest.mjs \
+            --apk "$apk" \
+            --sbom "$release_dir/codex-pocket-sbom.json" \
+            --output "$manifest" \
+            --version "${{ steps.app.outputs.version }}" \
+            --version-code "$version_code" \
+            --application-id "${POCKET_APPLICATION_ID:-io.github.jaemanlee.codexpocketvoice.stable}" \
+            --channel ci-unsigned \
+            --commit "$GITHUB_SHA" \
+            --unsigned
+          node scripts/verify-update-manifest.mjs \
+            --manifest "$manifest" \
+            --artifact-dir "$release_dir" \
+            --current-version-code "$version_code" \
+            --allow-same-version \
+            --allow-unsigned
+
+      - name: Upload APK, checksum, SBOM, and update manifest
         uses: actions/upload-artifact@v7
         with:
           name: Codex-Pocket-Voice-v${{ steps.app.outputs.version }}
@@ -107,5 +180,8 @@ jobs:
             android/app/build/outputs/apk/release/Codex-Pocket-Voice-v*.apk
             android/app/build/outputs/apk/release/SHA256SUMS
             android/app/build/outputs/apk/release/codex-pocket-sbom.json
+            android/app/build/outputs/apk/release/update-manifest.json
+            android/app/build/outputs/apk/release/update-manifest.sig
+            android/app/build/outputs/apk/release/update-manifest-cert.pem
           if-no-files-found: error
           retention-days: 14

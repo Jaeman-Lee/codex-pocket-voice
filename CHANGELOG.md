@@ -122,6 +122,11 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   명시적 same-origin 확인값을 요구한다. 적용은 실행 중 operation을 보존하면서 한도 밖 기록을 즉시
   정리하고 모든 연결 기기에 `policy_updated`를 보낸다. 설정은 SQLite schema 1의 additive table에
   key-HMAC으로 인증해 변조된 값으로 조용히 삭제하지 않으며 Companion 재시작 뒤에도 복원한다.
+- Android CI가 APK·SBOM의 파일명, SHA-256·크기, package, SemVer/versionCode, commit을 canonical
+  update manifest에 고정한다. 공식 build는 Android release key로 exact manifest를 RSA/ECDSA SHA-256
+  서명하고 공개 인증서를 함께 제공한다. 오프라인 검증기는 별도로 고정한 인증서 fingerprint, manifest
+  서명, 실제 APK signer, artifact 무결성과 downgrade를 확인하며 unsigned fork는 명시적 override 없이
+  거부한다. 앱 내부 자동 다운로드·설치는 아직 구현하지 않았다.
 - opt-in PocketLink LAN TLS listener를 추가했다. Companion은 `0700` 디렉터리의 `0600` 단일-link
   private key, certificate/key 일치, 유효기간과 advertise host를 검증하고 TLS 1.2/1.3으로만 듣는다.
   Android `connectedDevice` foreground service는 Keystore AES-GCM으로 host·port·기본/교체용 SPKI pin을

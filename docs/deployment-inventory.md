@@ -30,6 +30,15 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; restart recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
 | PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | reviewed QR, observed backup-pin server certificate promotion and recoverable Keystore A/B client identity rotation implemented; discovery/P2P, relay and field validation pending |
+| Android update integrity | canonical schema 1 manifest + detached release-key signature | artifact/APK signer binding and anti-downgrade offline verifier implemented; in-app download/install and field rollback pending |
+
+Signed update manifest checkpoint decision: APK 공급망 metadata와 offline 검증은 v2의 새 release capability이므로
+기존 `breaking`/`2.0.0`, Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지한다. 공식
+CI build는 기존 Android signing secret으로 exact canonical manifest만 서명하고 private key를 artifact나
+로그에 내보내지 않는다. 검증 시 caller가 별도로 보관한 certificate fingerprint와 APK 실제 signer를
+함께 요구하며 변조·downgrade·기본 unsigned를 거부한다. 이 checkpoint는 source와 CI-only APK만
+갱신하고 현장 APK 전달·설치나 Companion 재시작은 수행하지 않는다. current v1 후보 1.8.2와 검증된
+rollback 1.8.1을 그대로 보존한다.
 
 Read-only tool checkpoint decision: 기존 v2 Provider/Gateway 계약에 새 사용자 기능을 추가하는 2.0
 범위이므로 분류와 버전은 `breaking`/`2.0.0`, 대상 브랜치는 `feature/v2-control-plane`을 유지한다.

@@ -44,8 +44,32 @@ npm run release:check
 - Node 22 on Linux
 - Android stable APK
 
-Android 산출물에는 서명 APK 또는 fork용 unsigned APK, `SHA256SUMS`, CycloneDX SBOM이
-함께 있어야 한다. 서명 키와 암호는 GitHub Secrets 밖으로 복사하지 않는다.
+Android 산출물에는 서명 APK 또는 fork용 unsigned APK, `SHA256SUMS`, CycloneDX SBOM과
+`update-manifest.json`이 함께 있어야 한다. 공식 서명 빌드에는 `update-manifest.sig`와 공개
+`update-manifest-cert.pem`도 있어야 한다. manifest는 APK와 SBOM의 정확한 파일명·SHA-256·크기,
+package ID, SemVer/versionCode, channel, commit을 고정한다. 서명 키와 암호는 GitHub Secrets 밖으로
+복사하지 않는다.
+
+공식 signed candidate는 다음 순서로 오프라인 검증한다. `EXPECTED_CERT_SHA256`은 함께 받은 인증서에서
+새로 계산하면 안 되며, 이미 신뢰하는 설치본·이전 Release APK 또는 별도 신뢰 경로에서 확인한 Android
+서명 인증서 fingerprint여야 한다.
+
+```sh
+node scripts/verify-update-manifest.mjs \
+  --manifest update-manifest.json \
+  --signature update-manifest.sig \
+  --certificate update-manifest-cert.pem \
+  --expected-certificate-sha256 "$EXPECTED_CERT_SHA256" \
+  --artifact-dir . \
+  --apksigner /trusted/android-sdk/build-tools/36.0.0/apksigner \
+  --current-version-code 10802
+```
+
+검증기는 manifest 분리 서명과 고정 fingerprint뿐 아니라 실제 APK의 signer도 같은 인증서인지 확인하고,
+낮은 versionCode와 기본 상태의 동일 versionCode를 거부한다. 동일 버전의 CI 재빌드를 이전 미전달
+산출물로 완전히 교체할 때만 `--allow-same-version`을 사용한다. Fork의 unsigned 산출물은 자동 업데이트
+신뢰 대상이 아니며 수동 검토자가 의도적으로 `--allow-unsigned`를 준 경우에만 검증된다. 앱 안의
+다운로드·설치 UI는 아직 구현되지 않았다.
 
 ## Field-test checklist
 
@@ -65,14 +89,15 @@ Android 산출물에는 서명 APK 또는 fork용 unsigned APK, `SHA256SUMS`, Cy
 1. Draft PR을 Ready로 전환하고 `main`에 병합한다.
 2. 병합 커밋에서 `npm run release:check`를 다시 실행한다.
 3. `vX.Y.Z` annotated tag를 만들고 force push 없이 태그를 push한다.
-4. Changelog 내용을 사용해 GitHub Release를 만들고 APK, 체크섬, SBOM을 첨부한다.
+4. Changelog 내용을 사용해 GitHub Release를 만들고 APK, 체크섬, SBOM, update manifest와
+   signed build의 manifest 서명·공개 인증서를 첨부한다.
 5. Release asset의 SHA-256을 CI 산출물과 대조하고 `Latest` 표시를 확인한다.
 
 ## Rollback and retention
 
 - Android 로컬 보관 위치:
-  - `Download/CodexPocketVoice/current/<version>/`: 설치할 candidate APK, `SHA256SUMS`, SBOM
-  - `Download/CodexPocketVoice/rollback/<version>/`: 직전 현장 검증 APK와 대응 무결성 파일 한 세트
+  - `Download/CodexPocketVoice/current/<version>/`: 설치할 candidate APK, `SHA256SUMS`, SBOM, update manifest 묶음
+  - `Download/CodexPocketVoice/rollback/<version>/`: 직전 현장 검증 APK와 대응 무결성·manifest 파일 한 세트
   - `Download/CodexPocketVoice/archive/legacy/`: 정리 전 과거 시험 APK의 임시·복구 가능한 보관
 - Android: 직전 정식 Release APK로 돌아가려면 Android가 허용하는 versionCode 정책을 따른다.
   다운그레이드가 차단되면 앱 데이터를 보존할지 먼저 결정하고 새 수정 버전을 배포한다.

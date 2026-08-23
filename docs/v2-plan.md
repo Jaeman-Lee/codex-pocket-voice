@@ -25,7 +25,7 @@
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in native 알림·retained run 열기 구현; process-death background 알림·실기기 acceptance 잔여 |
-| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion과 recoverable A/B client-key rotation 구현; discovery/P2P·relay·background release gate 잔여 |
+| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, signed update manifest·offline verifier 구현; in-app updater, discovery/P2P·relay·background release gate 잔여 |
 
 ## 2. 제품 정의
 
@@ -395,6 +395,13 @@ device ID가 다르면 pairing code를 사용하지 않는다. 서버 인증서�
 key를 모두 유지하고 자동 downgrade하지 않는다. LAN discovery/P2P, relay fallback과 실기기 background
 release gate는 남아 있다.
 
+Android CI는 APK와 SBOM의 SHA-256·크기, package, SemVer/versionCode, commit을 담은 canonical
+`update-manifest.json`을 생성한다. official signed build는 APK release key로 manifest 원문에 RSA/ECDSA
+SHA-256 분리 서명을 만들고 공개 인증서를 함께 싣는다. 오프라인 검증기는 호출자가 별도 경로로 고정한
+인증서 fingerprint, manifest 서명, APK 실제 signer, artifact hash와 anti-downgrade를 모두 확인한다.
+포함된 인증서 자체는 신뢰 기준이 아니며 unsigned fork manifest는 명시적 override 없이 거부한다.
+APK를 앱에서 찾아 다운로드·설치하는 UI와 실제 1.8.1 rollback 현장 검증은 아직 release gate로 남아 있다.
+
 완료 조건: Termux 없이 핵심 흐름이 동작하고, 연결 실패 시 비밀정보를 노출하거나 다른 Provider로
 우회하지 않으며 1.8.1로 복구할 수 있다.
 
@@ -411,6 +418,7 @@ release gate는 남아 있다.
 - API Provider replay 상태의 journal 암호화, API/SSE/export 비노출, 이미지 data URL 제거 검사
 - Playwright에서 320/360/412px, 큰 글자, 키보드, 회전과 긴 diff 검증
 - Android instrumentation에서 Keystore, 알림 deep link, background reconnect와 음성 확인 검증
+- update manifest 서명·APK signer binding, artifact 변조, unsigned 기본 거부와 versionCode downgrade 차단
 
 ### 실제 Provider 검사
 
