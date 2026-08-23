@@ -1,6 +1,7 @@
 import { ClaudeProviderAdapter } from "./claude-provider.js";
 import { CodexProviderAdapter, type CodexProviderClient } from "./codex-provider.js";
 import { OpenAIProviderAdapter } from "./openai-provider.js";
+import { OpenRouterProviderAdapter } from "./openrouter-provider.js";
 import type { ToolBroker } from "../tool-broker.js";
 import {
   ProviderError,
@@ -27,6 +28,7 @@ export class ProviderRegistry {
     this.adapters = adapters ?? [
       new CodexProviderAdapter(codex),
       new OpenAIProviderAdapter({ toolBroker: options.toolBroker }),
+      new OpenRouterProviderAdapter({ toolBroker: options.toolBroker }),
       new ClaudeProviderAdapter(),
     ];
   }

@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환 구현; UI 상태 모듈 분리 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key와 read-only 함수 도구 구현; write/command·durable journal 잔여 |
-| Phase C | 대기 | OpenRouter |
+| Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, read-only broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
 | Phase D | 대기 | 모바일 운영판과 SQLite journal |
 | Phase E | 대기 | PocketLink와 출시 강화 |
 
@@ -151,14 +151,15 @@ Chat-only와 read-only가 검증되기 전에는 API 모델에 workspace-write �
     "require_parameters": true,
     "data_collection": "deny",
     "zdr": true,
-    "allow_fallbacks": true
+    "allow_fallbacks": false
   }
 }
 ```
 
-fallback은 위 개인정보 조건을 만족하는 endpoint 안에서만 허용한다. 사용자는 특정 upstream
-Provider만 허용하거나 fallback을 끌 수 있다. ZDR 또는 데이터 수집 차단을 완화하면 전송 전에
-경고와 적용 범위를 표시하고, 해당 선택을 프로젝트별 정책으로 기록한다.
+첫 구현은 모델과 upstream의 무단 전환을 막기 위해 fallback을 끈다. 추후 사용자가 특정 upstream
+Provider와 fallback 범위를 명시적으로 선택한 경우에만 위 개인정보 조건을 만족하는 endpoint 안에서
+허용한다. ZDR 또는 데이터 수집 차단을 완화하면 전송 전에 경고와 적용 범위를 표시하고, 해당 선택을
+프로젝트별 정책으로 기록한다.
 
 ### 모델 노출 규칙
 
@@ -293,6 +294,12 @@ SSE 부분 전달, Provider stream 중단과 폰 프로세스 회수 뒤에도 `
 - strict privacy routing, Provider lock, fallback 표시
 - 모델별 contract/eval 결과에 따른 코딩·읽기·대화 등급
 - 비용·quota·rate-limit 오류 분류
+
+현재 checkpoint에서는 server-only key, authenticated user model과 ZDR model의 교집합, 명시적
+allowlist, chat SSE와 read-only tool loop를 구현했다. `allow_fallbacks: false`,
+`require_parameters: true`, `data_collection: deny`, `zdr: true`를 강제하고 upstream Provider와
+token/credit usage를 공통 run 결과에 기록한다. 실제 모델별 contract/eval과 사용자가 확인하는
+routing 선택지는 남아 있다.
 
 완료 조건: 서로 다른 두 upstream 계열의 검증 모델이 같은 Tool Broker 계약을 통과하고,
 지원하지 않는 모델은 코딩 권한을 얻지 못한다.

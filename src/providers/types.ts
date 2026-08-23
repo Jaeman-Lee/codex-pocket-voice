@@ -40,6 +40,7 @@ export interface ProviderUsage {
   outputTokens?: number;
   reasoningTokens?: number;
   totalTokens?: number;
+  costCredits?: number;
 }
 
 export interface ProviderToolSummary {

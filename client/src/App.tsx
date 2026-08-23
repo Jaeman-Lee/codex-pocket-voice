@@ -653,6 +653,7 @@ export function App() {
         usage.outputTokens == null ? null : `출력 ${usage.outputTokens.toLocaleString()}`,
         usage.reasoningTokens == null ? null : `추론 ${usage.reasoningTokens.toLocaleString()}`,
         usage.totalTokens == null ? null : `합계 ${usage.totalTokens.toLocaleString()}`,
+        usage.costCredits == null ? null : `비용 ${usage.costCredits.toFixed(6)} credits`,
       ].filter(Boolean).join(" · "));
     }
     if (latestDiffRef.current) lines.push(`\n--- diff ---\n${latestDiffRef.current}`);

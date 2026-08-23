@@ -29,6 +29,12 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   reasoning replay, 민감 경로·symlink·Git 환경·출력 제한을 적용했으며 쓰기와 임의 명령은 계속 막는다.
 - 공개 검사는 실제 유료 AI 요청 없이 가짜 OpenAI stream과 Models 목록만 사용한다. OpenAI API
   모드의 workspace 쓰기·명령·대화 재개는 승인함과 durable journal 전까지 비활성화한다.
+- OpenRouter의 server-only key와 `0600` key 파일, user/ZDR 모델 catalog 교집합, 명시적 allowlist,
+  Chat Completions SSE와 usage·credit 비용 기록을 추가했다. 도구 capability가 확인된 모델만 기존
+  읽기 전용 ToolBroker를 받고 나머지는 chat-only로 제한한다.
+- OpenRouter 요청은 모델 하나, `allow_fallbacks:false`, `require_parameters:true`,
+  `data_collection:deny`, `zdr:true`로 고정한다. 실제 upstream은 결과에 기록하지만 다른 모델이나
+  Provider로 자동 우회하지 않으며, 공개 검사는 가짜 HTTP/SSE만 사용한다.
 - 이 기준선은 CI·개발용이며 v1.8.1 설치본이나 실행 중인 Companion을 교체하지 않는다.
 
 ## 1.8.2 hotfix candidate — project-scoped session handoff

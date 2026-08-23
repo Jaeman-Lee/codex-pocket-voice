@@ -16,16 +16,22 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | V2 development component | Version / revision | State |
 | --- | --- | --- |
 | Source version | `2.0.0` / Android `versionCode 20000` | development only; not field installed |
-| Target branch | `feature/v2-control-plane` | common events, OpenAI streaming and read-only ToolBroker implemented; durable journal and approved write/command next |
+| Target branch | `feature/v2-control-plane` | OpenAI and strict OpenRouter streaming/read-only providers implemented; model eval, durable journal and approved write/command next |
 | Gateway protocol | maximum 3, minimum 2 | v1 rollout compatibility retained |
 | Current v1 APK | 1.8.2 candidate | signed APK/checksum/SBOM prepared from hotfix PR #4; install not performed |
 | Existing rollback APK | 1.8.1 | user-validated APK and running Companion preserved |
 | OpenAI API milestone | official SDK 6.49.0 | fake stateless tool-loop/SSE/Models tests only; no API key configured and no paid request sent |
+| OpenRouter milestone | Chat Completions + Models HTTP API | fake strict-routing/tool-loop/SSE tests only; no API key configured and no paid request sent |
 
 Read-only tool checkpoint decision: 기존 v2 Provider/Gateway 계약에 새 사용자 기능을 추가하는 2.0
 범위이므로 분류와 버전은 `breaking`/`2.0.0`, 대상 브랜치는 `feature/v2-control-plane`을 유지한다.
 이 checkpoint에서 Android versionCode 20000은 바꾸지 않고 APK를 현장 전달하지 않는다. current
 설치 후보 1.8.2와 검증된 rollback 1.8.1 세트를 그대로 보존한다.
+
+OpenRouter checkpoint decision: 새 Provider 실행·모델 catalog·비용 기록을 추가하는 v2 기능이므로
+기존 `breaking`/`2.0.0`, Android `versionCode 20000`, `feature/v2-control-plane` 결정을 유지한다.
+개발 source와 CI-only Android artifact만 갱신하고 APK를 현장 전달하거나 Companion을 재시작하지
+않는다. current v1 APK 1.8.2와 rollback 1.8.1은 변경하지 않는다.
 
 Update decision: `1.8.0`은 새 교차 기기 세션 흐름과 Companion API를 추가하므로
 `feature`/minor 변경이다. Draft feature PR에서 유지하고 현장 승인 전에는 `main`에 병합하지

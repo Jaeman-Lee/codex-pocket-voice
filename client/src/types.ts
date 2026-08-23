@@ -146,6 +146,7 @@ export interface RunResult {
     outputTokens?: number;
     reasoningTokens?: number;
     totalTokens?: number;
+    costCredits?: number;
   };
 }
 
@@ -248,6 +249,7 @@ export interface CodexEvent {
     outputTokens?: number;
     reasoningTokens?: number;
     totalTokens?: number;
+    costCredits?: number;
   };
   media?: MediaItem;
 }

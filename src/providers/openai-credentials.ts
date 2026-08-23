@@ -45,7 +45,7 @@ export function redactProviderSecrets(value: string, secrets: readonly string[] 
   return redacted
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]")
     .replace(/\b(?:sk|sess)-[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
-    .replace(/(OPENAI_API_KEY\s*[:=]\s*)\S+/gi, "$1[REDACTED]");
+    .replace(/((?:OPENAI|OPENROUTER)_API_KEY\s*[:=]\s*)\S+/gi, "$1[REDACTED]");
 }
 
 function normalizeKey(value: string | undefined): string | null {

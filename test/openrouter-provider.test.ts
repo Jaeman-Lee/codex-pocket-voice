@@ -1,0 +1,469 @@
+import assert from "node:assert/strict";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { InMemoryApprovalBroker } from "../src/approval-broker.js";
+import { PathPolicy } from "../src/path-policy.js";
+import {
+  EnvironmentOpenRouterCredentialSource,
+  type OpenRouterCredentialSource,
+} from "../src/providers/openrouter-credentials.js";
+import {
+  OpenRouterHttpClient,
+  OpenRouterProviderAdapter,
+  type OpenRouterChatChunk,
+  type OpenRouterChatRequest,
+  type OpenRouterClient,
+  type OpenRouterModelRecord,
+} from "../src/providers/openrouter-provider.js";
+import type { ProviderEvent } from "../src/providers/types.js";
+import { LocalToolBroker, type RegisteredTool } from "../src/tool-broker.js";
+
+const secret = "sk-or-v1-test-super-secret-value";
+
+test("OpenRouter runs strict ZDR read-only tools and keeps unsupported models chat-only", async (t) => {
+  const paths = await PathPolicy.fromEnvironment(process.cwd());
+  const approvals = new InMemoryApprovalBroker();
+  t.after(() => approvals.close());
+  let readExecutions = 0;
+  const readTool: RegisteredTool<{ path: string }> = {
+    definition: {
+      name: "workspace_read",
+      description: "Read a safe project fixture",
+      inputSchema: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+        additionalProperties: false,
+      },
+      risk: "observation",
+    },
+    validate(input) {
+      const requested = typeof input === "object" && input !== null
+        ? (input as { path?: unknown }).path
+        : undefined;
+      if (typeof requested !== "string") throw new Error("path required");
+      return { path: requested };
+    },
+    approval: () => ({ redactedSummary: "read fixture" }),
+    async execute(input) {
+      readExecutions += 1;
+      return { path: input.path, content: "safe OpenRouter context" };
+    },
+  };
+  const hiddenWrite: RegisteredTool<Record<string, never>> = {
+    definition: {
+      name: "workspace_write",
+      description: "Must remain disabled",
+      inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+      risk: "change",
+    },
+    validate: () => ({}),
+    approval: () => ({ redactedSummary: "write" }),
+    async execute() { throw new Error("must not execute"); },
+  };
+  const broker = new LocalToolBroker([readTool, hiddenWrite], approvals, paths);
+  const client = new FakeOpenRouterClient([
+    [
+      chunk({
+        id: "generation-tool",
+        provider: "Provider A",
+        choices: [{ delta: { tool_calls: [{
+          index: 0,
+          id: "call-read",
+          type: "function",
+          function: { name: "workspace_read", arguments: "{\"path\":" },
+        }] }, finish_reason: null }],
+      }),
+      chunk({
+        id: "generation-tool",
+        choices: [{ delta: { tool_calls: [{
+          index: 0,
+          function: { arguments: "\"package.json\"}" },
+        }] }, finish_reason: "tool_calls" }],
+        usage: usage(3, 2, 1, 0.001),
+      }),
+    ],
+    [
+      chunk({
+        id: "generation-final",
+        provider: "Provider A",
+        choices: [{ delta: { content: "확인 완료" }, finish_reason: null }],
+      }),
+      chunk({
+        id: "generation-final",
+        choices: [{ delta: {}, finish_reason: "stop" }],
+        usage: usage(4, 3, 0, 0.002),
+      }),
+    ],
+    [chunk({
+      id: "generation-chat",
+      provider: "Provider B",
+      choices: [{ delta: { content: "대화 전용" }, finish_reason: "stop" }],
+      usage: usage(2, 2, 0, 0.0005),
+    })],
+  ], models());
+  const adapter = new OpenRouterProviderAdapter({
+    credentials: staticCredentials(secret),
+    clientFactory: (apiKey) => {
+      assert.equal(apiKey, secret);
+      return client;
+    },
+    createId: sequentialIds("tool-conversation", "tool-run", "chat-conversation", "chat-run"),
+    modelAllowlist: ["vendor/tool-model", "vendor/chat-model"],
+    defaultModel: "vendor/tool-model",
+    toolBroker: broker,
+    now: () => Date.parse("2026-08-24T00:00:00.000Z"),
+  });
+  const events: ProviderEvent[] = [];
+  adapter.subscribe((event) => events.push(event));
+
+  const descriptor = await adapter.describe();
+  assert.equal(descriptor.available, true);
+  assert.equal(descriptor.capabilities.toolCalling, true);
+  assert.equal(descriptor.capabilities.workspaceRead, true);
+  assert.equal(descriptor.capabilities.workspaceWrite, false);
+  assert.equal(descriptor.capabilities.commandExecution, false);
+  const connection = await adapter.testConnection();
+  assert.equal(connection.modelCount, 2);
+  assert.equal(client.keyCalls, 1);
+  assert.equal(client.chatCalls, 0);
+  const listed = await adapter.listModels();
+  assert.match(listed.find((model) => model.id === "vendor/tool-model")!.description, /read-only/);
+  assert.match(listed.find((model) => model.id === "vendor/chat-model")!.description, /chat-only/);
+
+  const run = await adapter.startRun({
+    cwd: process.cwd(),
+    prompt: "Inspect the project",
+    model: "vendor/tool-model",
+  });
+  const completion = await run.completion;
+  assert.equal(completion.status, "completed");
+  assert.equal(completion.result.finalResponse, "확인 완료");
+  assert.equal(completion.result.routedProvider, "Provider A");
+  assert.deepEqual(completion.result.usage, {
+    inputTokens: 7,
+    cachedInputTokens: 0,
+    outputTokens: 5,
+    reasoningTokens: 1,
+    totalTokens: 12,
+    costCredits: 0.003,
+  });
+  assert.equal(readExecutions, 1);
+  assert.equal(approvals.listPending().length, 0);
+  assert.deepEqual(events.map((event) => event.kind), [
+    "run.started",
+    "usage.updated",
+    "tool.started",
+    "tool.completed",
+    "output.delta",
+    "usage.updated",
+    "run.completed",
+  ]);
+
+  assert.equal(client.requests.length, 2);
+  const first = client.requests[0]!;
+  assert.deepEqual(first.provider, {
+    allow_fallbacks: false,
+    require_parameters: true,
+    data_collection: "deny",
+    zdr: true,
+  });
+  assert.equal(first.model, "vendor/tool-model");
+  assert.equal(first.parallel_tool_calls, false);
+  assert.equal(first.tools?.length, 1);
+  assert.equal(first.tools?.[0]?.function.name, "workspace_read");
+  assert.equal(first.tools?.[0]?.function.strict, true);
+  const continuation = JSON.stringify(client.requests[1]?.messages);
+  assert.match(continuation, /tool_calls|safe OpenRouter context/);
+  assert.doesNotMatch(continuation, /workspace_write|sk-or-v1/);
+
+  events.length = 0;
+  const chatRun = await adapter.startRun({
+    cwd: process.cwd(),
+    prompt: "Just chat",
+    model: "vendor/chat-model",
+  });
+  assert.equal((await chatRun.completion).result.finalResponse, "대화 전용");
+  const chatRequest = client.requests[2]!;
+  assert.equal(chatRequest.tools, undefined);
+  assert.deepEqual(chatRequest.messages, [{ role: "user", content: "Just chat" }]);
+});
+
+test("OpenRouter rejects models outside the allowlist or current strict ZDR catalog", async () => {
+  const client = new FakeOpenRouterClient([], models());
+  const adapter = new OpenRouterProviderAdapter({
+    credentials: staticCredentials(secret),
+    clientFactory: () => client,
+    modelAllowlist: ["vendor/missing-model"],
+  });
+  await assert.rejects(
+    adapter.startRun({ cwd: process.cwd(), prompt: "do not bill", model: "vendor/unknown" }),
+    /허용 목록/,
+  );
+  await assert.rejects(
+    adapter.startRun({ cwd: process.cwd(), prompt: "do not bill", model: "vendor/missing-model" }),
+    /strict ZDR routing/,
+  );
+  assert.equal(client.chatCalls, 0);
+});
+
+test("OpenRouter model cache is isolated across credential rotation", async () => {
+  let activeKey = "sk-or-v1-first-test-key";
+  const first = new FakeOpenRouterClient([], [{
+    id: "vendor/first-model",
+    name: "First Model",
+    supportedParameters: [],
+    inputModalities: ["text"],
+  }]);
+  const second = new FakeOpenRouterClient([], [{
+    id: "vendor/second-model",
+    name: "Second Model",
+    supportedParameters: [],
+    inputModalities: ["text"],
+  }]);
+  const adapter = new OpenRouterProviderAdapter({
+    credentials: { async load() { return { apiKey: activeKey, source: "environment" }; } },
+    clientFactory: (apiKey) => apiKey === activeKey && activeKey.includes("first") ? first : second,
+    modelAllowlist: ["vendor/first-model", "vendor/second-model"],
+  });
+
+  assert.deepEqual((await adapter.listModels()).map((model) => model.id), ["vendor/first-model"]);
+  activeKey = "sk-or-v1-second-test-key";
+  assert.deepEqual((await adapter.listModels()).map((model) => model.id), ["vendor/second-model"]);
+  assert.equal(first.modelCalls, 1);
+  assert.equal(second.modelCalls, 1);
+});
+
+test("OpenRouter cancellation aborts streaming and API errors never expose credentials", async () => {
+  const blocking = new BlockingOpenRouterClient();
+  const adapter = new OpenRouterProviderAdapter({
+    credentials: staticCredentials(secret),
+    clientFactory: () => blocking,
+    createId: sequentialIds("cancel-conversation", "cancel-run"),
+    modelAllowlist: ["vendor/chat-model"],
+  });
+  const events: ProviderEvent[] = [];
+  adapter.subscribe((event) => events.push(event));
+  const run = await adapter.startRun({
+    cwd: process.cwd(),
+    prompt: "wait",
+    model: "vendor/chat-model",
+  });
+  await waitFor(() => events.some((event) => event.kind === "run.started"));
+  await adapter.cancelRun(run.conversationId, run.runId);
+  const completion = await run.completion;
+  assert.equal(completion.status, "interrupted");
+  assert.equal(blocking.aborted, true);
+  assert.equal(events.at(-1)?.kind, "run.completed");
+
+  const rejected = new OpenRouterProviderAdapter({
+    credentials: staticCredentials(secret),
+    clientFactory: () => ({
+      async testKey() { throw Object.assign(new Error(`Bearer ${secret}`), { status: 401 }); },
+      async listModels() { return []; },
+      async createChat() { throw new Error("not used"); },
+    }),
+    modelAllowlist: ["vendor/chat-model"],
+  });
+  await assert.rejects(
+    rejected.testConnection(),
+    (error: unknown) => {
+      assert.match(String(error), /API key가 거부/);
+      assert.doesNotMatch(String(error), /sk-or-v1|Bearer/);
+      return true;
+    },
+  );
+});
+
+test("OpenRouter credentials require a private file", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-pocket-openrouter-key-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const keyFile = join(directory, "api-key");
+  await writeFile(keyFile, `${secret}\n`, { mode: 0o600 });
+  const source = new EnvironmentOpenRouterCredentialSource({
+    CODEX_POCKET_OPENROUTER_API_KEY_FILE: keyFile,
+  });
+  assert.deepEqual(await source.load(), { apiKey: secret, source: "protected_file" });
+  await chmod(keyFile, 0o644);
+  await assert.rejects(source.load(), /0600/);
+});
+
+test("OpenRouter HTTP client intersects user models with ZDR and parses SSE without exposing the key", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    const url = String(input);
+    requests.push({ url, init });
+    if (url.endsWith("/key")) return jsonResponse({ data: { label: "safe-key", limit_remaining: 8 } });
+    if (url.includes("/models/user")) return jsonResponse({ data: [
+      rawModel("vendor/tool-model", ["tools"], ["text"]),
+      rawModel("vendor/non-zdr", [], ["text"]),
+    ] });
+    if (url.includes("/models?zdr=true")) return jsonResponse({ data: [rawModel("vendor/tool-model", ["tools"], ["text"])] });
+    if (url.endsWith("/chat/completions")) {
+      const stream = [
+        `data: ${JSON.stringify({ id: "generation-http", choices: [{ delta: { content: "hello" }, finish_reason: null }] })}\n\n`,
+        `data: ${JSON.stringify({ id: "generation-http", choices: [{ delta: {}, finish_reason: "stop" }], usage: usage(1, 1, 0, 0.1) })}\n\n`,
+        "data: [DONE]\n\n",
+      ].join("");
+      return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    }
+    return new Response(null, { status: 404 });
+  };
+  const client = new OpenRouterHttpClient(secret, fakeFetch);
+  assert.equal((await client.testKey()).limitRemaining, 8);
+  const listed = await client.listModels();
+  assert.deepEqual(listed.map((model) => model.id), ["vendor/tool-model"]);
+  const request: OpenRouterChatRequest = {
+    model: "vendor/tool-model",
+    messages: [{ role: "user", content: "hello" }],
+    stream: true,
+    provider: { allow_fallbacks: false, require_parameters: true, data_collection: "deny", zdr: true },
+  };
+  const chunks: OpenRouterChatChunk[] = [];
+  for await (const item of await client.createChat(request, new AbortController().signal)) chunks.push(item);
+  assert.equal(chunks.length, 2);
+  assert.equal(chunks[0]?.choices?.[0]?.delta?.content, "hello");
+  assert.equal(requests.every((item) => item.init?.headers !== undefined), true);
+  assert.equal(requests.some((item) => String(item.init?.body ?? "").includes(secret)), false);
+});
+
+class FakeOpenRouterClient implements OpenRouterClient {
+  readonly requests: OpenRouterChatRequest[] = [];
+  keyCalls = 0;
+  modelCalls = 0;
+  chatCalls = 0;
+
+  constructor(
+    private readonly rounds: Array<readonly OpenRouterChatChunk[]>,
+    private readonly catalog: readonly OpenRouterModelRecord[],
+  ) {}
+
+  async testKey() {
+    this.keyCalls += 1;
+    return { label: "test-key", limitRemaining: 10 };
+  }
+
+  async listModels() {
+    this.modelCalls += 1;
+    return this.catalog;
+  }
+
+  async createChat(request: OpenRouterChatRequest, signal: AbortSignal) {
+    this.requests.push(structuredClone(request));
+    this.chatCalls += 1;
+    const round = this.rounds.shift();
+    if (!round) throw new Error("unexpected OpenRouter chat call");
+    return (async function* () {
+      for (const item of round) {
+        if (signal.aborted) throw abortError();
+        yield item;
+      }
+    })();
+  }
+}
+
+class BlockingOpenRouterClient implements OpenRouterClient {
+  aborted = false;
+
+  async testKey() { return {}; }
+
+  async listModels() {
+    return [{
+      id: "vendor/chat-model",
+      name: "Chat Model",
+      supportedParameters: [],
+      inputModalities: ["text"],
+    }];
+  }
+
+  async createChat(_request: OpenRouterChatRequest, signal: AbortSignal) {
+    const owner = this;
+    return (async function* () {
+      await new Promise<void>((_resolve, reject) => {
+        if (signal.aborted) {
+          owner.aborted = true;
+          reject(abortError());
+          return;
+        }
+        signal.addEventListener("abort", () => {
+          owner.aborted = true;
+          reject(abortError());
+        }, { once: true });
+      });
+      yield chunk({ id: "never", choices: [] });
+    })();
+  }
+}
+
+function models(): OpenRouterModelRecord[] {
+  return [
+    {
+      id: "vendor/tool-model",
+      name: "Tool Model",
+      contextLength: 100_000,
+      supportedParameters: ["tools", "tool_choice"],
+      inputModalities: ["text", "image"],
+    },
+    {
+      id: "vendor/chat-model",
+      name: "Chat Model",
+      supportedParameters: [],
+      inputModalities: ["text"],
+    },
+  ];
+}
+
+function staticCredentials(apiKey: string): OpenRouterCredentialSource {
+  return { async load() { return { apiKey, source: "environment" }; } };
+}
+
+function sequentialIds(...ids: string[]): () => string {
+  return () => ids.shift() ?? "unexpected-id";
+}
+
+function chunk(value: OpenRouterChatChunk): OpenRouterChatChunk {
+  return value;
+}
+
+function usage(prompt: number, completion: number, reasoning: number, cost: number) {
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: prompt + completion,
+    prompt_tokens_details: { cached_tokens: 0 },
+    completion_tokens_details: { reasoning_tokens: reasoning },
+    cost,
+  };
+}
+
+function rawModel(id: string, supportedParameters: string[], inputModalities: string[]) {
+  return {
+    id,
+    name: id,
+    supported_parameters: supportedParameters,
+    architecture: { input_modalities: inputModalities },
+  };
+}
+
+function jsonResponse(value: unknown): Response {
+  return new Response(JSON.stringify(value), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function abortError(): Error {
+  const error = new Error("aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error("condition was not met");
+}
