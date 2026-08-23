@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { request as httpsRequest } from "node:https";
+import type { TLSSocket } from "node:tls";
 import test from "node:test";
 import type { Thread } from "../generated/app-server/v2/Thread";
 import type { ModelListResponse } from "../generated/app-server/v2/ModelListResponse";
@@ -14,6 +16,8 @@ import { startWebServer, type WebCodexClient } from "../src/web-server.js";
 import { GatewayAuth } from "../src/gateway-auth.js";
 import { EventJournal } from "../src/event-journal.js";
 import { InMemoryApprovalBroker } from "../src/approval-broker.js";
+import { loadPocketLinkTlsConfig, publicKeyPin } from "../src/pocket-link.js";
+import { createTestCertificate } from "./helpers/tls-certificate.js";
 
 const cwd = process.cwd();
 
@@ -23,9 +27,20 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const mediaDir = await mkdtemp(join(tmpdir(), "codex-pocket-media-test-"));
   const projectHome = await mkdtemp(join(tmpdir(), "codex-pocket-projects-test-"));
   const authHome = await mkdtemp(join(tmpdir(), "codex-pocket-auth-test-"));
+  const tlsHome = await mkdtemp(join(tmpdir(), "codex-pocket-tls-test-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
   t.after(() => rm(projectHome, { recursive: true, force: true }));
   t.after(() => rm(authHome, { recursive: true, force: true }));
+  t.after(() => rm(tlsHome, { recursive: true, force: true }));
+  const tlsFiles = await createTestCertificate(tlsHome, "127.0.0.1");
+  const pocketLink = await loadPocketLinkTlsConfig({
+    CODEX_POCKET_LINK_HOST: "127.0.0.1",
+    CODEX_POCKET_LINK_PORT: "8789",
+    CODEX_POCKET_LINK_ADVERTISE_HOST: "127.0.0.1",
+    CODEX_POCKET_LINK_CERT_FILE: tlsFiles.certificateFile,
+    CODEX_POCKET_LINK_KEY_FILE: tlsFiles.privateKeyFile,
+  });
+  assert.ok(pocketLink);
   const projects = await ProjectManager.fromEnvironment(paths, projectHome);
   const auth = await GatewayAuth.create({
     stateFile: join(authHome, "auth.json"),
@@ -45,10 +60,18 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
     projects,
     auth,
     approvals,
+    pocketLink: { ...pocketLink, port: 0 },
     port: 0,
   });
   t.after(() => running.close());
   const base = `http://127.0.0.1:${running.port}`;
+  assert.equal(running.pocketLink?.publicKeyPin, pocketLink.publicKeyPin);
+  const secureStatus = await secureJson(running.pocketLink!.port, `127.0.0.1:${running.port}`);
+  assert.equal(secureStatus.status, 200);
+  assert.equal(secureStatus.body.appVersion, "2.0.0");
+  assert.equal(secureStatus.peerPin, running.pocketLink?.publicKeyPin);
+  const blockedDirectHost = await secureJson(running.pocketLink!.port, "example.test");
+  assert.equal(blockedDirectHost.status, 400);
 
   const page = await fetch(`${base}/`);
   assert.equal(page.status, 200);
@@ -600,6 +623,41 @@ async function jsonFetch(url: string, init?: RequestInit): Promise<any> {
   const value = (await response.json()) as any;
   if (!response.ok) throw new Error(value.error ?? `HTTP ${response.status}`);
   return value;
+}
+
+async function secureJson(port: number, hostHeader: string): Promise<{
+  status: number;
+  body: any;
+  peerPin: string;
+}> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const request = httpsRequest({
+      host: "127.0.0.1",
+      port,
+      path: "/api/status",
+      method: "GET",
+      rejectUnauthorized: false,
+      headers: { Host: hostHeader },
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      const peer = (response.socket as TLSSocket).getPeerX509Certificate();
+      response.on("data", (chunk: Buffer) => chunks.push(chunk));
+      response.on("end", () => {
+        try {
+          if (!peer) throw new Error("PocketLink TLS peer certificate is missing");
+          resolvePromise({
+            status: response.statusCode ?? 0,
+            body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+            peerPin: publicKeyPin(peer),
+          });
+        } catch (error) {
+          rejectPromise(error);
+        }
+      });
+    });
+    request.once("error", rejectPromise);
+    request.end();
+  });
 }
 
 async function waitFor(check: () => Promise<boolean>, timeoutMs = 1_000): Promise<void> {

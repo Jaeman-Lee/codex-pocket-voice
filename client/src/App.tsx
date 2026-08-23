@@ -162,6 +162,11 @@ export function App() {
   const [showDeviceCreator, setShowDeviceCreator] = useState(false);
   const [newDeviceName, setNewDeviceName] = useState("");
   const [newDevicePort, setNewDevicePort] = useState("8790");
+  const [newDeviceTransport, setNewDeviceTransport] = useState<"termux" | "pocketlink">("termux");
+  const [newPocketLinkHost, setNewPocketLinkHost] = useState("");
+  const [newPocketLinkPort, setNewPocketLinkPort] = useState("8789");
+  const [newPocketLinkPin, setNewPocketLinkPin] = useState("");
+  const [newPocketLinkBackupPin, setNewPocketLinkBackupPin] = useState("");
   const [uiLanguage, setUiLanguage] = useState<UiLanguage>(initialUiLanguage);
   const [speechLanguage, setSpeechLanguage] = useState(initialSpeechLanguage);
   const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null);
@@ -520,7 +525,7 @@ export function App() {
     void (async () => {
       if (isNativeApp()) {
         try {
-          const tunnel = await NativeTunnel.start();
+          const tunnel = await NativeTunnel.start({ localPort: deviceTargetLocalPort(activeDeviceTarget()) });
           if (tunnel.manual && tunnel.message) showToast(tunnel.message);
         } catch (error) {
           showToast(errorMessage(error));
@@ -1772,21 +1777,48 @@ export function App() {
   }
 
   async function createLinuxDevice() {
+    let target: DeviceTarget | null = null;
+    let configuredPocketLinkPort: number | null = null;
     try {
-      const target = await addLinuxDevice(newDeviceName, Number(newDevicePort));
+      const localPort = Number(newDevicePort);
+      target = await addLinuxDevice(newDeviceName, localPort, newDeviceTransport);
+      if (newDeviceTransport === "pocketlink") {
+        if (!isNativeApp()) throw new Error("PocketLink 등록은 Android 앱에서만 할 수 있습니다.");
+        await NativeTunnel.configurePocketLink({
+          label: newDeviceName,
+          localPort,
+          host: newPocketLinkHost,
+          remotePort: Number(newPocketLinkPort),
+          primaryPin: newPocketLinkPin,
+          backupPin: newPocketLinkBackupPin || undefined,
+        });
+        configuredPocketLinkPort = localPort;
+      }
       setDeviceTargets(listDeviceTargets());
       setNewDeviceName("");
       setNewDevicePort(String(Number(newDevicePort) + 1));
+      setNewPocketLinkHost("");
+      setNewPocketLinkPin("");
+      setNewPocketLinkBackupPin("");
       setShowDeviceCreator(false);
       selectDevice(target.id);
-      showToast(`${target.name}을 등록했습니다. 로컬 터널을 연결한 뒤 페어링하세요.`);
+      showToast(newDeviceTransport === "pocketlink"
+        ? `${target.name}의 인증서 pin을 고정했습니다. Companion 페어링 코드를 입력하세요.`
+        : `${target.name}을 등록했습니다. 로컬 터널을 연결한 뒤 페어링하세요.`);
     } catch (error) {
+      if (configuredPocketLinkPort !== null) {
+        await NativeTunnel.removePocketLink({ localPort: configuredPocketLinkPort }).catch(() => undefined);
+      }
+      if (target) await removeDeviceTarget(target.id).catch(() => undefined);
       showToast(errorMessage(error));
     }
   }
 
   async function deleteLinuxDevice(target: DeviceTarget) {
     try {
+      if (target.transport === "pocketlink" && isNativeApp()) {
+        await NativeTunnel.removePocketLink({ localPort: deviceTargetLocalPort(target) });
+      }
       await removeDeviceTarget(target.id);
       if (deviceRef.current === target.id) selectDevice(listDeviceTargets()[0]!.id);
       setDeviceTargets(listDeviceTargets());
@@ -2204,16 +2236,34 @@ export function App() {
                 <button type="button" onClick={() => setShowDeviceCreator((current) => !current)}>＋ PC</button>
               </div>
               {showDeviceCreator && (
-                <div className="device-create-row">
-                  <input value={newDeviceName} maxLength={60} placeholder="예: 작업실 PC" aria-label="Linux PC 이름" onChange={(event) => setNewDeviceName(event.target.value)} />
-                  <input value={newDevicePort} inputMode="numeric" maxLength={5} placeholder="8790" aria-label="로컬 터널 포트" onChange={(event) => setNewDevicePort(event.target.value.replace(/\D/g, ""))} />
-                  <button type="button" onClick={() => void createLinuxDevice()}>등록</button>
+                <div className="device-create-card">
+                  <select value={newDeviceTransport} aria-label="Linux PC 연결 방식" onChange={(event) => setNewDeviceTransport(event.target.value as "termux" | "pocketlink") }>
+                    <option value="termux">Termux / SSH · rollback</option>
+                    {isNativeApp() && <option value="pocketlink">PocketLink · TLS pin 고정</option>}
+                  </select>
+                  <div className="device-create-row">
+                    <input value={newDeviceName} maxLength={60} placeholder="예: 작업실 PC" aria-label="Linux PC 이름" onChange={(event) => setNewDeviceName(event.target.value)} />
+                    <input value={newDevicePort} inputMode="numeric" maxLength={5} placeholder="8790" aria-label="로컬 터널 포트" onChange={(event) => setNewDevicePort(event.target.value.replace(/\D/g, ""))} />
+                    {newDeviceTransport === "termux" && <button type="button" onClick={() => void createLinuxDevice()}>등록</button>}
+                  </div>
+                  {newDeviceTransport === "pocketlink" && (
+                    <div className="pocket-link-fields">
+                      <input value={newPocketLinkHost} maxLength={253} autoCapitalize="none" spellCheck={false} placeholder="Companion LAN 호스트" aria-label="PocketLink Companion 호스트" onChange={(event) => setNewPocketLinkHost(event.target.value)} />
+                      <input value={newPocketLinkPort} inputMode="numeric" maxLength={5} placeholder="8789" aria-label="PocketLink TLS 포트" onChange={(event) => setNewPocketLinkPort(event.target.value.replace(/\D/g, ""))} />
+                      <input className="pin" value={newPocketLinkPin} maxLength={51} autoCapitalize="none" spellCheck={false} placeholder="sha256/… 기본 SPKI pin" aria-label="PocketLink 기본 SPKI pin" onChange={(event) => setNewPocketLinkPin(event.target.value.trim())} />
+                      <input className="pin" value={newPocketLinkBackupPin} maxLength={51} autoCapitalize="none" spellCheck={false} placeholder="sha256/… 교체용 pin · 선택" aria-label="PocketLink 교체용 SPKI pin" onChange={(event) => setNewPocketLinkBackupPin(event.target.value.trim())} />
+                      <button type="button" onClick={() => void createLinuxDevice()}>pin 확인 후 등록</button>
+                    </div>
+                  )}
+                  <small>{newDeviceTransport === "pocketlink"
+                    ? "Companion 터미널에 표시된 호스트·포트·SPKI pin을 그대로 입력합니다. 설정은 Keystore로 암호화되며 SSH로 자동 우회하지 않습니다."
+                    : "현재 검증된 Termux/SSH 연결을 rollback 호환 경로로 유지합니다."}</small>
                 </div>
               )}
               <div className="device-list">
                 {deviceTargets.filter((target) => target.kind === "linux").map((target) => (
                   <div key={target.id}>
-                    <span><strong>{target.name}</strong><small>{target.baseUrl || "현재 주소"}{target.remoteDeviceId ? ` · ${target.remoteDeviceId.slice(0, 8)}` : " · 미페어링"}</small></span>
+                    <span><strong>{target.name}</strong><small>{target.transport === "pocketlink" ? "PocketLink TLS" : "Termux / SSH"} · {target.baseUrl || "현재 주소"}{target.remoteDeviceId ? ` · ${target.remoteDeviceId.slice(0, 8)}` : " · 미페어링"}</small></span>
                     {!target.builtIn && <button type="button" className="danger" onClick={() => void deleteLinuxDevice(target)}>삭제</button>}
                   </div>
                 ))}
@@ -2672,6 +2722,16 @@ function workspaceName(path: string): string {
 function safeFilename(value: string): string {
   const normalized = value.normalize("NFKC").replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^-+|-+$/g, "");
   return normalized.slice(0, 80) || "workspace";
+}
+
+function deviceTargetLocalPort(target: DeviceTarget): number {
+  try {
+    const parsed = new URL(target.baseUrl);
+    const port = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
+    return Number.isInteger(port) && port >= 1_024 && port <= 65_535 ? port : 8_788;
+  } catch {
+    return 8_788;
+  }
 }
 
 function statusMessage(status: Operation["status"]): string {

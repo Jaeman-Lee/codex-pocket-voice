@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CodexAppServerClient } from "./app-server-client.js";
 import { PathPolicy } from "./path-policy.js";
+import { loadPocketLinkTlsConfig } from "./pocket-link.js";
 import { startWebServer } from "./web-server.js";
 
 const paths = await PathPolicy.fromEnvironment();
@@ -19,18 +20,27 @@ if (!staticDir) throw new Error("Could not find client/dist; run npm run build:c
 
 const port = Number(process.env.CODEX_WEB_PORT ?? "8787");
 if (!Number.isInteger(port) || port < 0 || port > 65_535) throw new Error("CODEX_WEB_PORT is invalid");
+const pocketLink = await loadPocketLinkTlsConfig();
 const running = await startWebServer({
   client,
   paths,
   staticDir,
   host: process.env.CODEX_WEB_HOST ?? "127.0.0.1",
   port,
+  pocketLink,
 });
 
 process.stderr.write(`[codex-web] Ready on http://${running.host}:${running.port}\n`);
 process.stderr.write(`[codex-web] Allowed roots: ${paths.roots.join(", ")}\n`);
 process.stderr.write(`[codex-web] Device ID: ${running.deviceId}\n`);
 process.stderr.write(`[codex-web] Pairing code: ${running.pairingCode} (expires ${running.pairingExpiresAt})\n`);
+if (running.pocketLink) {
+  const advertiseHost = running.pocketLink.advertiseHost.includes(":")
+    ? `[${running.pocketLink.advertiseHost}]`
+    : running.pocketLink.advertiseHost;
+  process.stderr.write(`[codex-web] PocketLink TLS: ${advertiseHost}:${running.pocketLink.port}\n`);
+  process.stderr.write(`[codex-web] PocketLink SPKI pin: ${running.pocketLink.publicKeyPin}\n`);
+}
 
 let closing = false;
 async function close(): Promise<void> {

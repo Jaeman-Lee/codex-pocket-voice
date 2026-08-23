@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
 import { basename, dirname, extname, isAbsolute, join, relative, sep } from "node:path";
 import type { ThreadListResponse } from "../generated/app-server/v2/ThreadListResponse";
 import type { ThreadReadResponse } from "../generated/app-server/v2/ThreadReadResponse";
@@ -28,6 +29,7 @@ import { createWorkspaceChangeTools } from "./workspace-change-tools.js";
 import { createWorkspaceExecutionTools } from "./workspace-execution-tools.js";
 import { LocalToolBroker } from "./tool-broker.js";
 import { EventJournal, EventJournalExportError, type JournalReplayEvent } from "./event-journal.js";
+import type { PocketLinkTlsConfig } from "./pocket-link.js";
 import {
   RunCoordinator,
   RunCoordinatorError,
@@ -65,6 +67,7 @@ export interface WebServerOptions {
   providers?: ProviderRegistry;
   journal?: EventJournal;
   approvals?: ApprovalBroker;
+  pocketLink?: PocketLinkTlsConfig;
 }
 
 export interface RunningWebServer {
@@ -74,6 +77,12 @@ export interface RunningWebServer {
   deviceId: string;
   pairingCode: string;
   pairingExpiresAt: string;
+  pocketLink?: {
+    host: string;
+    port: number;
+    advertiseHost: string;
+    publicKeyPin: string;
+  };
   close(): Promise<void>;
 }
 
@@ -167,37 +176,65 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     appendAndBroadcast(journal, sseClients, operation.id, operation.cwd, publicEvent);
   });
 
-  const server = createServer((request, response) => {
+  const requestListener = (request: IncomingMessage, response: ServerResponse) => {
     void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, sseClients).catch(
       (error) => sendError(response, error),
     );
-  });
-  server.requestTimeout = 0;
-  server.headersTimeout = 30_000;
+  };
+  const server = createServer(requestListener);
+  configureServer(server);
+  const pocketLinkServer = options.pocketLink
+    ? createHttpsServer({
+        cert: options.pocketLink.certificate,
+        key: options.pocketLink.privateKey,
+        minVersion: "TLSv1.2",
+        maxVersion: "TLSv1.3",
+      }, requestListener)
+    : undefined;
+  if (pocketLinkServer) {
+    configureServer(pocketLinkServer);
+    pocketLinkServer.maxConnections = 64;
+  }
 
   const heartbeat = setInterval(() => {
     for (const response of sseClients) response.write(": heartbeat\n\n");
   }, 20_000);
   heartbeat.unref();
 
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, host, () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Web server did not get a TCP address");
+  let localPort: number;
+  let pocketLinkPort: number | undefined;
+  try {
+    localPort = await listenServer(server, port, host);
+    if (pocketLinkServer && options.pocketLink) {
+      pocketLinkPort = await listenServer(pocketLinkServer, options.pocketLink.port, options.pocketLink.host);
+    }
+  } catch (error) {
+    clearInterval(heartbeat);
+    providerLogins.close();
+    approvals.close();
+    unsubscribeApprovals();
+    unsubscribeRuns();
+    runs.close();
+    await Promise.all([closeServer(server), closeServer(pocketLinkServer)]);
+    journal.close();
+    throw error;
+  }
 
   return {
     server,
     host,
-    port: address.port,
+    port: localPort,
     deviceId: auth.device.id,
     pairingCode: auth.pairingCode,
     pairingExpiresAt: auth.pairingExpiresAt,
+    ...(options.pocketLink && pocketLinkPort !== undefined ? {
+      pocketLink: {
+        host: options.pocketLink.host,
+        port: pocketLinkPort,
+        advertiseHost: options.pocketLink.advertiseHost,
+        publicKeyPin: options.pocketLink.publicKeyPin,
+      },
+    } : {}),
     async close() {
       clearInterval(heartbeat);
       providerLogins.close();
@@ -208,15 +245,42 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
       for (const response of sseClients) response.end();
       sseClients.clear();
       server.closeIdleConnections();
+      pocketLinkServer?.closeIdleConnections();
       try {
-        await new Promise<void>((resolve, reject) => {
-          server.close((error) => (error ? reject(error) : resolve()));
-        });
+        await Promise.all([closeServer(server), closeServer(pocketLinkServer)]);
       } finally {
         journal.close();
       }
     },
   };
+}
+
+type ListeningServer = Server | HttpsServer;
+
+function configureServer(server: ListeningServer): void {
+  server.requestTimeout = 0;
+  server.headersTimeout = 30_000;
+  server.keepAliveTimeout = 5_000;
+}
+
+async function listenServer(server: ListeningServer, port: number, host: string): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, host, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Web server did not get a TCP address");
+  return address.port;
+}
+
+async function closeServer(server: ListeningServer | undefined): Promise<void> {
+  if (!server?.listening) return;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
 }
 
 async function handleRequest(

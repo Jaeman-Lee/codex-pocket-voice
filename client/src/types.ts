@@ -9,6 +9,7 @@ export interface DeviceTarget {
   baseUrl: string;
   builtIn?: boolean;
   remoteDeviceId?: string;
+  transport?: "termux" | "pocketlink";
 }
 
 export interface DeviceInfo {

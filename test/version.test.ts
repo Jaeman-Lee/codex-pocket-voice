@@ -19,4 +19,5 @@ test("application version has one package source of truth", async () => {
   assert.equal(GATEWAY_CAPABILITIES.approvalBroker, true);
   assert.equal(GATEWAY_CAPABILITIES.usageAccounting, true);
   assert.equal(GATEWAY_CAPABILITIES.journalManagement, true);
+  assert.equal(GATEWAY_CAPABILITIES.pocketLinkTls, true);
 });

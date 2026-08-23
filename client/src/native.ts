@@ -23,8 +23,34 @@ interface NativeSpeechPlugin {
   addListener(eventName: "speechError", listener: (event: NativeSpeechError) => void): Promise<PluginListenerHandle>;
 }
 
+export interface NativeTunnelResult {
+  scheduled: boolean;
+  pc?: boolean;
+  manual?: boolean;
+  message?: string;
+  transport?: "termux" | "pocketlink";
+  localPort?: number;
+}
+
+export interface PocketLinkStatus {
+  configured: boolean;
+  running: boolean;
+  transport: "termux" | "pocketlink";
+  error?: string;
+}
+
 interface NativeTunnelPlugin {
-  start(): Promise<{ scheduled: boolean; pc?: boolean; manual?: boolean; message?: string }>;
+  start(options?: { localPort?: number }): Promise<NativeTunnelResult>;
+  configurePocketLink(options: {
+    label: string;
+    localPort: number;
+    host: string;
+    remotePort: number;
+    primaryPin: string;
+    backupPin?: string;
+  }): Promise<{ configured: boolean; transport: "pocketlink"; localPort: number }>;
+  removePocketLink(options: { localPort: number }): Promise<void>;
+  status(options: { localPort: number }): Promise<PocketLinkStatus>;
 }
 
 export const NativeSpeech = registerPlugin<NativeSpeechPlugin>("PocketSpeech");

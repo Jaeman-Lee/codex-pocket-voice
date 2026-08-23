@@ -28,6 +28,7 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation, touch-only approvals and two-touch history deletion implemented; no field APK handed off |
 | Approved API tools | SHA-bound text replace + probed sandbox verifier | existing file only; check/test/build only; arbitrary command, create/delete/rename and network blocked |
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
+| PocketLink TLS bootstrap | opt-in LAN TLS + Android SPKI pin | manual host/port/pin registration implemented; QR/device-key/relay/rotation and field validation pending |
 
 Read-only tool checkpoint decision: 기존 v2 Provider/Gateway 계약에 새 사용자 기능을 추가하는 2.0
 범위이므로 분류와 버전은 `breaking`/`2.0.0`, 대상 브랜치는 `feature/v2-control-plane`을 유지한다.
@@ -74,6 +75,14 @@ Companion journal management checkpoint decision: 프로젝트별 실행 기록 
 후에만 수행하고 active/미확인 작업을 보호한다. 프로젝트 파일과 Android local journal은 바꾸지 않는다.
 이 checkpoint도 CI-only이며 APK를 전달·설치하거나 실행 중인 Companion을 재시작하지 않는다.
 current 1.8.2 후보와 rollback 1.8.1을 보존한다.
+
+PocketLink TLS bootstrap checkpoint decision: Termux 없이 연결하는 새 user-visible transport와 선택적
+LAN server listener를 추가하는 v2 기능이므로 분류와 버전은 기존 `breaking`/`2.0.0`, Android
+`versionCode 20000`, 대상 브랜치는 `feature/v2-control-plane`을 유지한다. 이번 단계는 수동
+host/port/SPKI pin bootstrap만 구현하며 QR, 비대칭 device key/mTLS, relay, 자동 key rotation과 실기기
+background 계측은 남아 있다. source와 CI-only APK만 갱신하고 현장 APK를 전달·설치하거나 실행 중인
+Companion을 재시작·LAN에 노출하지 않는다. current v1 후보 1.8.2와 검증된 rollback 1.8.1,
+Termux/SSH transport를 그대로 보존한다.
 
 Update decision: `1.8.0`은 새 교차 기기 세션 흐름과 Companion API를 추가하므로
 `feature`/minor 변경이다. Draft feature PR에서 유지하고 현장 승인 전에는 `main`에 병합하지

@@ -90,6 +90,12 @@ Replace the remaining Termux transport dependency without embedding a developmen
 
 The implementation may reuse appropriately licensed open-source components, but must not copy Termux or Tailscale credentials, identity, or configuration into the application.
 
+Implementation checkpoint: the v2 branch now has an opt-in Companion TLS 1.2/1.3 LAN listener and an Android
+`connectedDevice` foreground service. The service keeps encrypted host/port/SPKI-pin configuration in Android
+Keystore-backed AES-GCM storage, listens only on loopback, verifies certificate validity plus HTTPS hostname and
+primary/backup SPKI pins, and never silently downgrades to Termux. This is a manual LAN bootstrap; QR discovery,
+asymmetric device identity/mTLS, relay fallback, rotation UX and field battery/background measurements remain open.
+
 ## Final definition of done
 
 - A user installs Codex Pocket on Android and Pocket Companion on each supported Linux computer they want to use.

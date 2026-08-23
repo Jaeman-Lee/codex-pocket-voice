@@ -63,7 +63,11 @@ export function deviceTargetLabel(id: DeviceId): string {
   return deviceTargets.find((target) => target.id === id)?.name ?? "실행 단말";
 }
 
-export async function addLinuxDevice(name: string, localPort: number): Promise<DeviceTarget> {
+export async function addLinuxDevice(
+  name: string,
+  localPort: number,
+  transport: "termux" | "pocketlink" = "termux",
+): Promise<DeviceTarget> {
   if (!name.trim() || name.trim().length > 60) throw new Error("Linux PC 이름을 입력해 주세요.");
   if (!Number.isInteger(localPort) || localPort < 1024 || localPort > 65_535) {
     throw new Error("로컬 터널 포트는 1024~65535 사이여야 합니다.");
@@ -75,6 +79,7 @@ export async function addLinuxDevice(name: string, localPort: number): Promise<D
     name: name.trim(),
     kind: "linux",
     baseUrl,
+    transport,
   };
   deviceTargets = [...deviceTargets, target];
   await saveDeviceTargets();
@@ -262,7 +267,10 @@ async function loadDeviceTargets(): Promise<DeviceTarget[]> {
       return override ? { ...target, name: override.name, remoteDeviceId: override.remoteDeviceId } : target;
     });
     const custom = saved.filter((target) => !defaults.some((item) => item.id === target.id || item.baseUrl === target.baseUrl));
-    return [...mergedDefaults, ...custom.map((target) => ({ ...target, builtIn: false }))];
+    return [
+      ...mergedDefaults.map((target) => ({ ...target, transport: target.transport ?? "termux" as const })),
+      ...custom.map((target) => ({ ...target, builtIn: false, transport: target.transport ?? "termux" as const })),
+    ];
   } catch {
     return defaults;
   }
@@ -274,7 +282,7 @@ async function saveDeviceTargets(): Promise<void> {
 
 function defaultDeviceTargets(): DeviceTarget[] {
   if (!isNativeApp()) return [{ id: "pc", name: "이 Linux PC", kind: "linux", baseUrl: "", builtIn: true }];
-  return [{ id: "pc", name: "내 Linux PC", kind: "linux", baseUrl: "http://127.0.0.1:8788", builtIn: true }];
+  return [{ id: "pc", name: "내 Linux PC", kind: "linux", baseUrl: "http://127.0.0.1:8788", builtIn: true, transport: "termux" }];
 }
 
 function isDeviceTarget(value: unknown): value is DeviceTarget {
@@ -283,7 +291,8 @@ function isDeviceTarget(value: unknown): value is DeviceTarget {
   return typeof target.id === "string" && typeof target.name === "string"
     && (target.kind === "linux" || target.kind === "android")
     && typeof target.baseUrl === "string" && isSafeLoopbackBase(target.baseUrl)
-    && (target.remoteDeviceId === undefined || typeof target.remoteDeviceId === "string");
+    && (target.remoteDeviceId === undefined || typeof target.remoteDeviceId === "string")
+    && (target.transport === undefined || target.transport === "termux" || target.transport === "pocketlink");
 }
 
 function isSafeLoopbackBase(value: string): boolean {

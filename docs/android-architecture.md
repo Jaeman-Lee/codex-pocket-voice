@@ -32,7 +32,17 @@ Codex Pocket APK
 - APK origin만 읽기 CORS와 쓰기 origin 검사를 통과합니다.
 - SSH 개인키와 Codex 인증 정보는 APK나 웹 저장소로 복사하지 않습니다.
 
-## 완전 독립형 SSH의 후속 단계
+## v2 PocketLink TLS bootstrap
+
+v2 개발판은 명시적으로 설정한 경우 Android native foreground service가
+`127.0.0.1:<local-port>`를 Companion의 TLS 1.2/1.3 LAN listener로 전달한다. Companion terminal에
+표시된 SPKI pin과 host를 사용자가 화면에서 확인하며, 설정은 Android Keystore AES-GCM으로 보호한다.
+인증서 유효기간, hostname 또는 기본/교체용 pin 검증이 실패하면 SSH로 자동 우회하지 않는다.
+
+이 단계는 수동 LAN bootstrap이며 QR, discovery/P2P, 비대칭 device key/mTLS, relay와 자동 rotation은
+아직 구현하지 않았다. 자세한 설정과 보안 경계는 [PocketLink TLS bootstrap](pocket-link.md)에 있다.
+
+## 완전 독립형 SSH의 호환 후속 단계
 
 Termux가 전혀 필요 없는 버전은 별도 보안 단계로 진행합니다.
 
@@ -42,7 +52,8 @@ Termux가 전혀 필요 없는 버전은 별도 보안 단계로 진행합니다
 4. 최초 연결에서 호스트 키 지문을 명시적으로 확인하고 이후 변경을 차단합니다.
 5. 네트워크 전환, 절전, 앱 재시작 시 재연결 테스트를 추가합니다.
 
-현재 Termux 연동형은 이미 사용 중인 검증된 SSH 설정과 키를 재사용하므로 첫 APK 버전에 더 안전하고 구현 범위도 작습니다.
+현재 Termux 연동형은 이미 사용 중인 검증된 SSH 설정과 키를 재사용하므로 PocketLink field acceptance가
+끝날 때까지 rollback adapter로 유지한다. 내장 SSH는 PocketLink와 별개의 고급 호환 transport 후보다.
 
 ## 목표 아키텍처: 스마트폰은 저부하 클라이언트
 

@@ -85,6 +85,13 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   삭제는 정확한 전체 프로젝트 경로와 영향 범위를 다시 보여 준 뒤 두 번째 터치에서만 수행하며,
   실행·승인 중이거나 미확인 `unknown` 작업이 있으면 409로 차단한다. 프로젝트 파일과 Android의
   암호화 conversation·queue journal은 삭제 대상이 아니다.
+- opt-in PocketLink LAN TLS listener를 추가했다. Companion은 `0700` 디렉터리의 `0600` 단일-link
+  private key, certificate/key 일치, 유효기간과 advertise host를 검증하고 TLS 1.2/1.3으로만 듣는다.
+  Android `connectedDevice` foreground service는 Keystore AES-GCM으로 host·port·기본/교체용 SPKI pin을
+  보호하고 `127.0.0.1`에만 bounded forward를 연다. 인증서 유효기간·HTTPS hostname·SPKI pin 중 하나라도
+  맞지 않으면 연결을 거부하고 Termux/SSH로 자동 downgrade하지 않는다.
+- 이 PocketLink checkpoint는 수동 LAN bootstrap이다. QR/discovery, 비대칭 device key와 mTLS, relay,
+  자동 key rotation, background 계측은 남아 있으며 Termux/SSH를 검증된 rollback adapter로 유지한다.
 - 이 기준선은 CI·개발용이며 v1.8.1 설치본이나 실행 중인 Companion을 교체하지 않는다.
 
 ## 1.8.2 hotfix candidate — project-scoped session handoff

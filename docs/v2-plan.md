@@ -25,7 +25,7 @@
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 읽기 도구, SHA-bound 단일 파일 교체와 격리 npm 검증 구현; 다중 파일 patch·durable multi-turn 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, live branch/worktree identity, workspace export/protected delete 구현; 사용자 retention 설정·pin/archive·native 알림 잔여 |
-| Phase E | 대기 | PocketLink와 출시 강화 |
+| Phase E | 진행 중 | opt-in LAN TLS listener, Android Keystore config·SPKI pin·connectedDevice loopback forward 구현; QR/device-key/mTLS·relay·rotation·background release gate 잔여 |
 
 ## 2. 제품 정의
 
@@ -348,6 +348,14 @@ thread cwd가 선택한 workspace와 다르면 409로 차단한다.
 - Termux/SSH는 rollback 가능한 호환 transport로 유지
 - signed update manifest, 1.8.1 rollback 검증
 - Android CPU·메모리·배터리·background wake release gate
+
+현재 checkpoint는 Companion의 opt-in TLS 1.2/1.3 LAN listener와 Android native loopback forward를
+구현했다. Companion private key는 private directory의 0600 단일-link 파일만 허용하고 certificate/key,
+유효기간과 advertise host를 검증한다. Android는 host·port·기본/교체용 SPKI pin을 Keystore AES-GCM으로
+보호하며 `connectedDevice` foreground service에서 인증서 유효기간, HTTPS hostname과 leaf SPKI pin을
+모두 확인한다. local listener는 127.0.0.1에만 bind하고 연결·thread 수를 제한한다. 오류나 pin 불일치 때
+Termux/SSH로 자동 downgrade하지 않는다. 수동 LAN bootstrap 단계이므로 QR/discovery, Android 비대칭
+device key와 mTLS, relay fallback, key rotation protocol과 실기기 background release gate는 남아 있다.
 
 완료 조건: Termux 없이 핵심 흐름이 동작하고, 연결 실패 시 비밀정보를 노출하거나 다른 Provider로
 우회하지 않으며 1.8.1로 복구할 수 있다.

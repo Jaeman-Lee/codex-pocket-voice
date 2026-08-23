@@ -14,4 +14,5 @@ export const GATEWAY_CAPABILITIES = {
   approvalBroker: true,
   usageAccounting: true,
   journalManagement: true,
+  pocketLinkTls: true,
 } as const;

@@ -1,0 +1,410 @@
+package io.github.jaemanlee.codexpocketvoice;
+
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.ServiceInfo;
+import android.os.Build;
+import android.os.IBinder;
+import android.util.Base64;
+
+import androidx.core.app.NotificationCompat;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+
+public class PocketLinkService extends Service {
+    static final String ACTION_START = "io.github.jaemanlee.codexpocketvoice.POCKET_LINK_START";
+    static final String ACTION_STOP = "io.github.jaemanlee.codexpocketvoice.POCKET_LINK_STOP";
+    static final String EXTRA_LOCAL_PORT = "localPort";
+    private static final String CHANNEL_ID = "pocket-link";
+    private static final int NOTIFICATION_ID = 2601;
+    private static final int MAX_LINKS = 8;
+    private static final int MAX_CONNECTIONS_PER_LINK = 8;
+    private static final ConcurrentHashMap<Integer, Forwarder> RUNNING = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Integer, String> ERRORS = new ConcurrentHashMap<>();
+
+    private ExecutorService controlExecutor;
+    private ExecutorService connectionExecutor;
+    private PocketLinkConfigStore configStore;
+
+    static boolean isRunning(int localPort) {
+        Forwarder forwarder = RUNNING.get(localPort);
+        return forwarder != null && forwarder.isRunning();
+    }
+
+    static String error(int localPort) {
+        return ERRORS.get(localPort);
+    }
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        configStore = new PocketLinkConfigStore(this);
+        controlExecutor = Executors.newSingleThreadExecutor();
+        connectionExecutor = Executors.newFixedThreadPool(16);
+        createNotificationChannel();
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        startForegroundCompat(notification("PocketLink 연결을 준비하는 중…"));
+        if (intent == null) {
+            controlExecutor.execute(this::restoreActiveLinks);
+            return START_STICKY;
+        }
+        int localPort = intent.getIntExtra(EXTRA_LOCAL_PORT, -1);
+        if (ACTION_STOP.equals(intent.getAction())) {
+            controlExecutor.execute(() -> stopLink(localPort, true));
+        } else if (ACTION_START.equals(intent.getAction())) {
+            controlExecutor.execute(() -> startLink(localPort));
+        }
+        return START_STICKY;
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+
+    @Override
+    public void onDestroy() {
+        for (Forwarder forwarder : RUNNING.values()) forwarder.close();
+        RUNNING.clear();
+        if (controlExecutor != null) controlExecutor.shutdownNow();
+        if (connectionExecutor != null) connectionExecutor.shutdownNow();
+        super.onDestroy();
+    }
+
+    private void restoreActiveLinks() {
+        try {
+            List<PocketLinkConfigStore.Config> configs = configStore.active();
+            if (configs.isEmpty()) {
+                stopForeground(STOP_FOREGROUND_REMOVE);
+                stopSelf();
+                return;
+            }
+            for (PocketLinkConfigStore.Config config : configs) startLink(config);
+        } catch (Exception error) {
+            updateNotification("PocketLink 설정을 복구하지 못했습니다.");
+        }
+    }
+
+    private void startLink(int localPort) {
+        try {
+            PocketLinkConfigStore.Config config = configStore.load(localPort);
+            if (config == null) throw new IllegalArgumentException("PocketLink 설정이 없습니다.");
+            configStore.setActive(localPort, true);
+            startLink(config.withActive(true));
+        } catch (Exception error) {
+            ERRORS.put(localPort, safeError(error));
+            updateNotification("PocketLink 연결을 시작하지 못했습니다.");
+        }
+    }
+
+    private void startLink(PocketLinkConfigStore.Config config) {
+        Forwarder previous = RUNNING.remove(config.localPort);
+        if (previous != null) previous.close();
+        if (RUNNING.size() >= MAX_LINKS) {
+            ERRORS.put(config.localPort, "PocketLink 등록 한도를 초과했습니다.");
+            updateNotification("PocketLink 등록 한도를 초과했습니다.");
+            return;
+        }
+        Forwarder forwarder = new Forwarder(config, connectionExecutor);
+        try {
+            forwarder.start();
+            RUNNING.put(config.localPort, forwarder);
+            ERRORS.remove(config.localPort);
+            updateNotification(config.label + "의 암호화 요청을 기다리는 중");
+        } catch (Exception error) {
+            forwarder.close();
+            ERRORS.put(config.localPort, safeError(error));
+            updateNotification(config.label + " 연결을 열지 못했습니다.");
+        }
+    }
+
+    private void stopLink(int localPort, boolean disable) {
+        Forwarder forwarder = RUNNING.remove(localPort);
+        if (forwarder != null) forwarder.close();
+        ERRORS.remove(localPort);
+        if (disable) {
+            try {
+                configStore.setActive(localPort, false);
+            } catch (Exception ignored) {
+                // The caller removes the encrypted config separately when deleting a target.
+            }
+        }
+        if (RUNNING.isEmpty()) {
+            stopForeground(STOP_FOREGROUND_REMOVE);
+            stopSelf();
+        } else {
+            updateNotification("PocketLink 연결 " + RUNNING.size() + "개 유지 중");
+        }
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationChannel channel = new NotificationChannel(
+                CHANNEL_ID,
+                "PocketLink 연결",
+                NotificationManager.IMPORTANCE_LOW
+        );
+        channel.setDescription("Linux Companion과 암호화 연결을 유지합니다.");
+        getSystemService(NotificationManager.class).createNotificationChannel(channel);
+    }
+
+    private Notification notification(String text) {
+        Intent open = new Intent(this, MainActivity.class);
+        open.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        PendingIntent contentIntent = PendingIntent.getActivity(
+                this,
+                0,
+                open,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+        return new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_pocket_link)
+                .setContentTitle("Codex Pocket Voice")
+                .setContentText(text)
+                .setContentIntent(contentIntent)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .build();
+    }
+
+    private void startForegroundCompat(Notification notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
+        } else {
+            startForeground(NOTIFICATION_ID, notification);
+        }
+    }
+
+    private void updateNotification(String text) {
+        getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification(text));
+    }
+
+    private static String safeError(Exception error) {
+        if (error instanceof java.net.BindException) return "로컬 포트를 이미 사용 중입니다.";
+        if (error instanceof CertificateException) return "Companion 인증서 검증에 실패했습니다.";
+        return "암호화 연결을 만들 수 없습니다.";
+    }
+
+    private static final class Forwarder {
+        private final PocketLinkConfigStore.Config config;
+        private final ExecutorService connectionExecutor;
+        private final Semaphore capacity = new Semaphore(MAX_CONNECTIONS_PER_LINK);
+        private final AtomicBoolean running = new AtomicBoolean(false);
+        private final Set<Connection> connections = ConcurrentHashMap.newKeySet();
+        private ServerSocket listener;
+        private Thread acceptThread;
+
+        Forwarder(PocketLinkConfigStore.Config config, ExecutorService connectionExecutor) {
+            this.config = config;
+            this.connectionExecutor = connectionExecutor;
+        }
+
+        void start() throws Exception {
+            listener = new ServerSocket();
+            listener.setReuseAddress(true);
+            listener.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), config.localPort), 16);
+            running.set(true);
+            acceptThread = new Thread(this::acceptLoop, "PocketLink-" + config.localPort);
+            acceptThread.setDaemon(true);
+            acceptThread.start();
+        }
+
+        boolean isRunning() {
+            return running.get() && listener != null && !listener.isClosed();
+        }
+
+        void close() {
+            running.set(false);
+            if (listener != null) {
+                try { listener.close(); } catch (IOException ignored) {}
+            }
+            for (Connection connection : new ArrayList<>(connections)) connection.close();
+            connections.clear();
+            if (acceptThread != null) acceptThread.interrupt();
+        }
+
+        private void acceptLoop() {
+            while (running.get()) {
+                try {
+                    Socket local = listener.accept();
+                    if (!local.getInetAddress().isLoopbackAddress() || !capacity.tryAcquire()) {
+                        local.close();
+                        continue;
+                    }
+                    connectionExecutor.execute(() -> connect(local));
+                } catch (IOException error) {
+                    if (running.get()) ERRORS.put(config.localPort, "로컬 연결을 받을 수 없습니다.");
+                    return;
+                }
+            }
+        }
+
+        private void connect(Socket local) {
+            Socket remote = null;
+            try {
+                remote = tlsSocket(config);
+                Connection connection = new Connection(local, remote, capacity, connections, connectionExecutor);
+                connections.add(connection);
+                connection.start();
+                return;
+            } catch (Exception error) {
+                ERRORS.put(config.localPort, safeError(error instanceof Exception ? (Exception) error : new Exception(error)));
+            }
+            closeQuietly(local);
+            closeQuietly(remote);
+            capacity.release();
+        }
+
+        private static Socket tlsSocket(PocketLinkConfigStore.Config config) throws Exception {
+            Socket transport = new Socket();
+            transport.connect(new InetSocketAddress(config.host, config.remotePort), 10_000);
+            SSLContext context = SSLContext.getInstance("TLS");
+            context.init(null, new TrustManager[] { new PinnedTrustManager(config.primaryPin, config.backupPin) }, new SecureRandom());
+            SSLSocketFactory factory = context.getSocketFactory();
+            SSLSocket socket = (SSLSocket) factory.createSocket(transport, config.host, config.remotePort, true);
+            socket.setSoTimeout(10_000);
+            SSLParameters parameters = socket.getSSLParameters();
+            parameters.setEndpointIdentificationAlgorithm("HTTPS");
+            socket.setSSLParameters(parameters);
+            socket.startHandshake();
+            socket.setSoTimeout(0);
+            return socket;
+        }
+    }
+
+    private static final class Connection {
+        private final Socket local;
+        private final Socket remote;
+        private final Semaphore capacity;
+        private final Set<Connection> owner;
+        private final ExecutorService executor;
+        private final AtomicInteger directions = new AtomicInteger(2);
+        private final AtomicBoolean closed = new AtomicBoolean(false);
+
+        Connection(Socket local, Socket remote, Semaphore capacity, Set<Connection> owner, ExecutorService executor) {
+            this.local = local;
+            this.remote = remote;
+            this.capacity = capacity;
+            this.owner = owner;
+            this.executor = executor;
+        }
+
+        void start() throws Exception {
+            local.setTcpNoDelay(true);
+            remote.setTcpNoDelay(true);
+            executor.execute(() -> copy(local, remote));
+            executor.execute(() -> copy(remote, local));
+        }
+
+        void close() {
+            if (!closed.compareAndSet(false, true)) return;
+            closeQuietly(local);
+            closeQuietly(remote);
+            owner.remove(this);
+            capacity.release();
+        }
+
+        private void copy(Socket source, Socket destination) {
+            byte[] buffer = new byte[32 * 1024];
+            try {
+                InputStream input = source.getInputStream();
+                OutputStream output = destination.getOutputStream();
+                int count;
+                while ((count = input.read(buffer)) >= 0) {
+                    if (count == 0) continue;
+                    output.write(buffer, 0, count);
+                    output.flush();
+                }
+                try { destination.shutdownOutput(); } catch (IOException ignored) {}
+            } catch (IOException ignored) {
+                // The browser event stream reconnects after either half closes.
+            } finally {
+                if (directions.decrementAndGet() == 0) close();
+            }
+        }
+    }
+
+    private static final class PinnedTrustManager implements X509TrustManager {
+        private final List<byte[]> pins = new ArrayList<>();
+
+        PinnedTrustManager(String primaryPin, String backupPin) {
+            pins.add(decodePin(primaryPin));
+            if (backupPin != null && !backupPin.isEmpty()) pins.add(decodePin(backupPin));
+        }
+
+        @Override
+        public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            throw new CertificateException("client certificates are not accepted");
+        }
+
+        @Override
+        public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            if (chain == null || chain.length == 0) throw new CertificateException("missing server certificate");
+            chain[0].checkValidity();
+            try {
+                byte[] actual = MessageDigest.getInstance("SHA-256").digest(chain[0].getPublicKey().getEncoded());
+                for (byte[] expected : pins) {
+                    if (MessageDigest.isEqual(actual, expected)) return;
+                }
+            } catch (CertificateException error) {
+                throw error;
+            } catch (Exception error) {
+                throw new CertificateException("cannot verify server public key", error);
+            }
+            throw new CertificateException("server public key pin mismatch");
+        }
+
+        @Override
+        public X509Certificate[] getAcceptedIssuers() {
+            return new X509Certificate[0];
+        }
+
+        private static byte[] decodePin(String value) {
+            if (value == null || !value.matches("sha256/[A-Za-z0-9+/]{43}=")) {
+                throw new IllegalArgumentException("invalid SPKI pin");
+            }
+            return Base64.decode(value.substring("sha256/".length()), Base64.NO_WRAP);
+        }
+    }
+
+    private static void closeQuietly(Socket socket) {
+        if (socket == null) return;
+        try { socket.close(); } catch (IOException ignored) {}
+    }
+}
