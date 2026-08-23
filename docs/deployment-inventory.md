@@ -7,6 +7,10 @@ Last verified: 2026-08-23 KST
 
 ## Current candidate and deployed baseline
 
+Update decision: `1.8.0`은 새 교차 기기 세션 흐름과 Companion API를 추가하므로
+`feature`/minor 변경이다. Draft feature PR에서 유지하고 현장 승인 전에는 `main`에 병합하지
+않는다. Android에서는 `1.8.0`을 current, 검증된 `1.7.4`를 유일한 rollback 세트로 보관한다.
+
 | Component | Version / revision | State |
 | --- | --- | --- |
 | Runtime code baseline | `5c4d0bb` on `agent/react-capacitor-android` | pushed; local checks passing |
@@ -26,7 +30,9 @@ Last verified: 2026-08-23 KST
 - GitHub Release assets: 장기 보존하는 정식 배포 APK, SHA256SUMS, SBOM. 역사적
   `v1.5.0`과 `v1.6.0` Release에는 APK만 있으며, 세 가지 묶음은 `v1.8.0` 정식 배포부터 적용한다.
 - GitHub Actions artifacts: PR 검증용이며 14일 후 자동 만료한다.
-- Android Downloads: 현재 시험 APK 한 개와 대응 체크섬·SBOM만 보존한다.
+- Android Downloads: `CodexPocketVoice/current`에 현재 candidate 한 세트,
+  `CodexPocketVoice/rollback`에 직전 검증본 한 세트만 보존한다. 과거 느슨한 APK는
+  `archive/legacy`로 옮긴 뒤 정식 Release와 대조 후 정리한다.
 - PC rollback snapshot: 새 Companion 현장 검증이 끝날 때까지 직전 운영본 한 개만 보존한다.
 - Build outputs and caches: `dist`, `client/dist`, Gradle outputs, `node_modules`는 재생성 가능하며 버전 자산이 아니다.
 

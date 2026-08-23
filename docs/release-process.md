@@ -15,6 +15,22 @@ Android `versionCode`, APK 이름과 Git tag는 이 값과 일치해야 한다. 
 
 Candidate 단계에서는 Draft PR을 유지하고 `Latest` Release를 바꾸지 않는다.
 
+## Update decision gate
+
+배포 가능한 변경을 시작할 때마다 코드 수정 전에 다음 네 항목을 판단하고 Changelog 또는
+Deployment inventory에 기록한다.
+
+| Decision | Rule |
+| --- | --- |
+| Change class | 버그·내부 호환은 `patch`, 새 사용자 흐름·기능·서버 API는 `feature`, 호환 불가능한 프로토콜·저장소·계정 변경은 `breaking` |
+| Version | patch는 `x.y.Z`, feature는 `x.Y.0`, breaking은 별도 마이그레이션 계획과 `X.0.0` |
+| Git target | scoped feature/fix branch와 PR에서 검증하고, 현장 승인 전에는 `main`에 병합하지 않음 |
+| APK retention | 현재 candidate 한 세트, 직전 검증 rollback 한 세트, 정식판은 GitHub Release에 장기 보존 |
+
+테스터에게 전달하거나 설치한 APK의 코드가 바뀌면 반드시 더 높은 SemVer와 Android
+`versionCode`를 사용한다. 아직 전달하지 않은 동일 버전의 CI 재빌드는 이전 산출물을 완전히
+대체하는 경우에만 허용한다.
+
 ## Required checks
 
 ```sh
@@ -54,6 +70,10 @@ Android 산출물에는 서명 APK 또는 fork용 unsigned APK, `SHA256SUMS`, Cy
 
 ## Rollback and retention
 
+- Android 로컬 보관 위치:
+  - `Download/CodexPocketVoice/current/<version>/`: 설치할 candidate APK, `SHA256SUMS`, SBOM
+  - `Download/CodexPocketVoice/rollback/<version>/`: 직전 현장 검증 APK와 대응 무결성 파일 한 세트
+  - `Download/CodexPocketVoice/archive/legacy/`: 정리 전 과거 시험 APK의 임시·복구 가능한 보관
 - Android: 직전 정식 Release APK로 돌아가려면 Android가 허용하는 versionCode 정책을 따른다.
   다운그레이드가 차단되면 앱 데이터를 보존할지 먼저 결정하고 새 수정 버전을 배포한다.
 - Linux Companion: 교체 직전 디렉터리 snapshot 한 개를 유지하고, 새 버전 검증 후 제거한다.
