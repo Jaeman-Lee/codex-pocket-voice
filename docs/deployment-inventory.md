@@ -16,7 +16,7 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | V2 development component | Version / revision | State |
 | --- | --- | --- |
 | Source version | `2.0.0` / Android `versionCode 20000` | development only; not field installed |
-| Target branch | `feature/v2-control-plane` | approved API tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, live branch/worktree identity and staged PocketLink rotations implemented; discovery/relay, model eval and broader patch workflow next |
+| Target branch | `feature/v2-control-plane` | approved single/batch API tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, live branch/worktree identity and staged PocketLink rotations implemented; create/rename recovery, discovery/relay and model eval next |
 | Gateway protocol | maximum 3, minimum 2 | v1 rollout compatibility retained |
 | Codex app-server schema | `codex-cli 0.149.0` | generated bindings and no-model real integration verified |
 | Current v1 APK | 1.8.2 candidate | signed APK/checksum/SBOM prepared from hotfix PR #4; install not performed |
@@ -26,7 +26,7 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | Android journal milestone | app-owned SQLite schema 1 | encrypted snapshot migration and rollback mirror implemented; CI-only, no device migration performed |
 | Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, policy summary, bounded workspace JSON export and protected delete implemented; no field restart performed |
 | Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation, touch-only approvals and two-touch history deletion implemented; no field APK handed off |
-| Approved API tools | SHA-bound text replace + probed sandbox verifier | existing file only; check/test/build only; arbitrary command, create/delete/rename and network blocked |
+| Approved API tools | SHA-bound single/2–8 file text replace + probed sandbox verifier | existing files only; runtime rollback; check/test/build only; arbitrary command, create/delete/rename and network blocked |
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
 | PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | reviewed QR, observed backup-pin server certificate promotion and recoverable Keystore A/B client identity rotation implemented; discovery/P2P, relay and field validation pending |
 
@@ -69,6 +69,13 @@ OpenAI/OpenRouter run에 추가하는 v2 기능이므로 `breaking`/`2.0.0`, And
 `feature/v2-control-plane` 결정을 유지한다. 실제 API key나 유료 inference를 사용하지 않고 fake Provider와
 로컬 namespace sandbox로 검증한다. 이 checkpoint도 CI-only이며 APK 전달·설치나 Companion 재시작 없이
 current v1 후보 1.8.2와 rollback 1.8.1을 보존한다.
+
+Multi-file patch checkpoint decision: 2~8개 기존 파일을 하나의 검토·승인 단위로 교체하고 정상 runtime
+실패를 원복하는 새 workspace workflow이므로 기존 `breaking`/`2.0.0`, Android `versionCode 20000`,
+`feature/v2-control-plane` 결정을 유지한다. 파일당 12 KiB/전체 48 KiB, SHA·inode 재검사, 30 KiB 승인
+본문 상한을 적용하며 생성·삭제·rename과 batch process-crash atomicity는 아직 활성화하지 않는다.
+이번 변경도 source 및 CI-only APK만 갱신하고 실제 API key·유료 inference·APK 설치·Companion 재시작은
+수행하지 않는다. current v1 후보 1.8.2와 검증된 rollback 1.8.1은 그대로 보존한다.
 
 Workspace identity checkpoint decision: 프로젝트·세션의 현재 branch/worktree 정체성과 교차 프로젝트
 thread 검증을 추가하는 v2 기능이므로 분류와 버전은 `breaking`/`2.0.0`, Android `versionCode 20000`,

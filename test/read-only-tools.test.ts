@@ -17,6 +17,7 @@ test("read-only workspace tools contain paths, hide secrets, and never request a
   await mkdir(path.join(workspace, "src"), { recursive: true });
   await writeFile(outside, "outside needle\n");
   await writeFile(path.join(workspace, ".env"), "OPENAI_API_KEY=sk-hidden-env-secret-123456\n");
+  await writeFile(path.join(workspace, ".codex-pocket-recovery.bak"), "internal transaction copy\n");
   await writeFile(
     path.join(workspace, "src", "app.ts"),
     "export const needle = true;\nOPENAI_API_KEY=sk-source-secret-123456789\n",
@@ -53,7 +54,7 @@ test("read-only workspace tools contain paths, hide secrets, and never request a
 
   const listed = await execute("workspace_list", { path: null, max_entries: null });
   assert.equal(listed.status, "completed");
-  assert.doesNotMatch(JSON.stringify(listed.output), /\.env|\.git/);
+  assert.doesNotMatch(JSON.stringify(listed.output), /\.env|\.git|\.codex-pocket/);
 
   const read = await execute("workspace_read", {
     path: "src/app.ts",
@@ -92,7 +93,7 @@ test("read-only workspace tools contain paths, hide secrets, and never request a
   const status = await execute("git_status", {});
   assert.equal(status.status, "completed");
   assert.match(JSON.stringify(status.output), /src\/app\.ts/);
-  assert.doesNotMatch(JSON.stringify(status.output), /\.env/);
+  assert.doesNotMatch(JSON.stringify(status.output), /\.env|\.codex-pocket/);
 
   const diff = await execute("git_diff", { staged: true, path: null });
   assert.equal(diff.status, "completed");

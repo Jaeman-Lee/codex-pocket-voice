@@ -72,6 +72,12 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   `workspace_read`의 원본 SHA-256을 제시해야 하고 승인 전후 해시가 다르면 덮어쓰지 않는다. 변경 diff는
   승인함에 redacted·bounded 형태로 표시하며 민감 경로, symlink/hardlink, 비밀정보 형태, 생성·삭제·
   이름변경·권한변경은 거부한다. 승인된 교체는 같은 디렉터리에서 fsync 후 atomic rename한다.
+- `workspace_replace_text_batch`는 동일한 SHA·경로·내용 정책으로 2~8개 기존 파일, 파일당 12 KiB와
+  전체 48 KiB만 한 번의 터치 승인으로 교체한다. 모든 파일을 먼저 검사·fsync 스테이징하고 원본의
+  inode/hash를 hard-link backup에서 다시 확인한 뒤 각 파일을 atomic rename한다. 실행 중 하나라도
+  바뀌거나 실패하면 이미 설치한 파일을 역순으로 원복한다. 승인 JSON은 이스케이프 후에도 30 KiB
+  이하로 제한하며 내부 `.codex-pocket-*` 복구 파일은 API 읽기·검색에서 숨긴다. 새 파일, 삭제,
+  이름변경과 chmod는 계속 허용하지 않는다.
 - `project_verify`는 기존 `package.json`의 `check`, `test`, `build` script만 터치 승인 뒤 실행한다.
   package SHA-256으로 검토 후 script 변경을 차단하고, unprivileged user/mount/network namespace,
   일회용 overlay, 빈 환경, 민감 파일 mask, 로컬 loopback만 있는 네트워크, 시간·process·fd·파일·출력

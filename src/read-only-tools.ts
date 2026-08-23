@@ -567,6 +567,7 @@ export function redactWorkspaceSecrets(value: string): string {
 export function isSensitivePath(value: string): boolean {
   const normalized = value.replaceAll("\\", "/").replace(/^\.\//, "");
   const components = normalized.split("/").filter(Boolean);
+  if (components.some((component) => component.startsWith(".codex-pocket-"))) return true;
   if (components.some((component) => BLOCKED_COMPONENTS.has(component.toLowerCase()))) return true;
   const basename = components.at(-1)?.toLowerCase() ?? "";
   if (basename === ".env" || basename.startsWith(".env.")) return true;

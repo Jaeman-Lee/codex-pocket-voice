@@ -99,6 +99,144 @@ test("workspace_replace_text rejects sensitive, linked, secret-bearing, and esca
   assert.equal(approvals.listPending().length, 0);
 });
 
+test("workspace_replace_text_batch reviews and commits multiple files with one touch approval", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-pocket-change-batch-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const firstFile = join(root, "first.txt");
+  const secondFile = join(root, "second.txt");
+  await writeFile(firstFile, "first before\n", { mode: 0o640 });
+  await writeFile(secondFile, "second before\n", { mode: 0o600 });
+  const paths = await PathPolicy.fromEnvironment(undefined, root);
+  const approvals = new InMemoryApprovalBroker({ createId: () => "approval-batch" });
+  t.after(() => approvals.close());
+  const broker = new LocalToolBroker([
+    ...createReadOnlyWorkspaceTools(paths),
+    ...createWorkspaceChangeTools(paths),
+  ], approvals, paths);
+  assert.deepEqual(
+    broker.definitions().filter((definition) => definition.risk === "change").map((definition) => definition.name),
+    ["workspace_replace_text", "workspace_replace_text_batch"],
+  );
+  const first = await readSha(broker, root, "batch-read-first", "first.txt");
+  const second = await readSha(broker, root, "batch-read-second", "second.txt");
+
+  const replacement = broker.execute(call("batch-replace", "workspace_replace_text_batch", {
+    files: [
+      { path: "first.txt", expected_sha256: first, content: "first after\n" },
+      { path: "second.txt", expected_sha256: second, content: "second after\n" },
+    ],
+  }), { cwd: root });
+  const pending = await pendingApproval(approvals);
+  assert.equal(pending.requiresTouch, true);
+  assert.equal(pending.redactedDetails?.fileCount, 2);
+  assert.equal((pending.redactedDetails?.files as unknown[] | undefined)?.length, 2);
+  assert.match(String(pending.redactedDetails?.diff), /first\.txt[\s\S]*second\.txt/);
+  assert.throws(() => approvals.resolve(pending.id, "approved", "voice"), /터치/);
+  approvals.resolve(pending.id, "approved", "touch");
+
+  const result = await replacement;
+  assert.equal(result.status, "completed");
+  assert.equal((result.output as { fileCount?: number }).fileCount, 2);
+  assert.equal(await readFile(firstFile, "utf8"), "first after\n");
+  assert.equal(await readFile(secondFile, "utf8"), "second after\n");
+  assert.equal((await stat(firstFile)).mode & 0o777, 0o640);
+  assert.equal((await stat(secondFile)).mode & 0o777, 0o600);
+  assert.equal((await readdir(root)).some((name) => name.startsWith(".codex-pocket-")), false);
+});
+
+test("workspace_replace_text_batch rolls back earlier files when a later file races the commit", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-pocket-change-batch-race-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const firstFile = join(root, "first.txt");
+  const secondFile = join(root, "second.txt");
+  await writeFile(firstFile, "first original\n");
+  await writeFile(secondFile, "second original\n");
+  const paths = await PathPolicy.fromEnvironment(undefined, root);
+  const approvals = new InMemoryApprovalBroker({ createId: () => "approval-batch-race" });
+  t.after(() => approvals.close());
+  const broker = new LocalToolBroker([
+    ...createReadOnlyWorkspaceTools(paths),
+    ...createWorkspaceChangeTools(paths, {
+      beforeBatchCommit: async (index) => {
+        if (index === 1) await writeFile(secondFile, "concurrent edit\n");
+      },
+    }),
+  ], approvals, paths);
+  const first = await readSha(broker, root, "batch-race-read-first", "first.txt");
+  const second = await readSha(broker, root, "batch-race-read-second", "second.txt");
+
+  const replacement = broker.execute(call("batch-race", "workspace_replace_text_batch", {
+    files: [
+      { path: "first.txt", expected_sha256: first, content: "first proposed\n" },
+      { path: "second.txt", expected_sha256: second, content: "second proposed\n" },
+    ],
+  }), { cwd: root });
+  const pending = await pendingApproval(approvals);
+  approvals.resolve(pending.id, "approved", "touch");
+  assert.equal((await replacement).status, "failed");
+  assert.equal(await readFile(firstFile, "utf8"), "first original\n");
+  assert.equal(await readFile(secondFile, "utf8"), "concurrent edit\n");
+  assert.equal((await readdir(root)).some((name) => name.startsWith(".codex-pocket-")), false);
+});
+
+test("workspace_replace_text_batch rejects duplicate, undersized, and sensitive proposals before approval", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-pocket-change-batch-deny-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, "plain.txt"), "plain\n");
+  await writeFile(join(root, "other.txt"), "other\n");
+  const paths = await PathPolicy.fromEnvironment(undefined, root);
+  const approvals = new InMemoryApprovalBroker();
+  t.after(() => approvals.close());
+  const broker = new LocalToolBroker(createWorkspaceChangeTools(paths), approvals, paths);
+  const sha = "0".repeat(64);
+  const execute = (id: string, files: unknown[]) => broker.execute(
+    call(id, "workspace_replace_text_batch", { files }),
+    { cwd: root },
+  );
+
+  await assert.rejects(execute("batch-one", [
+    { path: "plain.txt", expected_sha256: sha, content: "next\n" },
+  ]), /2-8/);
+  await assert.rejects(execute("batch-duplicate", [
+    { path: "plain.txt", expected_sha256: sha, content: "first\n" },
+    { path: "plain.txt", expected_sha256: sha, content: "second\n" },
+  ]), /unique/);
+  await assert.rejects(execute("batch-secret", [
+    { path: "plain.txt", expected_sha256: sha, content: "safe\n" },
+    { path: "other.txt", expected_sha256: sha, content: "OPENAI_API_KEY=sk-abcdefghijklmnop\n" },
+  ]), /credential/);
+  assert.equal(approvals.listPending().length, 0);
+});
+
+test("workspace_replace_text_batch bounds escaped approval JSON below the broker limit", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-pocket-change-batch-preview-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const paths = await PathPolicy.fromEnvironment(undefined, root);
+  const approvals = new InMemoryApprovalBroker({ createId: () => "approval-batch-preview" });
+  t.after(() => approvals.close());
+  const broker = new LocalToolBroker([
+    ...createReadOnlyWorkspaceTools(paths),
+    ...createWorkspaceChangeTools(paths),
+  ], approvals, paths);
+  const files = [];
+  for (let index = 0; index < 4; index += 1) {
+    const name = `preview-${index}.txt`;
+    await writeFile(join(root, name), `before ${index}\n`);
+    files.push({
+      path: name,
+      expected_sha256: await readSha(broker, root, `preview-read-${index}`, name),
+      content: "\\".repeat(12_000),
+    });
+  }
+
+  const replacement = broker.execute(call("batch-preview", "workspace_replace_text_batch", { files }), { cwd: root });
+  const pending = await pendingApproval(approvals);
+  assert.equal(pending.redactedDetails?.diffTruncated, true);
+  assert.ok(Buffer.byteLength(JSON.stringify(pending.redactedDetails)) <= 30 * 1024);
+  approvals.resolve(pending.id, "declined", "touch");
+  assert.equal((await replacement).status, "denied");
+});
+
 function call(toolCallId: string, name: string, input: unknown) {
   return {
     providerId: "openai",
@@ -117,4 +255,18 @@ async function pendingApproval(approvals: InMemoryApprovalBroker) {
     await new Promise((resolve) => setTimeout(resolve, 2));
   }
   throw new Error("Approval request was not created");
+}
+
+async function readSha(
+  broker: LocalToolBroker,
+  cwd: string,
+  toolCallId: string,
+  path: string,
+): Promise<string> {
+  const result = await broker.execute(call(toolCallId, "workspace_read", {
+    path,
+    start_line: null,
+    end_line: null,
+  }), { cwd });
+  return (result.output as { sha256: string }).sha256;
 }
