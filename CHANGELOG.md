@@ -76,8 +76,18 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   전체 48 KiB만 한 번의 터치 승인으로 교체한다. 모든 파일을 먼저 검사·fsync 스테이징하고 원본의
   inode/hash를 hard-link backup에서 다시 확인한 뒤 각 파일을 atomic rename한다. 실행 중 하나라도
   바뀌거나 실패하면 이미 설치한 파일을 역순으로 원복한다. 승인 JSON은 이스케이프 후에도 30 KiB
-  이하로 제한하며 내부 `.codex-pocket-*` 복구 파일은 API 읽기·검색에서 숨긴다. 새 파일, 삭제,
-  이름변경과 chmod는 계속 허용하지 않는다.
+  이하로 제한하며 내부 `.codex-pocket-*` 복구 파일은 API 읽기·검색에서 숨긴다. batch 자체는 새 파일,
+  삭제, 이름변경과 chmod를 허용하지 않는다.
+- `workspace_create_text`는 기존 디렉터리 아래의 비어 있는 경로에 12 KiB 이하 UTF-8 파일 하나를
+  `0644`로 만들고, `workspace_rename_text`는 `workspace_read` SHA와 inode가 일치하는 기존 단일-link
+  UTF-8 파일을 비어 있는 경로로만 옮긴다. 두 도구 모두 redacted diff와 터치 승인을 요구하고,
+  목적지를 hard-link로 설치해 승인 뒤 생긴 파일을 덮어쓰지 않는다. 디렉터리 생성, 삭제, chmod,
+  binary·민감 경로·secret-bearing 파일 이동은 계속 차단한다.
+- 모든 workspace 변경은 Companion 전용 `0700` 디렉터리의 `0600` strict manifest에 staging/prepared/
+  committed 단계를 fsync한 뒤 수행한다. manifest에는 내용·credential 없이 workspace와 상대 경로,
+  hash·inode·mode만 기록한다. 재시작 시 staging은 폐기하고 prepared는 전체 원복하며 committed는 결과를
+  유지한 채 backup을 정리한다. 복구 대상이 외부에서 다시 바뀌어 자동 처리가 애매하면 덮어쓰지 않고
+  변경 도구 초기화를 실패시킨다.
 - `project_verify`는 기존 `package.json`의 `check`, `test`, `build` script만 터치 승인 뒤 실행한다.
   package SHA-256으로 검토 후 script 변경을 차단하고, unprivileged user/mount/network namespace,
   일회용 overlay, 빈 환경, 민감 파일 mask, 로컬 loopback만 있는 네트워크, 시간·process·fd·파일·출력

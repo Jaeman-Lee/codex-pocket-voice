@@ -4,7 +4,7 @@ OpenAI API와 OpenRouter run은 Provider가 도구 호출을 제안하더라도 
 `LocalToolBroker`를 우회할 수 없다. observation 이외의 도구는 matching run과 tool-call ID로 승인
 요청을 만들고 모바일 화면의 직접 approve/decline 응답을 기다린다. 음성·system auto-approve는 없다.
 
-## 기존 텍스트 파일 교체
+## 검토된 텍스트 파일 변경
 
 `workspace_replace_text`는 다음 조건을 모두 만족할 때만 등록된 파일 하나를 교체한다.
 
@@ -27,10 +27,32 @@ fsync를 수행한다.
 - 각 원본의 hard-link backup을 확인하고 새 파일을 atomic rename한다. 정상 runtime에서 이후 파일의
   경합·취소·오류가 발생하면 이미 설치한 파일도 역순으로 원복한다.
 - process 또는 OS가 commit 도중 강제 종료되더라도 개별 대상 경로에는 완전한 이전본 또는 새 본문만
-  남는다. 다만 batch 전체의 crash-atomicity는 아직 제공하지 않으므로 CI/개발 checkpoint로 유지한다.
+  남고, 다음 Companion 시작에서 미완료 batch 전체를 이전 상태로 원복한다.
 - 내부 `.codex-pocket-*` staging/backup은 API 목록·읽기·검색·Git 관찰·수정에서 숨기고 정상 종료 시 제거한다.
 
-새 파일 생성, 삭제, 이름변경, chmod와 binary 변경은 두 교체 도구 모두 허용하지 않는다.
+`workspace_create_text`는 기존 regular 디렉터리 아래의 아직 존재하지 않는 경로 하나에 12,000자/12KiB
+이하 UTF-8 본문을 `0644`로 만든다. `/dev/null` 기준 bounded/redacted diff, 새 SHA와 mode를 터치 승인에서
+보여 준다. 같은 디렉터리에 fsync한 임시 파일을 hard-link하므로 승인 뒤 다른 process가 먼저 만든
+목적지를 덮어쓰지 않는다. 디렉터리는 만들지 않는다.
+
+`workspace_rename_text`는 기존 regular UTF-8 single-link 파일 하나를 기존 regular 디렉터리 아래의
+비어 있는 경로로만 옮긴다. 원본은 `workspace_read` SHA, inode와 최대 1MiB 제한을 다시 확인하며 source와
+destination, hash, 100% rename diff를 터치 승인에서 보여 준다. 목적지 hard-link가 성공하고 같은 inode와
+hash임을 확인한 뒤 원래 이름을 제거한다. 다른 filesystem으로의 이동, secret-bearing 본문과 목적지
+덮어쓰기는 거부한다.
+
+네 변경 도구는 하나의 Companion 안에서 직렬화된다. 파일을 건드리기 전에 앱 전용 transaction
+디렉터리에 strict manifest를 `0600`으로 쓰고 디렉터리는 `0700`으로 고정한다. 기본 위치는 gateway auth
+state 옆 `workspace-transactions`이며 `CODEX_POCKET_WORKSPACE_TRANSACTIONS`로 전용 절대 위치를 정할 수
+있다. manifest에는 파일 본문·credential이 아니라 workspace, 상대 경로, SHA·inode·mode만 들어간다.
+
+- `staging`: 대상 파일을 아직 바꾸지 않았으므로 재시작 시 내부 stage만 제거한다.
+- `prepared`: commit 도중이므로 교체 batch와 rename은 승인 전 상태로 원복하고, 미완료 create는 제거한다.
+- `committed`: 승인 결과를 유지하고 내부 backup/stage만 정리한다.
+- manifest·내부 파일·대상 중 하나가 외부에서 바뀌어 안전한 판정이 불가능하면 자동 덮어쓰기를 하지
+  않고 Companion의 변경 도구 초기화를 실패시킨다. 남은 복구본은 보존한다.
+
+삭제, 디렉터리 생성, chmod와 binary 변경은 어떤 API 변경 도구도 허용하지 않는다.
 
 ## npm 검증 sandbox
 

@@ -22,7 +22,7 @@
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환, operation UI 상태 모듈 구현; 나머지 App 상태 분리 잔여 |
-| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 기존 파일 교체와 격리 npm 검증 구현; 생성/rename patch·crash recovery·실모델 eval 잔여 |
+| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, live branch/worktree identity, workspace export/protected delete 구현; 사용자 retention 설정·pin/archive·native 알림 잔여 |
 | Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion과 recoverable A/B client-key rotation 구현; discovery/P2P·relay·background release gate 잔여 |
@@ -299,8 +299,12 @@ paired 클라이언트는 선택한 workspace의 operation·event를 복호화�
 연결했다. `workspace_replace_text`는 읽기에서 얻은 SHA-256과 승인 직전·실행 직전 파일을 묶어 기존
 UTF-8 파일 한 개만 atomic replace한다. `workspace_replace_text_batch`는 같은 규칙으로 기존 파일 2~8개,
 전체 48 KiB를 모두 사전검사·fsync 스테이징한 뒤 한 번의 터치 승인으로 교체하고, 정상 runtime 중
-후속 파일의 경합·실패가 생기면 이미 설치한 파일을 원복한다. 민감 파일, 외부 link, secret 형태,
-생성·삭제·이름변경은 막는다. batch 전체의 process-crash atomicity와 복구 UI는 아직 release gate다.
+후속 파일의 경합·실패가 생기면 이미 설치한 파일을 원복한다. `workspace_create_text`는 비어 있는 경로에
+12 KiB 이하 파일 하나를 만들고, `workspace_rename_text`는 읽기 SHA·inode가 고정된 기존 텍스트 파일을
+비어 있는 경로로만 옮긴다. 네 도구는 직렬화되며 앱 전용 0700/0600 strict transaction manifest의
+staging/prepared/committed 단계를 fsync한다. Companion 재시작 시 staging은 폐기, prepared는 원복,
+committed는 roll-forward 정리하고 외부 수정으로 판정이 애매하면 자동 덮어쓰기 없이 초기화를 중단한다.
+민감 파일, 외부 link, secret 형태, 삭제·디렉터리 생성·chmod는 막는다. 수동 복구 UI는 release gate다.
 `project_verify`는 검토한 package SHA와 check/test/build script만 namespace·network-off·secret-mask·
 disposable overlay sandbox에서 실행하고 probe 실패 시 capability 자체를 숨긴다. strict schema, 단일
 함수 호출, 8회 상한과 stateless reasoning replay도 유지한다. 이 checkpoint는 개발용 2.0 source

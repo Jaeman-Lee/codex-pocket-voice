@@ -70,6 +70,7 @@ export interface WebServerOptions {
   journal?: EventJournal;
   approvals?: ApprovalBroker;
   pocketLink?: PocketLinkTlsConfig;
+  workspaceTransactionDirectory?: string;
 }
 
 export interface RunningWebServer {
@@ -134,11 +135,16 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   );
   const approvals = options.approvals ?? new InMemoryApprovalBroker();
   const executionTools = options.providers ? [] : await createWorkspaceExecutionTools(options.paths);
+  const changeTools = options.providers ? [] : await createWorkspaceChangeTools(options.paths, {
+    transactionDirectory: options.workspaceTransactionDirectory
+      ?? process.env.CODEX_POCKET_WORKSPACE_TRANSACTIONS
+      ?? join(dirname(auth.stateFile), "workspace-transactions"),
+  });
   const toolBroker = options.providers
     ? undefined
     : new LocalToolBroker([
         ...createReadOnlyWorkspaceTools(options.paths),
-        ...createWorkspaceChangeTools(options.paths),
+        ...changeTools,
         ...executionTools,
       ], approvals, options.paths);
   const providers = options.providers ?? new ProviderRegistry(options.client, undefined, { toolBroker });

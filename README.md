@@ -25,7 +25,7 @@ rollback 기준선입니다. `2.0.0` 소스는
 - 단말·프로젝트·대화별 로컬 작업 저널과 오프라인 프롬프트 대기열
 - 암호화 Companion event journal과 SSE cursor 기반 네트워크·프로세스 재연결 복구, 프로젝트별 JSON 내보내기·2단계 기록 삭제
 - PC·프로젝트·Git branch/worktree별 실행 상태와 비용을 모아 보는 작업 대시보드, 만료·터치 전용 승인함
-- OpenAI/OpenRouter에서 SHA-256 경쟁 검사를 거친 단일·2~8개 기존 텍스트 파일 교체와 격리된 npm check/test/build
+- OpenAI/OpenRouter에서 SHA-256 경쟁 검사를 거친 단일·2~8개 텍스트 교체, 신규 파일 생성·이름변경과 격리된 npm check/test/build
 - Codex·Claude Code 등을 독립 어댑터로 확장할 수 있는 AI 제공자 모듈
 - 설치 확인·브라우저 로그인·비용 없는 연결 테스트를 모은 AI 연결 센터
 - 이미지 첨부와 영상 업로드, 로컬 Qwen3-VL 4B 대표 장면 분석

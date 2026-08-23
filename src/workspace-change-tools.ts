@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { link, lstat, open, realpath, rename, unlink } from "node:fs/promises";
+import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
 import type { PathPolicy } from "./path-policy.js";
 import { isSensitivePath, redactWorkspaceSecrets } from "./read-only-tools.js";
@@ -9,6 +9,14 @@ import {
   type RegisteredTool,
   type ToolExecutionContext,
 } from "./tool-broker.js";
+import {
+  WorkspaceChangeEngine,
+  type WorkspaceChangeMutation,
+  type WorkspaceCreationPlan,
+  type WorkspaceFileSnapshot,
+  type WorkspaceRenamePlan,
+  type WorkspaceReplacementPlan,
+} from "./workspace-change-engine.js";
 
 const MAX_REPLACEMENT_CHARS = 12_000;
 const MAX_REPLACEMENT_BYTES = 12 * 1024;
@@ -32,47 +40,57 @@ interface BatchReplaceTextInput {
   files: ReplaceTextInput[];
 }
 
-interface LoadedTextFile {
-  target: string;
+interface CreateTextInput {
+  path: string;
   content: string;
-  sha256: string;
-  mode: number;
-  device: number;
-  inode: number;
+}
+
+interface RenameTextInput {
+  sourcePath: string;
+  expectedSha256: string;
+  targetPath: string;
 }
 
 interface ReplacementCandidate {
   input: ReplaceTextInput;
-  current: LoadedTextFile;
+  current: WorkspaceFileSnapshot;
   nextSha256: string;
 }
 
-interface PreparedReplacement extends ReplacementCandidate {
-  temporary: string;
-  backup: string;
-  backupCreated: boolean;
-  installed: boolean;
-}
-
 export interface WorkspaceChangeToolOptions {
+  transactionDirectory: string;
   beforeBatchCommit?: (index: number, path: string) => Promise<void>;
+  afterMutation?: (mutation: WorkspaceChangeMutation, index: number, path: string) => Promise<void>;
 }
 
-export function createWorkspaceChangeTools(
+export async function createWorkspaceChangeTools(
   paths: PathPolicy,
-  options: WorkspaceChangeToolOptions = {},
-): RegisteredTool[] {
-  return [workspaceReplaceTextTool(paths), workspaceReplaceTextBatchTool(paths, options)];
+  options: WorkspaceChangeToolOptions,
+): Promise<RegisteredTool[]> {
+  const engine = await WorkspaceChangeEngine.create(paths, {
+    transactionDirectory: options.transactionDirectory,
+    beforeCommit: options.beforeBatchCommit,
+    afterMutation: options.afterMutation,
+  });
+  return [
+    workspaceReplaceTextTool(paths, engine),
+    workspaceReplaceTextBatchTool(paths, engine),
+    workspaceCreateTextTool(paths, engine),
+    workspaceRenameTextTool(paths, engine),
+  ];
 }
 
-function workspaceReplaceTextTool(paths: PathPolicy): RegisteredTool<ReplaceTextInput> {
+function workspaceReplaceTextTool(
+  paths: PathPolicy,
+  engine: WorkspaceChangeEngine,
+): RegisteredTool<ReplaceTextInput> {
   return {
     definition: {
       name: "workspace_replace_text",
       description: [
         "Replace one existing text file inside the selected project after explicit user approval.",
         "Pass the sha256 returned by workspace_read so concurrent or unseen changes are never overwritten.",
-        "This first write milestone cannot create, delete, rename, chmod, or modify sensitive files.",
+        "The transaction is crash-recoverable and cannot delete, chmod, or modify sensitive files.",
       ].join(" "),
       inputSchema: strictObject(replacementProperties(), ["path", "expected_sha256", "content"]),
       risk: "change",
@@ -99,7 +117,7 @@ function workspaceReplaceTextTool(paths: PathPolicy): RegisteredTool<ReplaceText
     async execute(input, context) {
       const candidates = await loadReplacementCandidates(paths, [input], context);
       const { current, nextSha256 } = candidates[0]!;
-      const transaction = await replaceLoadedFiles(candidates, context.signal);
+      const transaction = await engine.replace(candidates.map(replacementPlan), context.signal);
       return {
         path: input.path,
         previousSha256: current.sha256,
@@ -113,7 +131,7 @@ function workspaceReplaceTextTool(paths: PathPolicy): RegisteredTool<ReplaceText
 
 function workspaceReplaceTextBatchTool(
   paths: PathPolicy,
-  options: WorkspaceChangeToolOptions,
+  engine: WorkspaceChangeEngine,
 ): RegisteredTool<BatchReplaceTextInput> {
   return {
     definition: {
@@ -121,8 +139,8 @@ function workspaceReplaceTextBatchTool(
       description: [
         `Replace ${2}-${MAX_BATCH_FILES} existing text files inside the selected project after one explicit approval.`,
         "Pass the sha256 returned by workspace_read for every file.",
-        "All files are checked and staged before commit; a detected race or runtime failure rolls back files already installed.",
-        "This tool cannot create, delete, rename, chmod, or modify sensitive files.",
+        "All files are checked and staged before commit; runtime failure or process restart rolls back an incomplete transaction.",
+        "This tool cannot delete, chmod, or modify sensitive files.",
       ].join(" "),
       inputSchema: strictObject({
         files: {
@@ -172,11 +190,7 @@ function workspaceReplaceTextBatchTool(
     },
     async execute(input, context) {
       const candidates = await loadReplacementCandidates(paths, input.files, context);
-      const transaction = await replaceLoadedFiles(
-        candidates,
-        context.signal,
-        options.beforeBatchCommit,
-      );
+      const transaction = await engine.replace(candidates.map(replacementPlan), context.signal);
       const files = candidates.map((candidate) => ({
         path: candidate.input.path,
         previousSha256: candidate.current.sha256,
@@ -193,6 +207,120 @@ function workspaceReplaceTextBatchTool(
   };
 }
 
+function workspaceCreateTextTool(
+  paths: PathPolicy,
+  engine: WorkspaceChangeEngine,
+): RegisteredTool<CreateTextInput> {
+  return {
+    definition: {
+      name: "workspace_create_text",
+      description: [
+        "Create one new UTF-8 text file in an existing project directory after explicit user approval.",
+        "The destination must still be absent when committed and is never overwritten.",
+        "The transaction is crash-recoverable and cannot create directories, chmod, or write sensitive paths or secrets.",
+      ].join(" "),
+      inputSchema: strictObject({
+        path: { type: "string", minLength: 1, maxLength: 500, description: "Project-relative new text file." },
+        content: { type: "string", maxLength: MAX_REPLACEMENT_CHARS, description: "Complete new UTF-8 text." },
+      }, ["path", "content"]),
+      risk: "change",
+    },
+    validate(input) {
+      const value = exactObject(input, ["path", "content"]);
+      return {
+        path: validateChangePath(value.path),
+        content: validateTextContent(value.content, "content"),
+      };
+    },
+    async approval(input, context) {
+      const plan = await loadCreationPlan(paths, input, context);
+      const preview = creationDiff(input.path, input.content);
+      return {
+        redactedSummary: `Create text file ${input.path}`,
+        redactedDetails: {
+          path: input.path,
+          nextSha256: plan.nextSha256,
+          bytes: Buffer.byteLength(input.content, "utf8"),
+          mode: "0644",
+          changedLines: preview.changedLines,
+          diff: preview.diff,
+          diffTruncated: preview.truncated,
+        },
+        requiresTouch: true,
+      };
+    },
+    async execute(input, context) {
+      const plan = await loadCreationPlan(paths, input, context);
+      const transaction = await engine.createFile(plan, context.signal);
+      return {
+        path: input.path,
+        sha256: plan.nextSha256,
+        bytes: Buffer.byteLength(input.content, "utf8"),
+        mode: "0644",
+        ...(transaction.cleanupPending ? { cleanupPending: true } : {}),
+      };
+    },
+  };
+}
+
+function workspaceRenameTextTool(
+  paths: PathPolicy,
+  engine: WorkspaceChangeEngine,
+): RegisteredTool<RenameTextInput> {
+  return {
+    definition: {
+      name: "workspace_rename_text",
+      description: [
+        "Rename one existing UTF-8 text file to an absent path after explicit user approval.",
+        "Pass the sha256 returned by workspace_read; the source and destination are rechecked at commit.",
+        "The transaction is crash-recoverable and cannot overwrite, create directories, chmod, or touch sensitive paths.",
+      ].join(" "),
+      inputSchema: strictObject({
+        source_path: { type: "string", minLength: 1, maxLength: 500 },
+        expected_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+        target_path: { type: "string", minLength: 1, maxLength: 500 },
+      }, ["source_path", "expected_sha256", "target_path"]),
+      risk: "change",
+    },
+    validate(input) {
+      const value = exactObject(input, ["source_path", "expected_sha256", "target_path"]);
+      const sourcePath = validateChangePath(value.source_path);
+      const targetPath = validateChangePath(value.target_path);
+      if (sourcePath === targetPath) throw new ToolBrokerError(400, "Rename source and destination must differ");
+      if (typeof value.expected_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(value.expected_sha256)) {
+        throw new ToolBrokerError(400, "expected_sha256 must be a lowercase SHA-256 digest");
+      }
+      return { sourcePath, expectedSha256: value.expected_sha256, targetPath };
+    },
+    async approval(input, context) {
+      const plan = await loadRenamePlan(paths, input, context);
+      return {
+        redactedSummary: `Rename ${input.sourcePath} to ${input.targetPath}`,
+        redactedDetails: {
+          sourcePath: input.sourcePath,
+          targetPath: input.targetPath,
+          expectedSha256: plan.current.sha256,
+          bytes: Buffer.byteLength(plan.current.content, "utf8"),
+          diff: renameDiff(input.sourcePath, input.targetPath),
+          diffTruncated: false,
+        },
+        requiresTouch: true,
+      };
+    },
+    async execute(input, context) {
+      const plan = await loadRenamePlan(paths, input, context);
+      const transaction = await engine.renameFile(plan, context.signal);
+      return {
+        sourcePath: input.sourcePath,
+        targetPath: input.targetPath,
+        sha256: plan.current.sha256,
+        bytes: Buffer.byteLength(plan.current.content, "utf8"),
+        ...(transaction.cleanupPending ? { cleanupPending: true } : {}),
+      };
+    },
+  };
+}
+
 function replacementProperties(): Record<string, unknown> {
   return {
     path: { type: "string", minLength: 1, maxLength: 500, description: "Project-relative existing text file." },
@@ -202,23 +330,15 @@ function replacementProperties(): Record<string, unknown> {
 }
 
 function validateReplacement(value: Record<string, unknown>): ReplaceTextInput {
-  const requestedPath = requiredSafeRelativePath(value.path);
-  if (isSensitivePath(requestedPath)) {
-    throw new ToolBrokerError(403, "Sensitive workspace files cannot be modified by API tools");
-  }
+  const requestedPath = validateChangePath(value.path);
   if (typeof value.expected_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(value.expected_sha256)) {
     throw new ToolBrokerError(400, "expected_sha256 must be a lowercase SHA-256 digest");
   }
-  if (typeof value.content !== "string" || value.content.length > MAX_REPLACEMENT_CHARS) {
-    throw new ToolBrokerError(400, `content must be UTF-8 text up to ${MAX_REPLACEMENT_CHARS} characters`);
-  }
-  if (value.content.includes("\0") || Buffer.byteLength(value.content, "utf8") > MAX_REPLACEMENT_BYTES) {
-    throw new ToolBrokerError(400, "content exceeds the safe UTF-8 size limit or contains a null byte");
-  }
-  if (redactWorkspaceSecrets(value.content) !== value.content) {
-    throw new ToolBrokerError(403, "Replacement content appears to contain a credential or private key");
-  }
-  return { path: requestedPath, expectedSha256: value.expected_sha256, content: value.content };
+  return {
+    path: requestedPath,
+    expectedSha256: value.expected_sha256,
+    content: validateTextContent(value.content, "content"),
+  };
 }
 
 async function loadReplacementCandidates(
@@ -241,13 +361,13 @@ async function loadTextFile(
   paths: PathPolicy,
   input: ReplaceTextInput,
   context: ToolExecutionContext,
-): Promise<LoadedTextFile> {
+): Promise<WorkspaceFileSnapshot> {
   if (context.signal?.aborted) throw new ToolBrokerError(499, "Tool execution was cancelled");
-  const cwd = await paths.resolveWorkspace(context.cwd);
-  const requested = path.join(cwd, input.path);
-  const direct = await lstat(requested).catch(() => null);
+  const workspace = await paths.resolveWorkspace(context.cwd);
+  const requested = path.join(workspace, input.path);
+  const direct = await lstatOrNull(requested);
   if (!direct?.isFile() || direct.isSymbolicLink() || direct.nlink !== 1) {
-    throw new ToolBrokerError(400, "workspace_replace_text requires one existing regular non-linked file");
+    throw new ToolBrokerError(400, "Workspace text changes require one existing regular non-linked file");
   }
   const target = await realpath(requested);
   if (target !== requested) throw new ToolBrokerError(403, "Symlinked path components cannot be modified");
@@ -275,6 +395,8 @@ async function loadTextFile(
     throw new ToolBrokerError(400, "Existing file is not valid UTF-8 text");
   }
   return {
+    workspace,
+    path: input.path,
     target,
     content,
     sha256: createHash("sha256").update(bytes).digest("hex"),
@@ -284,129 +406,79 @@ async function loadTextFile(
   };
 }
 
-function assertExpectedVersion(input: ReplaceTextInput, current: LoadedTextFile): void {
+function assertExpectedVersion(input: ReplaceTextInput, current: WorkspaceFileSnapshot): void {
   if (current.sha256 !== input.expectedSha256) {
     throw new ToolBrokerError(409, "File changed after it was read; read it again before proposing a replacement");
   }
 }
 
-async function replaceLoadedFiles(
-  candidates: readonly ReplacementCandidate[],
-  signal?: AbortSignal,
-  beforeCommit?: (index: number, path: string) => Promise<void>,
-): Promise<{ cleanupPending: boolean }> {
-  const transactionId = randomUUID();
-  const prepared: PreparedReplacement[] = candidates.map((candidate, index) => ({
-    ...candidate,
-    temporary: path.join(path.dirname(candidate.current.target), `.codex-pocket-${transactionId}-${index}.tmp`),
-    backup: path.join(path.dirname(candidate.current.target), `.codex-pocket-${transactionId}-${index}.bak`),
-    backupCreated: false,
-    installed: false,
-  }));
-  try {
-    for (const item of prepared) await stageReplacement(item, signal);
-    for (let index = 0; index < prepared.length; index += 1) {
-      const item = prepared[index]!;
-      await beforeCommit?.(index, item.input.path);
-      if (signal?.aborted) throw new ToolBrokerError(499, "Tool execution was cancelled");
-      await link(item.current.target, item.backup);
-      item.backupCreated = true;
-      await assertLinkedOriginal(item.backup, item.current);
-      await rename(item.temporary, item.current.target);
-      item.installed = true;
-    }
-    await syncDirectories(prepared.map((item) => path.dirname(item.current.target)));
-  } catch (error) {
-    let rollbackFailed = false;
-    for (const item of [...prepared].reverse()) {
-      if (item.backupCreated) {
-        try {
-          if (item.installed) await rename(item.backup, item.current.target);
-          else await unlink(item.backup);
-          item.backupCreated = false;
-          item.installed = false;
-        } catch {
-          rollbackFailed = true;
-        }
-      }
-      if (!item.installed) await unlink(item.temporary).catch(() => undefined);
-    }
-    await syncDirectories(prepared.map((item) => path.dirname(item.current.target))).catch(() => {
-      rollbackFailed = true;
-    });
-    if (rollbackFailed) {
-      throw new ToolBrokerError(500, "Replacement rollback could not be completed safely; preserved backups require recovery");
-    }
-    throw error;
-  }
+function replacementPlan(candidate: ReplacementCandidate): WorkspaceReplacementPlan {
+  return { current: candidate.current, content: candidate.input.content, nextSha256: candidate.nextSha256 };
+}
 
-  let cleanupPending = false;
-  for (const item of prepared) {
-    if (!item.backupCreated) continue;
-    try {
-      await unlink(item.backup);
-      item.backupCreated = false;
-    } catch {
-      cleanupPending = true;
-    }
+async function loadCreationPlan(
+  paths: PathPolicy,
+  input: CreateTextInput,
+  context: ToolExecutionContext,
+): Promise<WorkspaceCreationPlan> {
+  if (context.signal?.aborted) throw new ToolBrokerError(499, "Tool execution was cancelled");
+  const destination = await loadAbsentDestination(paths, context.cwd, input.path);
+  return {
+    ...destination,
+    content: input.content,
+    nextSha256: digest(input.content),
+    mode: 0o644,
+  };
+}
+
+async function loadRenamePlan(
+  paths: PathPolicy,
+  input: RenameTextInput,
+  context: ToolExecutionContext,
+): Promise<WorkspaceRenamePlan> {
+  const current = await loadTextFile(paths, {
+    path: input.sourcePath,
+    expectedSha256: input.expectedSha256,
+    content: "",
+  }, context);
+  assertExpectedVersion({
+    path: input.sourcePath,
+    expectedSha256: input.expectedSha256,
+    content: "",
+  }, current);
+  if (redactWorkspaceSecrets(current.content) !== current.content) {
+    throw new ToolBrokerError(403, "Secret-bearing text files cannot be renamed by API tools");
   }
-  await syncDirectories(prepared.map((item) => path.dirname(item.current.target))).catch(() => {
-    cleanupPending = true;
+  const destination = await loadAbsentDestination(paths, context.cwd, input.targetPath);
+  if (destination.workspace !== current.workspace) {
+    throw new ToolBrokerError(400, "Rename must stay inside one workspace");
+  }
+  return { current, targetPath: input.targetPath, target: destination.target };
+}
+
+async function loadAbsentDestination(
+  paths: PathPolicy,
+  cwd: string,
+  requestedPath: string,
+): Promise<{ workspace: string; path: string; target: string }> {
+  const workspace = await paths.resolveWorkspace(cwd);
+  const target = path.join(workspace, requestedPath);
+  const parent = path.dirname(target);
+  const directParent = await lstatOrNull(parent);
+  if (!directParent?.isDirectory() || directParent.isSymbolicLink()) {
+    throw new ToolBrokerError(400, "Destination parent must be an existing regular project directory");
+  }
+  const canonicalParent = await realpath(parent);
+  if (canonicalParent !== parent) throw new ToolBrokerError(403, "Symlinked destination parents cannot be modified");
+  if (await lstatOrNull(target)) throw new ToolBrokerError(409, "Destination path already exists");
+  return { workspace, path: requestedPath, target };
+}
+
+async function lstatOrNull(target: string): Promise<Awaited<ReturnType<typeof lstat>> | null> {
+  return lstat(target).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw new ToolBrokerError(400, "Workspace path could not be inspected");
   });
-  return { cleanupPending };
-}
-
-async function stageReplacement(item: PreparedReplacement, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) throw new ToolBrokerError(499, "Tool execution was cancelled");
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
-  try {
-    handle = await open(item.temporary, "wx", 0o600);
-    await handle.writeFile(item.input.content, "utf8");
-    await handle.sync();
-    await handle.chmod(item.current.mode);
-    await handle.close();
-    handle = undefined;
-    if (signal?.aborted) throw new ToolBrokerError(499, "Tool execution was cancelled");
-  } catch (error) {
-    await handle?.close().catch(() => undefined);
-    await unlink(item.temporary).catch(() => undefined);
-    throw error;
-  }
-}
-
-async function assertLinkedOriginal(backup: string, expected: LoadedTextFile): Promise<void> {
-  const direct = await lstat(backup).catch(() => null);
-  if (!direct?.isFile() || direct.isSymbolicLink() || direct.nlink !== 2
-      || direct.dev !== expected.device || direct.ino !== expected.inode) {
-    throw new ToolBrokerError(409, "File changed while the approved replacement was being committed");
-  }
-  const file = await open(backup, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => {
-    throw new ToolBrokerError(409, "File changed while the approved replacement was being committed");
-  });
-  try {
-    const opened = await file.stat();
-    if (!opened.isFile() || opened.nlink !== 2 || opened.dev !== expected.device || opened.ino !== expected.inode
-        || opened.size > MAX_EXISTING_BYTES) {
-      throw new ToolBrokerError(409, "File changed while the approved replacement was being committed");
-    }
-    const bytes = await file.readFile();
-    if (createHash("sha256").update(bytes).digest("hex") !== expected.sha256) {
-      throw new ToolBrokerError(409, "File changed while the approved replacement was being committed");
-    }
-  } finally {
-    await file.close();
-  }
-}
-
-async function syncDirectories(directories: readonly string[]): Promise<void> {
-  for (const directoryPath of [...new Set(directories)].sort()) {
-    const directory = await open(directoryPath, "r");
-    try {
-      await directory.sync();
-    } finally {
-      await directory.close();
-    }
-  }
 }
 
 function replacementDiff(file: string, before: string, after: string): {
@@ -439,6 +511,35 @@ function replacementDiff(file: string, before: string, after: string): {
   if (charTruncated) diff = diff.slice(0, MAX_DIFF_CHARS);
   if (lineTruncated || charTruncated) diff += "\n[diff truncated]";
   return { diff, changedLines: Math.max(removed.length, added.length), truncated: lineTruncated || charTruncated };
+}
+
+function creationDiff(file: string, content: string): {
+  diff: string;
+  changedLines: number;
+  truncated: boolean;
+} {
+  const added = content.split("\n");
+  const body = [
+    "--- /dev/null",
+    `+++ b/${file}`,
+    `@@ -0,0 +1,${added.length} @@`,
+    ...added.map((line) => `+${line}`),
+  ];
+  const lineTruncated = body.length > MAX_DIFF_LINES;
+  let diff = redactWorkspaceSecrets(body.slice(0, MAX_DIFF_LINES).join("\n"));
+  const charTruncated = diff.length > MAX_DIFF_CHARS;
+  if (charTruncated) diff = diff.slice(0, MAX_DIFF_CHARS);
+  if (lineTruncated || charTruncated) diff += "\n[diff truncated]";
+  return { diff, changedLines: added.length, truncated: lineTruncated || charTruncated };
+}
+
+function renameDiff(sourcePath: string, targetPath: string): string {
+  return [
+    `diff --git a/${sourcePath} b/${targetPath}`,
+    "similarity index 100%",
+    `rename from ${sourcePath}`,
+    `rename to ${targetPath}`,
+  ].join("\n");
 }
 
 function batchReplacementDiff(candidates: readonly ReplacementCandidate[]): {
@@ -510,6 +611,27 @@ function exactObject(input: unknown, allowed: string[]): Record<string, unknown>
   const value = input as Record<string, unknown>;
   if (Object.keys(value).some((key) => !allowed.includes(key))) {
     throw new ToolBrokerError(400, "Tool input contains unsupported fields");
+  }
+  return value;
+}
+
+function validateChangePath(value: unknown): string {
+  const requestedPath = requiredSafeRelativePath(value);
+  if (isSensitivePath(requestedPath)) {
+    throw new ToolBrokerError(403, "Sensitive workspace files cannot be modified by API tools");
+  }
+  return requestedPath;
+}
+
+function validateTextContent(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length > MAX_REPLACEMENT_CHARS) {
+    throw new ToolBrokerError(400, `${label} must be UTF-8 text up to ${MAX_REPLACEMENT_CHARS} characters`);
+  }
+  if (value.includes("\0") || Buffer.byteLength(value, "utf8") > MAX_REPLACEMENT_BYTES) {
+    throw new ToolBrokerError(400, `${label} exceeds the safe UTF-8 size limit or contains a null byte`);
+  }
+  if (redactWorkspaceSecrets(value) !== value) {
+    throw new ToolBrokerError(403, `${label} appears to contain a credential or private key`);
   }
   return value;
 }
