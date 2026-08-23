@@ -10,4 +10,8 @@ test("real codex app-server initializes and lists threads without starting a mod
   assert.match(initialized.userAgent, /codex/i);
   const listed = await client.listThreads(1);
   assert.ok(Array.isArray(listed.data));
+  if (listed.data[0]) {
+    const released = await client.unsubscribeThread(listed.data[0].id);
+    assert.ok(["notLoaded", "notSubscribed", "unsubscribed"].includes(released.status));
+  }
 });

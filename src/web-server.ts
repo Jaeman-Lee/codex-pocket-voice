@@ -7,6 +7,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, sep } from "nod
 import { TLSSocket } from "node:tls";
 import type { ThreadListResponse } from "../generated/app-server/v2/ThreadListResponse";
 import type { ThreadReadResponse } from "../generated/app-server/v2/ThreadReadResponse";
+import type { ThreadUnsubscribeResponse } from "../generated/app-server/v2/ThreadUnsubscribeResponse";
 import type { CodexProviderClient } from "./providers/codex-provider.js";
 import type { ProviderEvent } from "./providers/types.js";
 import { PathPolicy } from "./path-policy.js";
@@ -60,6 +61,7 @@ const STATIC_FILES = new Map([
 export interface WebCodexClient extends CodexProviderClient {
   listThreads(limit?: number, searchTerm?: string): Promise<ThreadListResponse>;
   readThread(threadId: string, includeTurns?: boolean): Promise<ThreadReadResponse>;
+  unsubscribeThread(threadId: string): Promise<ThreadUnsubscribeResponse>;
 }
 
 export interface WebServerOptions {
@@ -170,6 +172,16 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
         operation: publicOperation(event.operation),
       };
       appendAndBroadcast(journal, sseClients, event.operation.id, event.operation.cwd, publicEvent);
+      if ((event.action === "completed" || event.action === "failed")
+          && event.operation.providerId === "codex"
+          && handoffs.current({
+            workspace: event.operation.cwd,
+            threadId: event.operation.conversationId,
+          })) {
+        void options.client.unsubscribeThread(event.operation.conversationId).catch((error) => {
+          process.stderr.write(`[codex-session-handoff] Could not release completed thread writer: ${safeInternalError(error)}\n`);
+        });
+      }
       return;
     }
     const forwarded = sanitizeNotification(event.event);
@@ -611,6 +623,9 @@ async function handleApi(
     if (operation && (operation.conversationId !== threadId || operation.cwd !== workspace)) {
       throw new HttpError(409, "Operation does not belong to this session");
     }
+    const unsubscribe = operation?.status === "running"
+      ? null
+      : await options.client.unsubscribeThread(threadId);
     const handoff = await handoffs.release({
       workspace,
       threadId,
@@ -621,6 +636,7 @@ async function handleApi(
     sendJson(response, 201, {
       handoff,
       operation: operation ? publicOperation(operation) : null,
+      threadUnsubscribeStatus: unsubscribe?.status ?? null,
     });
     return;
   }

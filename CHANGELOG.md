@@ -132,6 +132,10 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   manifest/APK/SBOM hash와 더 높은 versionCode만 허용한다. 검증된 APK는 random token과 함께 10분간
   private cache에 두고 설치 직전 다시 hash를 확인한다. 두 번째 터치 뒤에도 Android unknown-source와
   package installer의 사용자 승인을 요구하며 URL 자동 다운로드·background·무인 설치는 하지 않는다.
+- 세션 반납이 workspace와 thread를 server에서 다시 검증한 뒤 idle Codex thread를 app-server에서
+  `thread/unsubscribe`한다. 실행 중 handoff는 turn을 중단하지 않고 완료·실패 이벤트 뒤 같은
+  workspace/thread handoff가 남아 있을 때 자동 unsubscribe하여 터미널의 `codex resume` writer 충돌을
+  해소한다.
 - opt-in PocketLink LAN TLS listener를 추가했다. Companion은 `0700` 디렉터리의 `0600` 단일-link
   private key, certificate/key 일치, 유효기간과 advertise host를 검증하고 TLS 1.2/1.3으로만 듣는다.
   Android `connectedDevice` foreground service는 Keystore AES-GCM으로 host·port·기본/교체용 SPKI pin을

@@ -299,6 +299,7 @@ function unusedCodexClient(): WebCodexClient & CodexProviderClient {
     async readThread() { throw new Error("not used"); },
     async beginTurn() { throw new Error("not used"); },
     async interrupt() { throw new Error("not used"); },
+    async unsubscribeThread() { return { status: "notLoaded" }; },
     subscribe() { return () => undefined; },
   };
 }

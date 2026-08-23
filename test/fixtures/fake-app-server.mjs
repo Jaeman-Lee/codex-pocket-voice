@@ -97,6 +97,9 @@ rl.on("line", (line) => {
     case "turn/interrupt":
       write({ id: message.id, result: {} });
       break;
+    case "thread/unsubscribe":
+      write({ id: message.id, result: { status: "unsubscribed" } });
+      break;
     default:
       write({ id: message.id, error: { code: -32601, message: `unknown ${message.method}` } });
   }

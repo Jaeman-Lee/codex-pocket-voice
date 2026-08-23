@@ -24,7 +24,7 @@
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환, operation UI 상태 모듈 구현; 나머지 App 상태 분리 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
-| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in native 알림·retained run 열기 구현; process-death background 알림·실기기 acceptance 잔여 |
+| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe 구현; process-death background 알림·실기기 acceptance 잔여 |
 | Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, signed update manifest·offline/native ZIP verifier와 user-confirmed installer 구현; release discovery/download, discovery/P2P·relay·background release gate 잔여 |
 
 ## 2. 제품 정의

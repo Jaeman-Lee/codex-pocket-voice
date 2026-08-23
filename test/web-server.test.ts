@@ -536,6 +536,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(released.handoff.threadId, "thread-web");
   assert.equal(released.handoff.operationId, operationId);
   assert.equal(released.operation.status, "running");
+  assert.equal(released.threadUnsubscribeStatus, null);
   assert.equal(fake.interrupted, undefined);
   const availableHandoff = await jsonFetch(`${base}/api/session/handoff`, { headers: authorized() });
   assert.equal(availableHandoff.handoff.id, released.handoff.id);
@@ -545,18 +546,6 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
     { headers: authorized() },
   );
   assert.equal(unrelatedHandoff.handoff, null);
-  const claimed = await jsonFetch(`${base}/api/session/handoffs/${released.handoff.id}/claim`, {
-    method: "POST",
-    headers: authorized({ "Content-Type": "application/json", Origin: base }),
-    body: "{}",
-  });
-  assert.equal(claimed.claimed.id, released.handoff.id);
-  const clearedHandoff = await jsonFetch(
-    `${base}/api/session/handoff?workspace=${encodeURIComponent(cwd)}`,
-    { headers: authorized() },
-  );
-  assert.equal(clearedHandoff.handoff, null);
-
   const interrupted = await jsonFetch(`${base}/api/runs/${operationId}/interrupt`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: base }),
@@ -569,6 +558,32 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   await waitFor(async () => {
     const operation = await jsonFetch(`${base}/api/runs/${operationId}`, { headers: authorized() });
     return operation.operation.status === "interrupted";
+  });
+  await waitFor(async () => fake.unsubscribed.length === 1);
+  assert.deepEqual(fake.unsubscribed, ["thread-web"]);
+  const claimed = await jsonFetch(`${base}/api/session/handoffs/${released.handoff.id}/claim`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: "{}",
+  });
+  assert.equal(claimed.claimed.id, released.handoff.id);
+  const clearedHandoff = await jsonFetch(
+    `${base}/api/session/handoff?workspace=${encodeURIComponent(cwd)}`,
+    { headers: authorized() },
+  );
+  assert.equal(clearedHandoff.handoff, null);
+
+  const idleRelease = await jsonFetch(`${base}/api/session/handoff`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ workspace: cwd, threadId: "thread-web" }),
+  });
+  assert.equal(idleRelease.threadUnsubscribeStatus, "unsubscribed");
+  assert.deepEqual(fake.unsubscribed, ["thread-web", "thread-web"]);
+  await jsonFetch(`${base}/api/session/handoffs/${idleRelease.handoff.id}/claim`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: "{}",
   });
   const archived = await jsonFetch(`${base}/api/runs/${operationId}/metadata`, {
     method: "PATCH",
@@ -714,6 +729,7 @@ test("gateway restart persists unknown-operation acknowledgement and replays it"
 class FakeWebClient implements WebCodexClient {
   lastRun?: RunTurnOptions;
   interrupted?: [string, string];
+  unsubscribed: string[] = [];
   runsStarted = 0;
   private listeners = new Set<(notification: AppServerNotification) => void>();
   private resolveTurn?: (turn: Turn) => void;
@@ -771,6 +787,11 @@ class FakeWebClient implements WebCodexClient {
 
   async interrupt(threadId: string, turnId: string) {
     this.interrupted = [threadId, turnId];
+  }
+
+  async unsubscribeThread(threadId: string) {
+    this.unsubscribed.push(threadId);
+    return { status: "unsubscribed" as const };
   }
 
   subscribe(listener: (notification: AppServerNotification) => void) {

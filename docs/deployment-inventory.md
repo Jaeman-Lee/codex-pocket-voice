@@ -32,6 +32,13 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | reviewed QR, observed backup-pin server certificate promotion and recoverable Keystore A/B client identity rotation implemented; discovery/P2P, relay and field validation pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | offline verifier and bounded same-signer native ZIP importer/user-confirmed installer implemented; release discovery/download and field rollback pending |
 
+Session writer release checkpoint decision: 기존 handoff가 UI 상태만 떼고 app-server writer를 남기는 결함을
+수정하는 internal compatibility `patch`다. 아직 전달하지 않은 v2 candidate를 교체하므로 SemVer
+`2.0.0`/Android `versionCode 20000`과 대상 `feature/v2-control-plane`을 유지한다. idle handoff는 exact
+workspace/thread 검증 후 즉시 `thread/unsubscribe`하고, running handoff는 작업을 보존한 채 완료·실패 후
+해제한다. 이 checkpoint는 source와 CI-only candidate만 갱신하며 현재 v1 후보 1.8.2 및 rollback 1.8.1
+APK를 변경·삭제하지 않고 실행 중 Companion도 재시작하지 않는다.
+
 Native signed update checkpoint decision: signed ZIP 선택·검토·설치 확인은 새 v2 user workflow이므로 기존
 `breaking`/`2.0.0`, Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지한다. importer는
 current app signer/package와 exact manifest/APK/SBOM, 더 높은 versionCode를 요구하고 10분 private-cache
