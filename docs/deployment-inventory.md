@@ -28,7 +28,7 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation, touch-only approvals and two-touch history deletion implemented; no field APK handed off |
 | Approved API tools | SHA-bound text replace + probed sandbox verifier | existing file only; check/test/build only; arbitrary command, create/delete/rename and network blocked |
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
-| PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | 10-minute reviewed QR and manual registration plus Keystore P-256 device proof implemented; relay/rotation and field validation pending |
+| PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | reviewed QR, Keystore P-256 device proof and observed backup-pin server certificate promotion implemented; relay/client-key rotation and field validation pending |
 
 Read-only tool checkpoint decision: 기존 v2 Provider/Gateway 계약에 새 사용자 기능을 추가하는 2.0
 범위이므로 분류와 버전은 `breaking`/`2.0.0`, 대상 브랜치는 `feature/v2-control-plane`을 유지한다.
@@ -98,6 +98,13 @@ client-certificate/bearer 결합을 추가하지만 v2 전송 계약의 호환 �
 state는 token hash를 보존하고 TLS binding을 만들지 않으며, additive client field를 구버전이 무시할 수
 있도록 schema version 1을 유지한다. source와 CI-only APK만 갱신하며 현장 설치·Companion 재시작·LAN
 노출은 하지 않는다. current 1.8.2, rollback 1.8.1과 Termux/SSH transport를 그대로 보존한다.
+
+PocketLink server-pin rotation checkpoint decision: 기존 연결에 새 backup SPKI pin을 준비하고 실제
+backup pin TLS 성공을 관찰한 뒤 사용자가 두 번 확인해 새 primary로 승격·이전 pin 폐기하는 v2 기능이다.
+이미 정한 전송계층 범위이므로 분류와 버전은 `breaking`/`2.0.0`, Android `versionCode 20000`, 대상
+브랜치는 `feature/v2-control-plane`을 유지한다. 자동 승격·SSH downgrade는 없고 Android native가 최근
+2분 관찰을 다시 검증한다. 이 checkpoint도 source/CI-only이며 APK 전달·설치, Companion 인증서 교체나
+재시작, LAN 노출은 하지 않는다. current 1.8.2와 rollback 1.8.1 세트를 그대로 보존한다.
 
 Update decision: `1.8.0`은 새 교차 기기 세션 흐름과 Companion API를 추가하므로
 `feature`/minor 변경이다. Draft feature PR에서 유지하고 현장 승인 전에는 `main`에 병합하지

@@ -93,9 +93,11 @@ The implementation may reuse appropriately licensed open-source components, but 
 Implementation checkpoint: the v2 branch now has an opt-in Companion TLS 1.2/1.3 LAN listener and an Android
 `connectedDevice` foreground service. The service keeps encrypted host/port/SPKI-pin configuration in Android
 Keystore-backed AES-GCM storage, listens only on loopback, verifies certificate validity plus HTTPS hostname and
-primary/backup SPKI pins, and never silently downgrades to Termux. This is a manual LAN bootstrap; QR discovery,
-The first non-exportable Android P-256 device identity, pairing-bound mTLS proof and reviewed 10-minute QR bootstrap
-are implemented. Relay fallback, rotation UX and field battery/background measurements remain open.
+primary/backup SPKI pins, and never silently downgrades to Termux. The first non-exportable Android P-256 device
+identity, pairing-bound mTLS proof and reviewed 10-minute QR bootstrap are implemented. Server-certificate rotation
+can stage a backup pin, requires an observed successful backup-pin handshake, and uses a two-touch promotion that
+retires the prior pin. LAN discovery/P2P, relay fallback, client-device key rotation and field battery/background
+measurements remain open.
 
 ## Final definition of done
 

@@ -82,6 +82,30 @@ Gateway auth state는 1.8.1 rollback reader가 계속 열 수 있도록 schema v
 않으므로, 이전 토큰을 PocketLink에서 사용하려면 같은 Android device certificate를 제시한 상태로
 pairing code를 다시 입력해야 한다. 기존 loopback/SSH rollback 경로에서는 종전 token 동작을 유지한다.
 
+## 서버 인증서 교체
+
+서버 인증서는 기존 pin을 자동으로 바꾸지 않는 단계식 절차로 교체한다. 실제 배포 전 별도 시험
+Companion과 Android 기기에서 먼저 검증한다.
+
+1. 현재 certificate/key를 덮어쓰지 말고 새 private directory에 새 certificate/key를 만든다. 출력된 새
+   SPKI pin을 PC 화면에서 직접 대조한다.
+2. Android AI 연결 센터에서 대상의 `교체 pin 준비`를 열어 새 pin을 저장한다. 이 시점에는 현재 primary
+   pin이 계속 기본이고 새 값은 backup으로만 Keystore 암호화 설정에 보관된다. 전환을 취소한다면 같은
+   화면의 `준비한 pin 제거`로 backup만 지우고 현재 primary를 유지한다.
+3. 통제된 점검 시간에 Companion을 새 certificate/key로 전환한다. Android에서 해당 대상을 실제로
+   연결해 HTTPS hostname과 새 backup pin을 포함한 TLS handshake를 성공시킨다. 실패하면 승격하지 않고
+   Companion을 이전 certificate/key로 되돌릴 수 있다.
+4. 앱이 `새 인증서 확인됨`을 표시한 뒤 2분 안에 `새 pin 교체 검토`를 누르고, 대상·관찰 시각·폐기
+   경고를 다시 확인한 다음 `새 pin 확정 · 이전 pin 폐기`를 누른다.
+5. native 계층은 같은 local port에서 최근 2분 이내 backup pin TLS 성공을 다시 확인한다. 조건이 맞을
+   뿐 아니라 그 뒤 연결 오류가 없을 때만 backup을 primary로 옮기고 backup field와 이전 primary를
+   제거한 뒤 forwarder를 다시 시작한다.
+
+승격 전에는 기존/신규 인증서를 모두 pin으로 제한해 받아들이지만, 승격 후에는 이전 인증서가 다시
+연결할 수 없다. 성공 기록은 pin 값이 아니라 `primary`/`backup` 슬롯과 관찰 시각만 메모리에 남고 앱
+process가 끝나면 사라진다. 시간 만료·hostname 실패·pin 불일치·설정 오류 때 자동 승격하거나
+Termux/SSH로 downgrade하지 않는다.
+
 Android target SDK 36에서는 외부 Linux 장치와 지속적인 네트워크 연결이므로 `connectedDevice`
 foreground-service type을 사용한다. `dataSync` service는 Android 15+의 시간 제한 대상이라 장시간 SSE
 transport에 사용하지 않는다. 관련 기준은 Android 공식 문서의
@@ -95,7 +119,8 @@ QR-only capture activity를 사용하며 barcode image output을 끈다.
 이 checkpoint는 수동 LAN bootstrap이며 PocketLink의 최종 완료판이 아니다.
 
 - LAN discovery/P2P와 outbound relay fallback 미구현
-- 기기별 key rotation protocol과 certificate 교체 UX/backup pin 승격 미구현
+- Android device identity/client key rotation protocol 미구현
+- 서버 인증서 staged pin 교체는 구현됐지만 실기기·실제 LAN 전환 acceptance 미검증
 - 부팅 후 자동 복구, Android 계측 기반 CPU·메모리·배터리 release gate 미검증
 - 완료·승인·오류 알림 deep link 미구현
 

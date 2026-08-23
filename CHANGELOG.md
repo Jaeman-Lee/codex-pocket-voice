@@ -95,13 +95,18 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   이후 PocketLink 요청에서 인증서 누락·만료·pin 불일치를 거부한다. 기존 v1 auth state는 version을
   바꾸지 않는 선택 필드로 확장하고 TLS binding을 임의로 만들지 않으며, TLS session resume을 꺼 매
   연결에서 새 proof를 요구한다.
-- 이 PocketLink checkpoint는 수동 LAN bootstrap이다. QR/discovery, relay, 자동 key rotation,
+- 이 PocketLink checkpoint는 수동 LAN bootstrap이다. discovery/P2P, relay, client-device key rotation,
   background 계측은 남아 있으며 Termux/SSH를 검증된 rollback adapter로 유지한다.
 - PocketLink QR bootstrap을 추가했다. TTY Companion은 host·TLS port·server SPKI pin·device ID/name과
   기존 10분 pairing code만 담은 QR을 출력하고 Provider key·프로젝트 경로는 포함하지 않는다. Android는
   Apache-2.0 ZXing embedded scanner를 로컬에서 QR_CODE 전용·이미지 미저장·2분 timeout으로 실행한다.
   앱은 2,048자/고정 field/version/host/port/pin/code/device/만료를 검증하고 등록 전 내용을 다시 보여준다.
   사용자가 host·port·pin을 편집하거나 실제 Companion device ID가 QR과 다르면 QR code를 폐기한다.
+- 기존 PocketLink 연결에 새 server backup SPKI pin을 준비하는 화면과 staged 인증서 교체를 추가했다.
+  새 pin은 실제 HTTPS hostname/pin TLS handshake가 성공해도 자동 승격되지 않는다. 앱은 성공 슬롯과
+  시각만 표시하고, 사용자가 2분 안에 대상·폐기 경고를 두 번 확인해야 native 계층이 새 pin을 primary로
+  옮기고 이전 pin을 제거한다. 전환 취소 시에는 staged backup pin만 제거할 수 있으며, 실패·시간 만료
+  때는 승격하거나 SSH로 우회하지 않는다.
 - 이 기준선은 CI·개발용이며 v1.8.1 설치본이나 실행 중인 Companion을 교체하지 않는다.
 
 ## 1.8.2 hotfix candidate — project-scoped session handoff

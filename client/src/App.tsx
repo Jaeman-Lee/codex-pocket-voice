@@ -23,6 +23,7 @@ import {
   type NativeSpeechError,
   type NativeSpeechResult,
   type NativeSpeechState,
+  type PocketLinkStatus,
 } from "./native";
 import { mergeSpeechSegments } from "./speech-utils";
 import { OperationsDashboard } from "./OperationsDashboard";
@@ -38,6 +39,11 @@ import {
   matchesPocketLinkConnection,
   type PendingPocketLinkBootstrap,
 } from "./pocket-link-pairing";
+import {
+  isRecentBackupPinObservation,
+  pocketLinkSecurityStatus,
+  POCKET_LINK_PIN_PROMOTION_MAX_AGE_MS,
+} from "./pocket-link-rotation";
 import type {
   ChatMessage,
   ApprovalItem,
@@ -175,6 +181,13 @@ export function App() {
   const [newPocketLinkBackupPin, setNewPocketLinkBackupPin] = useState("");
   const [scanningPocketLinkQr, setScanningPocketLinkQr] = useState(false);
   const [pendingPocketLinkBootstrap, setPendingPocketLinkBootstrap] = useState<PendingPocketLinkBootstrap | null>(null);
+  const [pocketLinkStatuses, setPocketLinkStatuses] = useState<Partial<Record<DeviceId, PocketLinkStatus>>>({});
+  const [pocketLinkStatusRevision, setPocketLinkStatusRevision] = useState(0);
+  const [stagingPinTarget, setStagingPinTarget] = useState<DeviceId | null>(null);
+  const [stagedBackupPin, setStagedBackupPin] = useState("");
+  const [stagingPinBusy, setStagingPinBusy] = useState(false);
+  const [confirmingPinPromotionTarget, setConfirmingPinPromotionTarget] = useState<DeviceId | null>(null);
+  const [promotingPinTarget, setPromotingPinTarget] = useState<DeviceId | null>(null);
   const [uiLanguage, setUiLanguage] = useState<UiLanguage>(initialUiLanguage);
   const [speechLanguage, setSpeechLanguage] = useState(initialSpeechLanguage);
   const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null);
@@ -238,6 +251,21 @@ export function App() {
   useEffect(() => { operationRef.current = operation; }, [operation]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { handsFreeRef.current = handsFree; }, [handsFree]);
+  useEffect(() => {
+    if (showConnectionCenter && isNativeApp()) void refreshPocketLinkStatuses(deviceTargets);
+  }, [showConnectionCenter, deviceTargets]);
+  useEffect(() => {
+    if (!showConnectionCenter) return;
+    const nextExpiration = Object.values(pocketLinkStatuses)
+      .flatMap((status) => status?.pinSlot === "backup" && typeof status.pinObservedAt === "number"
+        ? [status.pinObservedAt + POCKET_LINK_PIN_PROMOTION_MAX_AGE_MS + 1 - Date.now()]
+        : [])
+      .filter((delay) => delay > 0)
+      .sort((left, right) => left - right)[0];
+    if (nextExpiration === undefined) return;
+    const timer = window.setTimeout(() => setPocketLinkStatusRevision((current) => current + 1), nextExpiration);
+    return () => window.clearTimeout(timer);
+  }, [showConnectionCenter, pocketLinkStatuses, pocketLinkStatusRevision]);
   useEffect(() => {
     speechLanguageRef.current = speechLanguage;
     localStorage.setItem("codex-pocket-speech-language", speechLanguage);
@@ -1289,6 +1317,9 @@ export function App() {
 
   function closeConnectionCenter() {
     localStorage.setItem("codex-pocket-onboarding-complete", "true");
+    setStagingPinTarget(null);
+    setStagedBackupPin("");
+    setConfirmingPinPromotionTarget(null);
     setShowConnectionCenter(false);
   }
 
@@ -1824,6 +1855,109 @@ export function App() {
     setPendingPocketLinkBootstrap(null);
   }
 
+  async function refreshPocketLinkStatuses(targets = listDeviceTargets()) {
+    if (!isNativeApp()) {
+      setPocketLinkStatuses({});
+      return;
+    }
+    const statuses = await Promise.all(targets
+      .filter((target) => target.kind === "linux" && target.transport === "pocketlink")
+      .map(async (target) => {
+        try {
+          return [target.id, await NativeTunnel.status({ localPort: deviceTargetLocalPort(target) })] as const;
+        } catch {
+          return [target.id, {
+            configured: true,
+            running: false,
+            transport: "pocketlink",
+            error: "상태를 확인할 수 없습니다.",
+          } satisfies PocketLinkStatus] as const;
+        }
+      }));
+    setPocketLinkStatuses(Object.fromEntries(statuses));
+  }
+
+  function reviewPocketLinkPinPromotion(target: DeviceTarget) {
+    if (!isRecentBackupPinObservation(pocketLinkStatuses[target.id])) {
+      showToast("최근 2분 안에 교체용 pin으로 성공한 연결을 먼저 확인해 주세요.");
+      void refreshPocketLinkStatuses(deviceTargets);
+      return;
+    }
+    setStagingPinTarget(null);
+    setStagedBackupPin("");
+    setConfirmingPinPromotionTarget(target.id);
+  }
+
+  function openPocketLinkPinStaging(target: DeviceTarget) {
+    setConfirmingPinPromotionTarget(null);
+    setStagingPinTarget(target.id);
+    setStagedBackupPin("");
+  }
+
+  function closePocketLinkPinStaging() {
+    if (stagingPinBusy) return;
+    setStagingPinTarget(null);
+    setStagedBackupPin("");
+  }
+
+  async function stagePocketLinkBackupPin(target: DeviceTarget) {
+    if (stagingPinBusy || !isPocketLinkPin(stagedBackupPin)) return;
+    setStagingPinBusy(true);
+    try {
+      const result = await NativeTunnel.stagePocketLinkBackupPin({
+        localPort: deviceTargetLocalPort(target),
+        backupPin: stagedBackupPin,
+      });
+      if (!result.staged) throw new Error("교체용 PocketLink pin 저장 결과를 확인할 수 없습니다.");
+      setStagingPinTarget(null);
+      setStagedBackupPin("");
+      await refreshPocketLinkStatuses(deviceTargets);
+      showToast(`${target.name}에 교체용 pin을 준비했습니다. 현재 기본 pin은 그대로 유지됩니다.`);
+    } catch (error) {
+      showToast(errorMessage(error));
+    } finally {
+      setStagingPinBusy(false);
+    }
+  }
+
+  async function clearPocketLinkBackupPin(target: DeviceTarget) {
+    if (stagingPinBusy) return;
+    setStagingPinBusy(true);
+    try {
+      const result = await NativeTunnel.clearPocketLinkBackupPin({ localPort: deviceTargetLocalPort(target) });
+      if (!result.cleared || !result.retainedPrimaryPin) {
+        throw new Error("교체용 PocketLink pin 준비 취소 결과를 확인할 수 없습니다.");
+      }
+      setStagingPinTarget(null);
+      setStagedBackupPin("");
+      await refreshPocketLinkStatuses(deviceTargets);
+      showToast(`${target.name}의 교체용 pin만 제거했습니다. 현재 기본 pin은 유지됩니다.`);
+    } catch (error) {
+      showToast(errorMessage(error));
+    } finally {
+      setStagingPinBusy(false);
+    }
+  }
+
+  async function promotePocketLinkPin(target: DeviceTarget) {
+    if (promotingPinTarget) return;
+    setPromotingPinTarget(target.id);
+    try {
+      const result = await NativeTunnel.promotePocketLinkPin({ localPort: deviceTargetLocalPort(target) });
+      if (!result.promoted || !result.retiredPreviousPin) {
+        throw new Error("PocketLink pin 교체 결과를 확인할 수 없습니다.");
+      }
+      setConfirmingPinPromotionTarget(null);
+      await refreshPocketLinkStatuses(deviceTargets);
+      showToast(`${target.name}의 새 pin을 확정하고 이전 pin을 폐기했습니다.`);
+    } catch (error) {
+      showToast(errorMessage(error));
+      await refreshPocketLinkStatuses(deviceTargets);
+    } finally {
+      setPromotingPinTarget(null);
+    }
+  }
+
   async function scanPocketLinkQr() {
     if (!isNativeApp() || scanningPocketLinkQr) return;
     setScanningPocketLinkQr(true);
@@ -1900,7 +2034,16 @@ export function App() {
       }
       await removeDeviceTarget(target.id);
       if (deviceRef.current === target.id) selectDevice(listDeviceTargets()[0]!.id);
-      setDeviceTargets(listDeviceTargets());
+      const remainingTargets = listDeviceTargets();
+      setDeviceTargets(remainingTargets);
+      setPocketLinkStatuses((current) => {
+        const remaining = { ...current };
+        delete remaining[target.id];
+        return remaining;
+      });
+      setConfirmingPinPromotionTarget((current) => current === target.id ? null : current);
+      setStagingPinTarget((current) => current === target.id ? null : current);
+      if (stagingPinTarget === target.id) setStagedBackupPin("");
       showToast(`${target.name} 등록을 삭제했습니다.`);
     } catch (error) {
       showToast(errorMessage(error));
@@ -2315,7 +2458,10 @@ export function App() {
             <section className="device-manager" aria-label="실행 단말 관리">
               <div className="device-manager-head">
                 <div><strong>Linux Companion</strong><small>여러 PC는 서로 다른 로컬 터널 포트로 등록합니다.</small></div>
-                <button type="button" onClick={() => setShowDeviceCreator((current) => !current)}>＋ PC</button>
+                <div className="device-manager-actions">
+                  {isNativeApp() && <button type="button" onClick={() => void refreshPocketLinkStatuses(deviceTargets)}>↻ 상태</button>}
+                  <button type="button" onClick={() => setShowDeviceCreator((current) => !current)}>＋ PC</button>
+                </div>
               </div>
               {showDeviceCreator && (
                 <div className="device-create-card">
@@ -2354,12 +2500,76 @@ export function App() {
                 </div>
               )}
               <div className="device-list">
-                {deviceTargets.filter((target) => target.kind === "linux").map((target) => (
-                  <div key={target.id}>
-                    <span><strong>{target.name}</strong><small>{target.transport === "pocketlink" ? "PocketLink TLS" : "Termux / SSH"} · {target.baseUrl || "현재 주소"}{target.remoteDeviceId ? ` · ${target.remoteDeviceId.slice(0, 8)}` : " · 미페어링"}</small></span>
-                    {!target.builtIn && <button type="button" className="danger" onClick={() => void deleteLinuxDevice(target)}>삭제</button>}
-                  </div>
-                ))}
+                {deviceTargets.filter((target) => target.kind === "linux").map((target) => {
+                  const pocketLinkStatus = target.transport === "pocketlink" ? pocketLinkStatuses[target.id] : undefined;
+                  const canReviewPinPromotion = isRecentBackupPinObservation(pocketLinkStatus);
+                  const stagingPin = stagingPinTarget === target.id;
+                  const confirmingPinPromotion = confirmingPinPromotionTarget === target.id;
+                  return (
+                    <div key={target.id}>
+                      <div className="device-list-row">
+                        <span>
+                          <strong>{target.name}</strong>
+                          <small>
+                            {target.transport === "pocketlink" ? pocketLinkSecurityStatus(pocketLinkStatus) : "Termux / SSH"}
+                            {target.transport === "pocketlink" && pocketLinkStatus?.backupPinConfigured && !canReviewPinPromotion ? " · 교체 pin 준비됨" : ""}
+                            {` · ${target.baseUrl || "현재 주소"}`}{target.remoteDeviceId ? ` · ${target.remoteDeviceId.slice(0, 8)}` : " · 미페어링"}
+                          </small>
+                        </span>
+                        <div className="device-list-actions">
+                          {canReviewPinPromotion && !confirmingPinPromotion && (
+                            <button type="button" className="pin-promotion" onClick={() => reviewPocketLinkPinPromotion(target)}>새 pin 교체 검토</button>
+                          )}
+                          {isNativeApp() && target.transport === "pocketlink" && !canReviewPinPromotion && !stagingPin && (
+                            <button type="button" className="pin-promotion" onClick={() => openPocketLinkPinStaging(target)}>
+                              {pocketLinkStatus?.backupPinConfigured ? "교체 pin 변경" : "교체 pin 준비"}
+                            </button>
+                          )}
+                          {!target.builtIn && <button type="button" className="danger" onClick={() => void deleteLinuxDevice(target)}>삭제</button>}
+                        </div>
+                      </div>
+                      {stagingPin && (
+                        <div className="pin-staging-review">
+                          <strong>{target.name}에 새 서버 pin을 준비합니다.</strong>
+                          <small>Companion에서 새 인증서를 별도 생성한 뒤 표시된 SPKI pin을 대조해 입력하세요. 현재 기본 pin은 유지되며 자동 승격되지 않습니다.</small>
+                          <input
+                            value={stagedBackupPin}
+                            maxLength={51}
+                            autoCapitalize="none"
+                            spellCheck={false}
+                            placeholder="sha256/… 새 교체용 SPKI pin"
+                            aria-label={`${target.name} 교체용 SPKI pin`}
+                            onChange={(event) => setStagedBackupPin(event.target.value.trim())}
+                          />
+                          <div className={pocketLinkStatus?.backupPinConfigured ? "three-actions" : undefined}>
+                            <button type="button" disabled={stagingPinBusy} onClick={closePocketLinkPinStaging}>취소</button>
+                            {pocketLinkStatus?.backupPinConfigured && (
+                              <button type="button" className="danger" disabled={stagingPinBusy} onClick={() => void clearPocketLinkBackupPin(target)}>준비한 pin 제거</button>
+                            )}
+                            <button type="button" disabled={stagingPinBusy || !isPocketLinkPin(stagedBackupPin)} onClick={() => void stagePocketLinkBackupPin(target)}>
+                              {stagingPinBusy ? "저장 중…" : "교체용 pin 저장"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {confirmingPinPromotion && pocketLinkStatus?.pinObservedAt && (
+                        <div className="pin-promotion-review" role="alert">
+                          <strong>{target.name}의 서버 인증서를 교체합니다.</strong>
+                          <small>
+                            {new Date(pocketLinkStatus.pinObservedAt).toLocaleTimeString()}에 교체용 pin으로 TLS 연결이 성공했습니다.
+                            확정하면 새 pin만 유지하고 이전 pin은 즉시 폐기하며 SSH로 자동 우회하지 않습니다.
+                          </small>
+                          <div>
+                            <button type="button" disabled={promotingPinTarget === target.id} onClick={() => setConfirmingPinPromotionTarget(null)}>취소</button>
+                            <button type="button" className="danger" disabled={promotingPinTarget !== null} onClick={() => void promotePocketLinkPin(target)}>
+                              {promotingPinTarget === target.id ? "교체 중…" : "새 pin 확정 · 이전 pin 폐기"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </section>
 
@@ -2806,6 +3016,10 @@ function short(text: string, length: number): string {
 function formatPairingCode(value: string): string {
   const digits = value.replace(/\D/g, "").slice(0, 8);
   return digits.length > 4 ? `${digits.slice(0, 4)} ${digits.slice(4)}` : digits;
+}
+
+function isPocketLinkPin(value: string): boolean {
+  return /^sha256\/[A-Za-z0-9+/]{43}=$/.test(value);
 }
 
 function workspaceName(path: string): string {

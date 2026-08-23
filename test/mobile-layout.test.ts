@@ -22,6 +22,7 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   const journalConfirm = css.match(/\.journal-delete-confirm \{([^}]+)\}/)?.[1] ?? "";
   const journalPath = css.match(/\.journal-delete-confirm > code \{([^}]+)\}/)?.[1] ?? "";
   const pocketLinkFields = css.match(/\.pocket-link-fields \{([^}]+)\}/)?.[1] ?? "";
+  const pinPromotionActions = css.match(/\.pin-promotion-review > div, \.pin-staging-review > div \{([^}]+)\}/)?.[1] ?? "";
   const pairingActions = css.match(/\.pairing-actions \{([^}]+)\}/)?.[1] ?? "";
 
   assert.match(overlay, /grid-template-rows:\s*minmax\(0,\s*1fr\)/);
@@ -43,6 +44,10 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   assert.match(pocketLinkFields, /minmax\(0,\s*1fr\)/);
   assert.match(css, /\.pocket-link-qr-review/);
   assert.match(css, /\.pocket-link-qr-scan/);
+  assert.match(css, /\.pin-staging-review > input/);
+  assert.match(css, /\.pin-staging-review > div\.three-actions \{[^}]*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(pinPromotionActions, /minmax\(0,\s*1fr\)/);
+  assert.match(pinPromotionActions, /minmax\(0,\s*2fr\)/);
   assert.match(pairingActions, /minmax\(0,\s*1fr\)/);
 });
 

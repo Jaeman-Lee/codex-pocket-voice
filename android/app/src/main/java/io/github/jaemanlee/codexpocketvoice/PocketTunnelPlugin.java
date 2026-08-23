@@ -24,6 +24,7 @@ import com.journeyapps.barcodescanner.ScanOptions;
 public class PocketTunnelPlugin extends Plugin {
     private static final String TERMUX_PACKAGE = "com.termux";
     private static final String TERMUX_SERVICE = "com.termux.app.RunCommandService";
+    private static final long PIN_PROMOTION_MAX_AGE_MS = 120_000L;
 
     @PluginMethod
     public void scanPocketLinkQr(PluginCall call) {
@@ -100,7 +101,7 @@ public class PocketTunnelPlugin extends Plugin {
     }
 
     @PluginMethod
-    public void configurePocketLink(PluginCall call) {
+    public synchronized void configurePocketLink(PluginCall call) {
         String label = normalizedLabel(call.getString("label"));
         String host = normalizedHost(call.getString("host"));
         String primaryPin = normalizedPin(call.getString("primaryPin"), false);
@@ -151,7 +152,7 @@ public class PocketTunnelPlugin extends Plugin {
     }
 
     @PluginMethod
-    public void removePocketLink(PluginCall call) {
+    public synchronized void removePocketLink(PluginCall call) {
         int localPort = optionalPort(call, "localPort", -1);
         if (localPort < 0) {
             call.reject("localPort는 1024~65535 사이여야 합니다.");
@@ -171,6 +172,123 @@ public class PocketTunnelPlugin extends Plugin {
     }
 
     @PluginMethod
+    public synchronized void stagePocketLinkBackupPin(PluginCall call) {
+        int localPort = optionalPort(call, "localPort", -1);
+        String backupPin = normalizedPin(call.getString("backupPin"), false);
+        if (localPort < 0 || backupPin == null) {
+            call.reject("교체용 SPKI pin이 올바르지 않습니다.");
+            return;
+        }
+        try {
+            PocketLinkConfigStore configStore = new PocketLinkConfigStore(getContext());
+            PocketLinkConfigStore.Config config = configStore.load(localPort);
+            if (config == null) {
+                call.reject("PocketLink 설정이 없습니다.");
+                return;
+            }
+            if (backupPin.equals(config.primaryPin)) {
+                call.reject("교체용 SPKI pin은 현재 기본 pin과 달라야 합니다.");
+                return;
+            }
+            PocketLinkConfigStore.Config staged = new PocketLinkConfigStore.Config(
+                    config.label,
+                    config.localPort,
+                    config.host,
+                    config.remotePort,
+                    config.primaryPin,
+                    backupPin,
+                    config.active
+            );
+            configStore.save(staged);
+            PocketLinkService.clearPinSlot(localPort);
+            startPocketLinkService(localPort);
+            JSObject result = new JSObject();
+            result.put("staged", true);
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("교체용 PocketLink pin을 준비하지 못했습니다.", error);
+        }
+    }
+
+    @PluginMethod
+    public synchronized void clearPocketLinkBackupPin(PluginCall call) {
+        int localPort = optionalPort(call, "localPort", -1);
+        if (localPort < 0) {
+            call.reject("localPort는 1024~65535 사이여야 합니다.");
+            return;
+        }
+        try {
+            PocketLinkConfigStore configStore = new PocketLinkConfigStore(getContext());
+            PocketLinkConfigStore.Config config = configStore.load(localPort);
+            if (config == null || config.backupPin == null || config.backupPin.isEmpty()) {
+                call.reject("취소할 교체용 SPKI pin이 없습니다.");
+                return;
+            }
+            PocketLinkConfigStore.Config cleared = new PocketLinkConfigStore.Config(
+                    config.label,
+                    config.localPort,
+                    config.host,
+                    config.remotePort,
+                    config.primaryPin,
+                    "",
+                    config.active
+            );
+            configStore.save(cleared);
+            PocketLinkService.clearPinSlot(localPort);
+            startPocketLinkService(localPort);
+            JSObject result = new JSObject();
+            result.put("cleared", true);
+            result.put("retainedPrimaryPin", true);
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("교체용 PocketLink pin 준비를 취소하지 못했습니다.", error);
+        }
+    }
+
+    @PluginMethod
+    public synchronized void promotePocketLinkPin(PluginCall call) {
+        int localPort = optionalPort(call, "localPort", -1);
+        if (localPort < 0) {
+            call.reject("localPort는 1024~65535 사이여야 합니다.");
+            return;
+        }
+        try {
+            PocketLinkConfigStore configStore = new PocketLinkConfigStore(getContext());
+            PocketLinkConfigStore.Config config = configStore.load(localPort);
+            Long observedAt = PocketLinkService.pinObservedAt(localPort);
+            if (config == null || config.backupPin == null || config.backupPin.isEmpty()) {
+                call.reject("승격할 교체용 SPKI pin이 없습니다.");
+                return;
+            }
+            long observationAge = observedAt == null ? -1 : System.currentTimeMillis() - observedAt;
+            if (!PocketLinkService.pinObservationMatches(localPort, "backup", config.backupPin) || observedAt == null
+                    || observationAge < 0 || observationAge > PIN_PROMOTION_MAX_AGE_MS
+                    || PocketLinkService.error(localPort) != null) {
+                call.reject("최근 2분 안에 교체용 pin으로 성공한 연결을 먼저 확인해야 합니다.");
+                return;
+            }
+            PocketLinkConfigStore.Config promoted = new PocketLinkConfigStore.Config(
+                    config.label,
+                    config.localPort,
+                    config.host,
+                    config.remotePort,
+                    config.backupPin,
+                    "",
+                    config.active
+            );
+            configStore.save(promoted);
+            PocketLinkService.clearPinSlot(localPort);
+            startPocketLinkService(localPort);
+            JSObject result = new JSObject();
+            result.put("promoted", true);
+            result.put("retiredPreviousPin", true);
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("PocketLink pin 교체를 확정하지 못했습니다.", error);
+        }
+    }
+
+    @PluginMethod
     public void status(PluginCall call) {
         int localPort = optionalPort(call, "localPort", 8788);
         if (localPort < 0) {
@@ -178,13 +296,26 @@ public class PocketTunnelPlugin extends Plugin {
             return;
         }
         try {
-            boolean configured = new PocketLinkConfigStore(getContext()).load(localPort) != null;
+            PocketLinkConfigStore.Config config = new PocketLinkConfigStore(getContext()).load(localPort);
+            boolean configured = config != null;
             JSObject result = new JSObject();
             result.put("configured", configured);
             result.put("running", configured && PocketLinkService.isRunning(localPort));
             result.put("transport", configured ? "pocketlink" : "termux");
+            if (configured) {
+                result.put("backupPinConfigured", config.backupPin != null && !config.backupPin.isEmpty());
+            }
             String error = PocketLinkService.error(localPort);
             if (error != null) result.put("error", error);
+            String pinSlot = PocketLinkService.pinSlot(localPort);
+            Long pinObservedAt = PocketLinkService.pinObservedAt(localPort);
+            String configuredPin = config == null ? null
+                    : "backup".equals(pinSlot) ? config.backupPin : config.primaryPin;
+            if (pinSlot != null && pinObservedAt != null
+                    && PocketLinkService.pinObservationMatches(localPort, pinSlot, configuredPin)) {
+                result.put("pinSlot", pinSlot);
+                result.put("pinObservedAt", pinObservedAt);
+            }
             call.resolve(result);
         } catch (Exception error) {
             call.reject("PocketLink 상태를 읽을 수 없습니다.", error);

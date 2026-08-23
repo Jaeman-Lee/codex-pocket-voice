@@ -25,6 +25,7 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -34,6 +35,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
@@ -52,6 +54,7 @@ public class PocketLinkService extends Service {
     private static final int MAX_CONNECTIONS_PER_LINK = 8;
     private static final ConcurrentHashMap<Integer, Forwarder> RUNNING = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Integer, String> ERRORS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Integer, PinObservation> PIN_OBSERVATIONS = new ConcurrentHashMap<>();
 
     private ExecutorService controlExecutor;
     private ExecutorService connectionExecutor;
@@ -64,6 +67,33 @@ public class PocketLinkService extends Service {
 
     static String error(int localPort) {
         return ERRORS.get(localPort);
+    }
+
+    static String pinSlot(int localPort) {
+        PinObservation observation = PIN_OBSERVATIONS.get(localPort);
+        return observation == null ? null : observation.slot;
+    }
+
+    static Long pinObservedAt(int localPort) {
+        PinObservation observation = PIN_OBSERVATIONS.get(localPort);
+        return observation == null ? null : observation.observedAt;
+    }
+
+    static boolean pinObservationMatches(int localPort, String slot, String expectedPin) {
+        PinObservation observation = PIN_OBSERVATIONS.get(localPort);
+        return observation != null && expectedPin != null
+                && MessageDigest.isEqual(
+                        observation.slot.getBytes(StandardCharsets.UTF_8),
+                        slot.getBytes(StandardCharsets.UTF_8)
+                )
+                && MessageDigest.isEqual(
+                        observation.pin.getBytes(StandardCharsets.UTF_8),
+                        expectedPin.getBytes(StandardCharsets.UTF_8)
+                );
+    }
+
+    static void clearPinSlot(int localPort) {
+        PIN_OBSERVATIONS.remove(localPort);
     }
 
     @Override
@@ -100,6 +130,7 @@ public class PocketLinkService extends Service {
     public void onDestroy() {
         for (Forwarder forwarder : RUNNING.values()) forwarder.close();
         RUNNING.clear();
+        PIN_OBSERVATIONS.clear();
         if (controlExecutor != null) controlExecutor.shutdownNow();
         if (connectionExecutor != null) connectionExecutor.shutdownNow();
         super.onDestroy();
@@ -134,6 +165,7 @@ public class PocketLinkService extends Service {
     private void startLink(PocketLinkConfigStore.Config config) {
         Forwarder previous = RUNNING.remove(config.localPort);
         if (previous != null) previous.close();
+        PIN_OBSERVATIONS.remove(config.localPort);
         if (RUNNING.size() >= MAX_LINKS) {
             ERRORS.put(config.localPort, "PocketLink 등록 한도를 초과했습니다.");
             updateNotification("PocketLink 등록 한도를 초과했습니다.");
@@ -158,6 +190,7 @@ public class PocketLinkService extends Service {
         Forwarder forwarder = RUNNING.remove(localPort);
         if (forwarder != null) forwarder.close();
         ERRORS.remove(localPort);
+        PIN_OBSERVATIONS.remove(localPort);
         if (disable) {
             try {
                 configStore.setActive(localPort, false);
@@ -287,6 +320,7 @@ public class PocketLinkService extends Service {
             Socket remote = null;
             try {
                 remote = tlsSocket(config, identity);
+                ERRORS.remove(config.localPort);
                 Connection connection = new Connection(local, remote, capacity, connections, connectionExecutor);
                 connections.add(connection);
                 connection.start();
@@ -306,9 +340,10 @@ public class PocketLinkService extends Service {
             Socket transport = new Socket();
             transport.connect(new InetSocketAddress(config.host, config.remotePort), 10_000);
             SSLContext context = SSLContext.getInstance("TLS");
+            AtomicReference<String> matchedPinSlot = new AtomicReference<>();
             context.init(
                     identity.keyManagers(),
-                    new TrustManager[] { new PinnedTrustManager(config.primaryPin, config.backupPin) },
+                    new TrustManager[] { new PinnedTrustManager(config.primaryPin, config.backupPin, matchedPinSlot) },
                     new SecureRandom()
             );
             SSLSocketFactory factory = context.getSocketFactory();
@@ -318,6 +353,16 @@ public class PocketLinkService extends Service {
             parameters.setEndpointIdentificationAlgorithm("HTTPS");
             socket.setSSLParameters(parameters);
             socket.startHandshake();
+            String pinSlot = matchedPinSlot.get();
+            if (pinSlot == null) throw new CertificateException("server public key pin was not recorded");
+            PIN_OBSERVATIONS.put(
+                    config.localPort,
+                    new PinObservation(
+                            pinSlot,
+                            System.currentTimeMillis(),
+                            "backup".equals(pinSlot) ? config.backupPin : config.primaryPin
+                    )
+            );
             socket.setSoTimeout(0);
             return socket;
         }
@@ -375,12 +420,27 @@ public class PocketLinkService extends Service {
         }
     }
 
-    private static final class PinnedTrustManager implements X509TrustManager {
-        private final List<byte[]> pins = new ArrayList<>();
+    private static final class PinObservation {
+        final String slot;
+        final long observedAt;
+        final String pin;
 
-        PinnedTrustManager(String primaryPin, String backupPin) {
-            pins.add(decodePin(primaryPin));
-            if (backupPin != null && !backupPin.isEmpty()) pins.add(decodePin(backupPin));
+        PinObservation(String slot, long observedAt, String pin) {
+            this.slot = slot;
+            this.observedAt = observedAt;
+            this.pin = pin;
+        }
+    }
+
+    private static final class PinnedTrustManager implements X509TrustManager {
+        private final byte[] primaryPin;
+        private final byte[] backupPin;
+        private final AtomicReference<String> matchedPinSlot;
+
+        PinnedTrustManager(String primaryPin, String backupPin, AtomicReference<String> matchedPinSlot) {
+            this.primaryPin = decodePin(primaryPin);
+            this.backupPin = backupPin == null || backupPin.isEmpty() ? null : decodePin(backupPin);
+            this.matchedPinSlot = matchedPinSlot;
         }
 
         @Override
@@ -394,8 +454,13 @@ public class PocketLinkService extends Service {
             chain[0].checkValidity();
             try {
                 byte[] actual = MessageDigest.getInstance("SHA-256").digest(chain[0].getPublicKey().getEncoded());
-                for (byte[] expected : pins) {
-                    if (MessageDigest.isEqual(actual, expected)) return;
+                if (MessageDigest.isEqual(actual, primaryPin)) {
+                    matchedPinSlot.set("primary");
+                    return;
+                }
+                if (backupPin != null && MessageDigest.isEqual(actual, backupPin)) {
+                    matchedPinSlot.set("backup");
+                    return;
                 }
             } catch (Exception error) {
                 throw new CertificateException("cannot verify server public key", error);

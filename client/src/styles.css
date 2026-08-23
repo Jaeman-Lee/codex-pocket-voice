@@ -192,11 +192,12 @@ select {
 .diagnostic-tools span.missing { color: var(--warm); background: rgba(255, 203, 136, 0.08); }
 .device-manager { margin-top: 0.75rem; padding: 0.72rem; border: 1px solid var(--line); border-radius: 0.8rem; background: rgba(5, 10, 14, 0.3); }
 .device-manager-head { display: flex; align-items: center; gap: 0.7rem; }
-.device-manager-head > div { flex: 1; min-width: 0; }
+.device-manager-head > div:first-child { flex: 1; min-width: 0; }
 .device-manager-head strong, .device-manager-head small { display: block; }
 .device-manager-head strong { font-size: 0.76rem; }
 .device-manager-head small, .device-list small { margin-top: 0.18rem; color: var(--muted); font-size: 0.61rem; }
 .device-manager button { min-height: 2rem; padding: 0.35rem 0.55rem; border: 1px solid var(--line); border-radius: 0.55rem; color: var(--accent); background: var(--surface); cursor: pointer; font-size: 0.65rem; font-weight: 750; }
+.device-manager-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 0.35rem; }
 .device-create-card { display: grid; gap: 0.45rem; min-width: 0; margin-top: 0.6rem; padding: 0.55rem; border: 1px solid var(--line); border-radius: 0.62rem; background: var(--surface-2); }
 .device-create-card > select, .device-create-card input { min-width: 0; height: 2.25rem; padding: 0 0.55rem; border: 1px solid var(--line); border-radius: 0.55rem; color: var(--text); background: var(--surface); outline: none; font-size: 0.68rem; }
 .device-create-card > small { color: var(--muted); font-size: 0.59rem; line-height: 1.45; overflow-wrap: anywhere; }
@@ -210,11 +211,23 @@ select {
 .pocket-link-qr-review strong { color: var(--warm); font-size: 0.64rem; }
 .pocket-link-qr-review small { margin-top: 0.2rem; color: var(--muted); font-size: 0.58rem; }
 .device-list { display: grid; gap: 0.35rem; margin-top: 0.55rem; }
-.device-list > div { display: flex; align-items: center; gap: 0.55rem; padding: 0.42rem 0.5rem; border-radius: 0.55rem; background: var(--surface-2); }
-.device-list span { flex: 1; min-width: 0; }
-.device-list strong, .device-list small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.device-list > div { display: grid; min-width: 0; gap: 0.45rem; padding: 0.42rem 0.5rem; border-radius: 0.55rem; background: var(--surface-2); }
+.device-list-row { display: flex; min-width: 0; align-items: center; gap: 0.55rem; }
+.device-list-row > span { flex: 1; min-width: 0; }
+.device-list strong, .device-list small { display: block; min-width: 0; overflow-wrap: anywhere; }
 .device-list strong { font-size: 0.69rem; }
+.device-list-actions { display: flex; flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; gap: 0.35rem; }
+.device-list-actions button { max-width: 8.5rem; white-space: normal; }
+.device-list button.pin-promotion { color: var(--warm); border-color: rgba(255, 203, 136, 0.3); background: rgba(255, 203, 136, 0.06); }
 .device-list button.danger { color: var(--danger); border-color: rgba(255, 129, 124, 0.25); background: transparent; }
+.pin-promotion-review, .pin-staging-review { min-width: 0; padding: 0.55rem; border: 1px solid rgba(255, 203, 136, 0.3); border-radius: 0.55rem; background: rgba(255, 203, 136, 0.06); }
+.pin-promotion-review > strong, .pin-promotion-review > small, .pin-staging-review > strong, .pin-staging-review > small { display: block; overflow-wrap: anywhere; }
+.pin-promotion-review > strong, .pin-staging-review > strong { color: var(--warm); font-size: 0.67rem; }
+.pin-promotion-review > small, .pin-staging-review > small { margin-top: 0.25rem; line-height: 1.5; }
+.pin-staging-review > input { width: 100%; min-width: 0; height: 2.25rem; margin-top: 0.45rem; padding: 0 0.55rem; border: 1px solid var(--line); border-radius: 0.55rem; color: var(--text); background: var(--surface); outline: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.64rem; }
+.pin-promotion-review > div, .pin-staging-review > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 0.4rem; margin-top: 0.5rem; }
+.pin-staging-review > div.three-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pin-promotion-review button, .pin-staging-review button { min-width: 0; max-width: 100%; white-space: normal; }
 .connection-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.35rem; margin: 0.75rem 0; }
 .connection-steps span { padding: 0.5rem 0.25rem; border-radius: 0.55rem; color: var(--accent); background: rgba(62, 213, 165, 0.07); text-align: center; font-size: 0.65rem; font-weight: 750; }
 .provider-cards { display: grid; gap: 0.7rem; }
