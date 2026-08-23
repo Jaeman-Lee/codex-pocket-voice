@@ -317,6 +317,21 @@ select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shad
 .dashboard-section-title span { min-width: 0; color: var(--muted); font-size: 0.61rem; line-height: 1.4; text-align: right; }
 .dashboard-section-tools { display: flex; min-width: 0; align-items: flex-end; flex-direction: column; gap: 0.3rem; }
 .dashboard-section-tools button { min-height: 1.8rem; padding: 0.25rem 0.55rem; border: 1px solid var(--line); border-radius: 999px; color: var(--accent); background: transparent; cursor: pointer; font-size: 0.6rem; font-weight: 750; }
+.retention-policy-editor { min-width: 0; max-width: 100%; margin-bottom: 0.65rem; padding: 0.68rem; border: 1px solid rgba(255, 203, 136, 0.32); border-radius: 0.75rem; background: rgba(255, 203, 136, 0.04); }
+.retention-policy-editor > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.retention-policy-editor > div:first-child strong { font-size: 0.73rem; }
+.retention-policy-editor button { min-width: 0; min-height: 2.2rem; padding: 0.38rem 0.58rem; border: 1px solid var(--line); border-radius: 0.52rem; color: var(--accent); background: transparent; cursor: pointer; font-size: 0.62rem; font-weight: 750; }
+.retention-policy-editor button:disabled { opacity: 0.4; cursor: wait; }
+.retention-policy-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.42rem; margin-top: 0.55rem; }
+.retention-policy-fields label, .retention-policy-fields input { min-width: 0; max-width: 100%; }
+.retention-policy-fields span { display: block; margin-bottom: 0.25rem; color: var(--muted); font-size: 0.58rem; }
+.retention-policy-fields input { width: 100%; min-height: 2.35rem; padding: 0.42rem; border: 1px solid var(--line); border-radius: 0.48rem; color: var(--text); background: var(--bg); font: inherit; font-size: 0.68rem; }
+.retention-policy-editor > small, .retention-policy-editor > p { display: block; color: var(--muted); font-size: 0.57rem; line-height: 1.45; overflow-wrap: anywhere; }
+.retention-policy-editor > small { margin-top: 0.45rem; }
+.retention-policy-editor > p { margin: 0.42rem 0 0; }
+.retention-policy-editor > button { width: 100%; margin-top: 0.5rem; }
+.retention-policy-editor .retention-confirm { display: block; margin-top: 0.45rem; color: var(--danger); font-size: 0.62rem; line-height: 1.4; overflow-wrap: anywhere; }
+.retention-policy-editor .confirm-retention { color: #fff; border-color: transparent; background: var(--danger); }
 .approval-inbox { padding: 0.72rem; border: 1px solid rgba(255, 203, 136, 0.32); border-radius: 0.85rem; background: rgba(255, 203, 136, 0.04); }
 .approval-card { min-width: 0; padding: 0.72rem; border: 1px solid var(--line); border-radius: 0.72rem; background: var(--surface-2); }
 .approval-card + .approval-card { margin-top: 0.55rem; }
@@ -588,6 +603,7 @@ textarea::placeholder { color: #6f8285; }
   .operations-head { top: -0.8rem; margin: -0.8rem -0.8rem 0; padding: 0.8rem; }
   .operation-counts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .operation-list { grid-template-columns: minmax(0, 1fr); }
+  .retention-policy-fields { grid-template-columns: minmax(0, 1fr); }
   .journal-actions, .journal-delete-confirm > div { grid-template-columns: minmax(0, 1fr); }
 }
 

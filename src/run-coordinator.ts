@@ -126,8 +126,8 @@ export class RunCoordinator {
   private readonly listeners = new Set<(event: RunCoordinatorEvent) => void>();
   private readonly now: () => number;
   private readonly createId: () => string;
-  private readonly retentionMs: number;
-  private readonly maxOperations: number;
+  private retentionMs: number;
+  private maxOperations: number;
   private readonly assertWorkspace: (cwd: string) => void;
   private readonly stateStore?: RunStateStore;
   private readonly unsubscribeProvider: () => void;
@@ -164,6 +164,16 @@ export class RunCoordinator {
   subscribe(listener: (event: RunCoordinatorEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  updateRetentionPolicy(policy: Pick<RunCoordinatorOptions, "retentionMs" | "maxOperations">): void {
+    if (!Number.isSafeInteger(policy.retentionMs) || policy.retentionMs! <= 0
+      || !Number.isSafeInteger(policy.maxOperations) || policy.maxOperations! <= 0) {
+      throw new RunCoordinatorError(400, "Operation retention policy is invalid");
+    }
+    this.retentionMs = policy.retentionMs!;
+    this.maxOperations = policy.maxOperations!;
+    this.cleanup();
   }
 
   async start(command: StartRunCommand): Promise<RunOperation> {

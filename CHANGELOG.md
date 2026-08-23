@@ -117,6 +117,11 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   삭제는 정확한 전체 프로젝트 경로와 영향 범위를 다시 보여 준 뒤 두 번째 터치에서만 수행하며,
   실행·승인 중이거나 미확인 `unknown` 작업이 있으면 409로 차단한다. 프로젝트 파일과 Android의
   암호화 conversation·queue journal은 삭제 대상이 아니다.
+- Companion 보존 정책을 1–30일, operation 50–2,000개, event 200–10,000개 범위에서 모바일로
+  조정할 수 있게 했다. 저장 전 삭제 가능 범위와 고정·보관도 예외가 아님을 보여 주고 두 번째 터치와
+  명시적 same-origin 확인값을 요구한다. 적용은 실행 중 operation을 보존하면서 한도 밖 기록을 즉시
+  정리하고 모든 연결 기기에 `policy_updated`를 보낸다. 설정은 SQLite schema 1의 additive table에
+  key-HMAC으로 인증해 변조된 값으로 조용히 삭제하지 않으며 Companion 재시작 뒤에도 복원한다.
 - opt-in PocketLink LAN TLS listener를 추가했다. Companion은 `0700` 디렉터리의 `0600` 단일-link
   private key, certificate/key 일치, 유효기간과 advertise host를 검증하고 TLS 1.2/1.3으로만 듣는다.
   Android `connectedDevice` foreground service는 Keystore AES-GCM으로 host·port·기본/교체용 SPKI pin을

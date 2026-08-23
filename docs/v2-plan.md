@@ -24,7 +24,7 @@
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환, operation UI 상태 모듈 구현; 나머지 App 상태 분리 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
-| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, opt-in native 알림·retained run 열기 구현; 사용자 retention 설정·process-death background 알림·실기기 acceptance 잔여 |
+| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in native 알림·retained run 열기 구현; process-death background 알림·실기기 acceptance 잔여 |
 | Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion과 recoverable A/B client-key rotation 구현; discovery/P2P·relay·background release gate 잔여 |
 
 ## 2. 제품 정의
@@ -251,7 +251,10 @@ paired 클라이언트는 선택한 workspace의 operation·event를 복호화�
 프로젝트 파일과 Android conversation·queue journal은 영향을 받지 않는다.
 목표 이름과 pin/archive 시각은 operation ciphertext에 저장하고 `metadata_updated` SSE로 동기화한다.
 보관은 기본 대시보드에서 숨기는 가역 상태이며 active·승인·미확인 작업에는 적용하지 않는다. pin은
-retained operation 정렬만 바꾸고 7일/500 operation 상한을 연장하지 않으며 명시적 기록 삭제도 막지 않는다.
+retained operation 정렬만 바꾸고 설정된 기간/operation 상한을 연장하지 않으며 명시적 기록 삭제도 막지 않는다.
+보존 정책은 1–30일, operation 50–2,000개, event 200–10,000개로 제한하고 두 번째 화면 터치와
+same-origin 확인값 뒤에만 적용한다. 낮춘 한도는 즉시 정리되며 running operation은 유지한다. 설정값은
+기존 journal key로 HMAC 인증해 재시작 시 복원하고, 모든 연결 기기에 `policy_updated`를 전파한다.
 
 ## 10. 모바일 운영 경험
 
@@ -361,7 +364,7 @@ Companion 재시작 뒤 복원되고 SSE로 다른 연결 기기에 전파된다
 완료·승인·오류 알림도 구현했다. 잠금 화면에는 generic 상태만 표시하고
 app-private random token으로 PendingIntent를 검증한다. 알림을 탭하면 device/operation ID로 선택한
 Companion의 retained snapshot을 다시 조회한 뒤 정확한 작업을 연다. replay 중에는 알리지 않는다.
-사용자 retention 설정, WebView process 종료 뒤 독립 background 수신과 실기기 deep-link acceptance는
+WebView process 종료 뒤 독립 background 수신과 실기기 deep-link acceptance는
 다음 단계다.
 
 완료 조건: 여러 프로젝트 run을 동시에 추적하고 앱 종료·네트워크 전환 후 정확한 상태로 복구한다.

@@ -10,6 +10,7 @@ import { workspaceIdentityFor, workspaceIdentityLabel } from "./workspace-identi
 import type {
   ApprovalItem,
   JournalPolicy,
+  JournalPolicyLimits,
   Operation,
   OperationMetadataPatch,
   Workspace,
@@ -24,6 +25,8 @@ interface OperationsDashboardProps {
   queuedCount: number;
   decidingApprovalId: string | null;
   journalPolicy: JournalPolicy | null;
+  journalPolicyLimits: JournalPolicyLimits | null;
+  updatingJournalPolicy: boolean;
   exportingWorkspace: string | null;
   deletingWorkspace: string | null;
   updatingOperationId: string | null;
@@ -31,6 +34,7 @@ interface OperationsDashboardProps {
   onRefresh(): void;
   onOpenOperation(operation: Operation): void;
   onUpdateOperation(operation: Operation, patch: OperationMetadataPatch): Promise<boolean>;
+  onUpdateJournalPolicy(policy: JournalPolicy): Promise<boolean>;
   onDecision(approval: ApprovalItem, decision: "approved" | "declined"): void;
   onExportWorkspace(workspace: string): Promise<void>;
   onDeleteWorkspaceHistory(workspace: string): Promise<void>;
@@ -40,6 +44,7 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
   const [now, setNow] = useState(Date.now());
   const [confirmingWorkspace, setConfirmingWorkspace] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [showPolicyEditor, setShowPolicyEditor] = useState(false);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 15_000);
     return () => window.clearInterval(timer);
@@ -108,8 +113,22 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
                   보관됨 {archivedCount}건 {showArchived ? "숨기기" : "보기"}
                 </button>
               )}
+              {props.journalPolicy && props.journalPolicyLimits && (
+                <button type="button" aria-expanded={showPolicyEditor} onClick={() => setShowPolicyEditor((current) => !current)}>
+                  보존 설정
+                </button>
+              )}
             </div>
           </div>
+          {showPolicyEditor && props.journalPolicy && props.journalPolicyLimits && (
+            <RetentionPolicyEditor
+              policy={props.journalPolicy}
+              limits={props.journalPolicyLimits}
+              busy={props.updatingJournalPolicy}
+              onClose={() => setShowPolicyEditor(false)}
+              onUpdate={props.onUpdateJournalPolicy}
+            />
+          )}
           {groups.length === 0 ? (
             <p className="dashboard-empty">아직 기록된 작업이 없습니다.</p>
           ) : groups.map((group) => (
@@ -133,6 +152,120 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
           ))}
         </section>
       </div>
+    </section>
+  );
+}
+
+function RetentionPolicyEditor({
+  policy,
+  limits,
+  busy,
+  onClose,
+  onUpdate,
+}: {
+  policy: JournalPolicy;
+  limits: JournalPolicyLimits;
+  busy: boolean;
+  onClose(): void;
+  onUpdate(policy: JournalPolicy): Promise<boolean>;
+}) {
+  const dayMs = 24 * 60 * 60_000;
+  const [days, setDays] = useState(String(policy.retentionMs / dayMs));
+  const [maxOperations, setMaxOperations] = useState(String(policy.maxOperations));
+  const [maxEvents, setMaxEvents] = useState(String(policy.maxEvents));
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    setDays(String(policy.retentionMs / dayMs));
+    setMaxOperations(String(policy.maxOperations));
+    setMaxEvents(String(policy.maxEvents));
+    setConfirming(false);
+  }, [policy]);
+  const retentionMs = Number(days) * dayMs;
+  const operationCount = Number(maxOperations);
+  const eventCount = Number(maxEvents);
+  const valid = Number.isInteger(Number(days))
+    && Number.isSafeInteger(retentionMs)
+    && retentionMs >= limits.retentionMs.minimum && retentionMs <= limits.retentionMs.maximum
+    && Number.isSafeInteger(operationCount)
+    && operationCount >= limits.maxOperations.minimum && operationCount <= limits.maxOperations.maximum
+    && Number.isSafeInteger(eventCount)
+    && eventCount >= limits.maxEvents.minimum && eventCount <= limits.maxEvents.maximum;
+  const changed = retentionMs !== policy.retentionMs
+    || operationCount !== policy.maxOperations
+    || eventCount !== policy.maxEvents;
+  const change = (setter: (value: string) => void) => (value: string) => {
+    setter(value);
+    setConfirming(false);
+  };
+  const submit = async () => {
+    if (!valid || !changed || busy) return;
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    const saved = await onUpdate({
+      ...policy,
+      retentionMs,
+      maxOperations: operationCount,
+      maxEvents: eventCount,
+    });
+    if (saved) onClose();
+  };
+  return (
+    <section className="retention-policy-editor" aria-labelledby="retention-policy-title">
+      <div>
+        <strong id="retention-policy-title">Companion 기록 보존</strong>
+        <button type="button" disabled={busy} onClick={onClose}>닫기</button>
+      </div>
+      <div className="retention-policy-fields">
+        <label>
+          <span>기간 (일)</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={limits.retentionMs.minimum / dayMs}
+            max={limits.retentionMs.maximum / dayMs}
+            value={days}
+            disabled={busy}
+            onChange={(event) => change(setDays)(event.target.value)}
+          />
+        </label>
+        <label>
+          <span>작업 수</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={limits.maxOperations.minimum}
+            max={limits.maxOperations.maximum}
+            value={maxOperations}
+            disabled={busy}
+            onChange={(event) => change(setMaxOperations)(event.target.value)}
+          />
+        </label>
+        <label>
+          <span>이벤트 수</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={limits.maxEvents.minimum}
+            max={limits.maxEvents.maximum}
+            value={maxEvents}
+            disabled={busy}
+            onChange={(event) => change(setMaxEvents)(event.target.value)}
+          />
+        </label>
+      </div>
+      <small>
+        범위: {limits.retentionMs.minimum / dayMs}–{limits.retentionMs.maximum / dayMs}일 · 작업 {limits.maxOperations.minimum.toLocaleString()}–{limits.maxOperations.maximum.toLocaleString()} · 이벤트 {limits.maxEvents.minimum.toLocaleString()}–{limits.maxEvents.maximum.toLocaleString()}
+      </small>
+      <p>저장하면 한도를 넘은 오래된 종료·실패·중단·상태 미상 기록이 즉시 삭제됩니다. 실행 중 작업은 유지되지만 고정·보관 기록도 예외가 아닙니다. 필요한 프로젝트 기록은 먼저 JSON으로 내보내세요.</p>
+      {confirming && <strong className="retention-confirm">이 변경으로 삭제되는 기록은 복구할 수 없습니다. 다시 눌러 적용하세요.</strong>}
+      <button
+        type="button"
+        className={confirming ? "confirm-retention" : undefined}
+        disabled={busy || !valid || !changed}
+        onClick={() => void submit()}
+      >{busy ? "적용 중…" : confirming ? "확인하고 보존 정책 적용" : "보존 정책 검토"}</button>
     </section>
   );
 }

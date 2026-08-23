@@ -314,6 +314,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(nativePreflight.headers.get("access-control-allow-origin"), "http://localhost");
   assert.match(nativePreflight.headers.get("access-control-allow-headers") ?? "", /Last-Event-ID/);
   assert.match(nativePreflight.headers.get("access-control-allow-methods") ?? "", /PATCH/);
+  assert.match(nativePreflight.headers.get("access-control-allow-methods") ?? "", /PUT/);
 
   const streamAbort = new AbortController();
   const stream = await fetch(`${base}/api/events`, { signal: streamAbort.signal, headers: authorized() });
@@ -460,7 +461,47 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
     { headers: authorized() },
   );
   assert.equal(journalPolicy.policy.retentionMs, 7 * 24 * 60 * 60_000);
+  assert.equal(journalPolicy.limits.retentionMs.minimum, 24 * 60 * 60_000);
   assert.equal(journalPolicy.summary.operationCount, 1);
+  const policyStreamAbort = new AbortController();
+  const policyStream = await fetch(`${base}/api/events`, {
+    headers: authorized(),
+    signal: policyStreamAbort.signal,
+  });
+  const policyReader = policyStream.body!.getReader();
+  await readUntil(policyReader, (text) => text.includes('"action":"replay_complete"'));
+  const crossOriginPolicy = await fetch(`${base}/api/journal/policy`, {
+    method: "PUT",
+    headers: authorized({ "Content-Type": "application/json", Origin: "https://evil.example" }),
+    body: JSON.stringify({
+      retentionMs: 24 * 60 * 60_000,
+      maxOperations: 50,
+      maxEvents: 200,
+      confirm: "apply-retention-policy",
+    }),
+  });
+  assert.equal(crossOriginPolicy.status, 403);
+  const missingPolicyConfirmation = await fetch(`${base}/api/journal/policy`, {
+    method: "PUT",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ retentionMs: 24 * 60 * 60_000, maxOperations: 50, maxEvents: 200 }),
+  });
+  assert.equal(missingPolicyConfirmation.status, 400);
+  const updatedPolicy = await jsonFetch(`${base}/api/journal/policy`, {
+    method: "PUT",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({
+      retentionMs: 24 * 60 * 60_000,
+      maxOperations: 50,
+      maxEvents: 200,
+      confirm: "apply-retention-policy",
+    }),
+  });
+  assert.equal(updatedPolicy.policy.retentionMs, 24 * 60 * 60_000);
+  assert.equal(updatedPolicy.policy.maxOperations, 50);
+  const policyEvent = await readUntil(policyReader, (text) => text.includes('"action":"policy_updated"'));
+  assert.match(policyEvent, /"maxEvents":200/);
+  policyStreamAbort.abort();
   const journalExportResponse = await fetch(
     `${base}/api/journal/export?workspace=${encodeURIComponent(cwd)}`,
     { headers: authorized() },

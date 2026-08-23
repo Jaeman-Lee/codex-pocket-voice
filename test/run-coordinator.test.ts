@@ -353,6 +353,40 @@ test("RunCoordinator validates and persists operation names, pins, and archives"
   coordinator.close();
 });
 
+test("RunCoordinator applies a changed retention policy to its in-memory snapshot", () => {
+  const removed: string[] = [];
+  const old = {
+    id: "operation-old",
+    providerId: "fake",
+    conversationId: "conversation-old",
+    runId: "run-old",
+    cwd: process.cwd(),
+    prompt: "old",
+    status: "completed" as const,
+    startedAt: "2026-08-20T00:00:00.000Z",
+    completedAt: "2026-08-20T00:01:00.000Z",
+  };
+  const coordinator = new RunCoordinator(new FakeRunProviders(), {
+    now: () => Date.parse("2026-08-24T05:00:00.000Z"),
+    retentionMs: 7 * 24 * 60 * 60_000,
+    stateStore: {
+      load: () => ({ operations: [old], idempotency: [] }),
+      saveOperation: () => undefined,
+      deleteOperation: (operationId) => removed.push(operationId),
+      deleteOperations: () => undefined,
+    },
+  });
+  assert.equal(coordinator.list().length, 1);
+  coordinator.updateRetentionPolicy({ retentionMs: 24 * 60 * 60_000, maxOperations: 50 });
+  assert.deepEqual(coordinator.list(), []);
+  assert.deepEqual(removed, [old.id]);
+  assert.throws(
+    () => coordinator.updateRetentionPolicy({ retentionMs: 0, maxOperations: 50 }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 400,
+  );
+  coordinator.close();
+});
+
 class FakeRunProviders implements RunProviderRegistry {
   readonly starts: Array<{ providerId: unknown; accountId: unknown; input: ProviderRunInput }> = [];
   readonly cancellations: Array<[unknown, string, string]> = [];

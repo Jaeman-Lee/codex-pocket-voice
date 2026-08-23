@@ -51,6 +51,12 @@ export interface JournalPolicy {
   maxExportBytes: number;
 }
 
+export interface JournalPolicyLimits {
+  retentionMs: { minimum: number; maximum: number };
+  maxOperations: { minimum: number; maximum: number };
+  maxEvents: { minimum: number; maximum: number };
+}
+
 export interface ModelOption {
   id: string;
   displayName: string;
@@ -304,6 +310,7 @@ export interface CodexEvent {
   workspace?: string;
   deletedOperations?: number;
   deletedEvents?: number;
+  policy?: JournalPolicy;
   replayed?: number;
   handoffId?: string;
   operation?: Operation;

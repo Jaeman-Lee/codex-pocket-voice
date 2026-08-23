@@ -27,6 +27,8 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   const operationActions = css.match(/\.operation-card-actions \{([^}]+)\}/)?.[1] ?? "";
   const operationEditor = css.match(/\.operation-name-editor \{([^}]+)\}/)?.[1] ?? "";
   const operationNameInput = css.match(/\.operation-name-editor input \{([^}]+)\}/)?.[1] ?? "";
+  const retentionFields = css.match(/\.retention-policy-fields \{([^}]+)\}/)?.[1] ?? "";
+  const retentionEditor = css.match(/\.retention-policy-editor \{([^}]+)\}/)?.[1] ?? "";
 
   assert.match(overlay, /grid-template-rows:\s*minmax\(0,\s*1fr\)/);
   assert.match(overlay, /overflow:\s*hidden/);
@@ -57,6 +59,8 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   assert.match(operationEditor, /max-width:\s*100%/);
   assert.match(operationNameInput, /max-width:\s*100%/);
   assert.match(operationNameInput, /min-width:\s*0/);
+  assert.match(retentionFields, /minmax\(0,\s*1fr\)/);
+  assert.match(retentionEditor, /max-width:\s*100%/);
 });
 
 test("the app shell cannot grow beyond a narrow mobile viewport", async () => {

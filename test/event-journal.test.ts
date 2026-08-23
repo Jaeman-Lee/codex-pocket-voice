@@ -271,6 +271,47 @@ test("event journal authenticates operation and event metadata", async (t) => {
   reopenedEvent.close();
 });
 
+test("event journal persists bounded retention settings and applies them immediately", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-pocket-event-policy-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const databaseFile = join(directory, "events.sqlite3");
+  let now = Date.parse("2026-08-24T04:00:00.000Z");
+  const journal = await EventJournal.create(databaseFile, { now: () => now });
+  for (let index = 0; index < 51; index += 1) {
+    journal.saveOperation({ ...operation(`terminal-${index}`, "completed"), startedAt: new Date(now + index).toISOString() });
+  }
+  journal.saveOperation({
+    ...operation("running-policy", "completed"),
+    status: "running",
+    startedAt: new Date(now).toISOString(),
+    completedAt: undefined,
+  });
+  journal.appendEvent("running-policy", "/workspace/a", { type: "event", value: "old" });
+  assert.throws(
+    () => journal.updatePolicy({ retentionMs: 60_000, maxOperations: 50, maxEvents: 200 }),
+    /retentionMs must be an integer between/,
+  );
+  now += 2 * 24 * 60 * 60_000;
+  const policy = journal.updatePolicy({
+    retentionMs: 24 * 60 * 60_000,
+    maxOperations: 50,
+    maxEvents: 200,
+  });
+  assert.equal(policy.retentionMs, 24 * 60 * 60_000);
+  assert.equal(journal.workspaceSummary("/workspace/a").operationCount, 1);
+  assert.equal(journal.workspaceSummary("/workspace/a").eventCount, 0);
+  journal.close();
+
+  const reopened = await EventJournal.create(databaseFile, { now: () => now });
+  assert.deepEqual(reopened.policy(), policy);
+  assert.deepEqual(reopened.policyLimits().maxOperations, { minimum: 50, maximum: 2_000 });
+  reopened.close();
+  const tampered = new Database(databaseFile);
+  tampered.prepare("UPDATE journal_settings SET value_integer = value_integer + 1 WHERE key = 'max_events'").run();
+  tampered.close();
+  await assert.rejects(EventJournal.create(databaseFile), /retention policy cannot be authenticated/);
+});
+
 class JournalFakeProviders implements RunProviderRegistry {
   readonly starts: ProviderRunInput[] = [];
   private readonly listeners = new Set<(event: ProviderEvent) => void>();

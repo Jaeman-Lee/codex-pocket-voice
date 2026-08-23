@@ -30,7 +30,12 @@ import { createReadOnlyWorkspaceTools } from "./read-only-tools.js";
 import { createWorkspaceChangeTools } from "./workspace-change-tools.js";
 import { createWorkspaceExecutionTools } from "./workspace-execution-tools.js";
 import { LocalToolBroker } from "./tool-broker.js";
-import { EventJournal, EventJournalExportError, type JournalReplayEvent } from "./event-journal.js";
+import {
+  EVENT_JOURNAL_POLICY_LIMITS,
+  EventJournal,
+  EventJournalExportError,
+  type JournalReplayEvent,
+} from "./event-journal.js";
 import { publicKeyPin, type PocketLinkTlsConfig } from "./pocket-link.js";
 import {
   RunCoordinator,
@@ -150,9 +155,12 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
       ], approvals, options.paths);
   const providers = options.providers ?? new ProviderRegistry(options.client, undefined, { toolBroker });
   const providerLogins = new ProviderLoginManager(providers);
+  const journalPolicy = journal.policy();
   const runs = new RunCoordinator(providers, {
     assertWorkspace: (cwd) => options.paths.assertAllowed(cwd),
     stateStore: journal,
+    retentionMs: journalPolicy.retentionMs,
+    maxOperations: journalPolicy.maxOperations,
   });
   const unsubscribeRuns = runs.subscribe((event) => {
     if (event.type === "operation") {
@@ -738,8 +746,46 @@ async function handleApi(
     const workspace = requestedWorkspace ? await options.paths.resolveWorkspace(requestedWorkspace) : undefined;
     sendJson(response, 200, {
       policy: journal.policy(),
+      limits: journal.policyLimits(),
       ...(workspace ? { workspace, summary: journal.workspaceSummary(workspace) } : {}),
     });
+    return;
+  }
+
+  if (request.method === "PUT" && url.pathname === "/api/journal/policy") {
+    assertSameOrigin(request);
+    const value = await readJson(request);
+    if (!isRecord(value)) throw new HttpError(400, "Journal policy body is invalid");
+    const allowedFields = new Set(["retentionMs", "maxOperations", "maxEvents", "confirm"]);
+    if (Object.keys(value).some((key) => !allowedFields.has(key))) {
+      throw new HttpError(400, "Journal policy body contains an unsupported field");
+    }
+    if (value.confirm !== "apply-retention-policy") {
+      throw new HttpError(400, "Explicit journal policy confirmation is required");
+    }
+    const policy = journal.updatePolicy({
+      retentionMs: requiredBoundedInteger(
+        value.retentionMs,
+        EVENT_JOURNAL_POLICY_LIMITS.retentionMs.minimum,
+        EVENT_JOURNAL_POLICY_LIMITS.retentionMs.maximum,
+        "retentionMs",
+      ),
+      maxOperations: requiredBoundedInteger(
+        value.maxOperations,
+        EVENT_JOURNAL_POLICY_LIMITS.maxOperations.minimum,
+        EVENT_JOURNAL_POLICY_LIMITS.maxOperations.maximum,
+        "maxOperations",
+      ),
+      maxEvents: requiredBoundedInteger(
+        value.maxEvents,
+        EVENT_JOURNAL_POLICY_LIMITS.maxEvents.minimum,
+        EVENT_JOURNAL_POLICY_LIMITS.maxEvents.maximum,
+        "maxEvents",
+      ),
+    });
+    runs.updateRetentionPolicy(policy);
+    broadcast(sseClients, { type: "journal", action: "policy_updated", policy });
+    sendJson(response, 200, { policy, limits: journal.policyLimits() });
     return;
   }
 
@@ -1140,7 +1186,7 @@ function applyApiCors(request: IncomingMessage, response: ServerResponse): void 
   }
   if (!allowedOrigin) return;
   response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
-  response.setHeader("Access-Control-Allow-Methods", "DELETE, GET, PATCH, POST, OPTIONS");
+  response.setHeader("Access-Control-Allow-Methods", "DELETE, GET, PATCH, POST, PUT, OPTIONS");
   response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID");
   response.setHeader("Vary", "Origin");
 }
@@ -1326,6 +1372,13 @@ function optionalInteger(
 ): number {
   if (value === undefined || value === null) return fallback;
   if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
+    throw new HttpError(400, `${name} must be an integer between ${min} and ${max}`);
+  }
+  return value;
+}
+
+function requiredBoundedInteger(value: unknown, min: number, max: number, name: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) {
     throw new HttpError(400, `${name} must be an integer between ${min} and ${max}`);
   }
   return value;

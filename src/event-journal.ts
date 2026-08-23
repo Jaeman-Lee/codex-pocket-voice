@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHmac, randomBytes, randomUUID } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
@@ -17,6 +17,12 @@ const DEFAULT_MAX_EVENTS = 2_000;
 const MAX_OPERATION_BYTES = 4 * 1024 * 1024;
 const MAX_EVENT_BYTES = 128 * 1024;
 const DEFAULT_MAX_EXPORT_BYTES = 16 * 1024 * 1024;
+
+export const EVENT_JOURNAL_POLICY_LIMITS = Object.freeze({
+  retentionMs: { minimum: 24 * 60 * 60_000, maximum: 30 * 24 * 60 * 60_000 },
+  maxOperations: { minimum: 50, maximum: 2_000 },
+  maxEvents: { minimum: 200, maximum: 10_000 },
+});
 
 interface StoredOperationPayload {
   operation: RunOperation;
@@ -81,6 +87,14 @@ export interface EventJournalPolicy {
   maxExportBytes: number;
 }
 
+export interface EventJournalPolicyUpdate {
+  retentionMs: number;
+  maxOperations: number;
+  maxEvents: number;
+}
+
+export type EventJournalPolicyLimits = typeof EVENT_JOURNAL_POLICY_LIMITS;
+
 export interface WorkspaceJournalSummary {
   operationCount: number;
   eventCount: number;
@@ -105,9 +119,9 @@ export class EventJournal implements RunStateStore {
     private readonly database: Database.Database,
     private readonly key: Buffer,
     private readonly now: () => number,
-    private readonly retentionMs: number,
-    private readonly maxOperations: number,
-    private readonly maxEvents: number,
+    private retentionMs: number,
+    private maxOperations: number,
+    private maxEvents: number,
     private readonly maxExportBytes: number,
     private readonly createId: () => string,
   ) {}
@@ -116,9 +130,15 @@ export class EventJournal implements RunStateStore {
     const resolvedDatabaseFile = resolve(databaseFile);
     const keyFile = resolve(options.keyFile ?? `${resolvedDatabaseFile}.key`);
     if (resolvedDatabaseFile === keyFile) throw new Error("Event journal database and key must use different files");
-    const retentionMs = positiveInteger(options.retentionMs ?? DEFAULT_RETENTION_MS, "retentionMs");
-    const maxOperations = positiveInteger(options.maxOperations ?? DEFAULT_MAX_OPERATIONS, "maxOperations");
-    const maxEvents = positiveInteger(options.maxEvents ?? DEFAULT_MAX_EVENTS, "maxEvents");
+    const configuredRetentionMs = options.retentionMs === undefined
+      ? undefined
+      : positiveInteger(options.retentionMs, "retentionMs");
+    const configuredMaxOperations = options.maxOperations === undefined
+      ? undefined
+      : positiveInteger(options.maxOperations, "maxOperations");
+    const configuredMaxEvents = options.maxEvents === undefined
+      ? undefined
+      : positiveInteger(options.maxEvents, "maxEvents");
     const maxExportBytes = positiveInteger(options.maxExportBytes ?? DEFAULT_MAX_EXPORT_BYTES, "maxExportBytes");
     await mkdir(dirname(resolvedDatabaseFile), { recursive: true, mode: 0o700 });
     await assertPrivateDirectory(dirname(resolvedDatabaseFile), "Event journal database directory");
@@ -135,6 +155,10 @@ export class EventJournal implements RunStateStore {
       database.pragma("foreign_keys = ON");
       database.pragma("secure_delete = ON");
       initializeSchema(database);
+      const storedPolicy = loadStoredPolicy(database, key);
+      const retentionMs = configuredRetentionMs ?? storedPolicy?.retentionMs ?? DEFAULT_RETENTION_MS;
+      const maxOperations = configuredMaxOperations ?? storedPolicy?.maxOperations ?? DEFAULT_MAX_OPERATIONS;
+      const maxEvents = configuredMaxEvents ?? storedPolicy?.maxEvents ?? DEFAULT_MAX_EVENTS;
       return new EventJournal(
         resolvedDatabaseFile,
         keyFile,
@@ -314,6 +338,32 @@ export class EventJournal implements RunStateStore {
     };
   }
 
+  policyLimits(): EventJournalPolicyLimits {
+    return structuredClone(EVENT_JOURNAL_POLICY_LIMITS);
+  }
+
+  updatePolicy(update: EventJournalPolicyUpdate): EventJournalPolicy {
+    const next = validateUserPolicy(update);
+    const statement = this.database.prepare(`
+      INSERT INTO journal_settings (key, value_integer, auth_tag) VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value_integer = excluded.value_integer, auth_tag = excluded.auth_tag
+    `);
+    this.database.transaction(() => {
+      statement.run("retention_ms", next.retentionMs, policyAuthTag(this.key, "retention_ms", next.retentionMs));
+      statement.run(
+        "max_operations",
+        next.maxOperations,
+        policyAuthTag(this.key, "max_operations", next.maxOperations),
+      );
+      statement.run("max_events", next.maxEvents, policyAuthTag(this.key, "max_events", next.maxEvents));
+      this.cleanupRows(next.retentionMs, next.maxOperations, next.maxEvents);
+    })();
+    this.retentionMs = next.retentionMs;
+    this.maxOperations = next.maxOperations;
+    this.maxEvents = next.maxEvents;
+    return this.policy();
+  }
+
   workspaceSummary(cwd: string): WorkspaceJournalSummary {
     this.cleanup();
     const row = this.database.prepare(`
@@ -399,13 +449,18 @@ export class EventJournal implements RunStateStore {
   }
 
   private cleanup(): void {
-    const cutoff = this.now() - this.retentionMs;
-    const cleanup = this.database.transaction(() => {
-      this.database.prepare(`
+    this.database.transaction(() => {
+      this.cleanupRows(this.retentionMs, this.maxOperations, this.maxEvents);
+    })();
+  }
+
+  private cleanupRows(retentionMs: number, maxOperations: number, maxEvents: number): void {
+    const cutoff = this.now() - retentionMs;
+    this.database.prepare(`
         DELETE FROM operations
         WHERE status != 'running' AND COALESCE(completed_at, started_at) < ?
       `).run(cutoff);
-      this.database.prepare(`
+    this.database.prepare(`
         DELETE FROM operations
         WHERE id IN (
           SELECT id FROM operations
@@ -413,16 +468,14 @@ export class EventJournal implements RunStateStore {
           ORDER BY COALESCE(completed_at, started_at) DESC
           LIMIT -1 OFFSET ?
         )
-      `).run(this.maxOperations);
-      this.database.prepare("DELETE FROM events WHERE created_at < ?").run(cutoff);
-      this.database.prepare(`
+      `).run(maxOperations);
+    this.database.prepare("DELETE FROM events WHERE created_at < ?").run(cutoff);
+    this.database.prepare(`
         DELETE FROM events
         WHERE cursor IN (
           SELECT cursor FROM events ORDER BY cursor DESC LIMIT -1 OFFSET ?
         )
-      `).run(this.maxEvents);
-    });
-    cleanup();
+      `).run(maxEvents);
   }
 
   private workspaceIndex(cwd: string): string {
@@ -489,8 +542,61 @@ function initializeSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS events_workspace_cursor
       ON events(workspace_index, cursor);
+    CREATE TABLE IF NOT EXISTS journal_settings (
+      key TEXT PRIMARY KEY NOT NULL,
+      value_integer INTEGER NOT NULL,
+      auth_tag TEXT NOT NULL
+    );
   `);
   database.pragma(`user_version = ${SCHEMA_VERSION}`);
+}
+
+function loadStoredPolicy(database: Database.Database, key: Buffer): EventJournalPolicyUpdate | undefined {
+  const rows = database.prepare(`
+    SELECT key, value_integer, auth_tag FROM journal_settings
+    WHERE key IN ('retention_ms', 'max_operations', 'max_events')
+  `).all() as Array<{ key: string; value_integer: number; auth_tag: string }>;
+  if (rows.length === 0) return undefined;
+  if (rows.length !== 3) throw new Error("Event journal retention policy is incomplete");
+  for (const row of rows) {
+    const expected = policyAuthTag(key, row.key, row.value_integer);
+    if (!/^[a-f0-9]{64}$/.test(row.auth_tag) || !timingSafeEqual(Buffer.from(row.auth_tag), Buffer.from(expected))) {
+      throw new Error("Event journal retention policy cannot be authenticated");
+    }
+  }
+  const values = new Map(rows.map((row) => [row.key, row.value_integer]));
+  return validateUserPolicy({
+    retentionMs: values.get("retention_ms")!,
+    maxOperations: values.get("max_operations")!,
+    maxEvents: values.get("max_events")!,
+  });
+}
+
+function policyAuthTag(key: Buffer, name: string, value: number): string {
+  return createHmac("sha256", key).update(`retention-policy\0${name}\0${value}`).digest("hex");
+}
+
+function validateUserPolicy(update: EventJournalPolicyUpdate): EventJournalPolicyUpdate {
+  return {
+    retentionMs: boundedPolicyInteger(update.retentionMs, EVENT_JOURNAL_POLICY_LIMITS.retentionMs, "retentionMs"),
+    maxOperations: boundedPolicyInteger(
+      update.maxOperations,
+      EVENT_JOURNAL_POLICY_LIMITS.maxOperations,
+      "maxOperations",
+    ),
+    maxEvents: boundedPolicyInteger(update.maxEvents, EVENT_JOURNAL_POLICY_LIMITS.maxEvents, "maxEvents"),
+  };
+}
+
+function boundedPolicyInteger(
+  value: number,
+  limits: { minimum: number; maximum: number },
+  name: string,
+): number {
+  if (!Number.isSafeInteger(value) || value < limits.minimum || value > limits.maximum) {
+    throw new Error(`Event journal ${name} must be an integer between ${limits.minimum} and ${limits.maximum}`);
+  }
+  return value;
 }
 
 async function loadOrCreateKey(path: string): Promise<Buffer> {

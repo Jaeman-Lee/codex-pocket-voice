@@ -71,6 +71,7 @@ import type {
   DeviceTarget,
   HistoryItem,
   JournalPolicy,
+  JournalPolicyLimits,
   Operation,
   OperationMetadataPatch,
   MediaItem,
@@ -224,6 +225,8 @@ export function App() {
   const [decidingApprovalId, setDecidingApprovalId] = useState<string | null>(null);
   const [updatingOperationId, setUpdatingOperationId] = useState<string | null>(null);
   const [journalPolicy, setJournalPolicy] = useState<JournalPolicy | null>(null);
+  const [journalPolicyLimits, setJournalPolicyLimits] = useState<JournalPolicyLimits | null>(null);
+  const [updatingJournalPolicy, setUpdatingJournalPolicy] = useState(false);
   const [exportingWorkspace, setExportingWorkspace] = useState<string | null>(null);
   const [deletingWorkspace, setDeletingWorkspace] = useState<string | null>(null);
   const [journal] = useState(createWorkJournal);
@@ -506,8 +509,8 @@ export function App() {
           .catch(() => ({ operations: [] })),
         api<{ approvals: ApprovalItem[] }>("/api/approvals")
           .catch(() => ({ approvals: [] })),
-        api<{ policy: JournalPolicy }>("/api/journal/policy")
-          .catch(() => ({ policy: null })),
+        api<{ policy: JournalPolicy; limits: JournalPolicyLimits }>("/api/journal/policy")
+          .catch(() => ({ policy: null, limits: null })),
       ]);
       setConnectionText(`${health.device.name} · ${health.userAgent}`);
       setConnection("online");
@@ -517,6 +520,7 @@ export function App() {
       setOperationSnapshots(runData.operations);
       setApprovalInbox(activeApprovals(approvalData.approvals));
       setJournalPolicy(journalData.policy);
+      setJournalPolicyLimits(journalData.limits);
       const storedProvider = localStorage.getItem(storageKey("provider", deviceRef.current));
       let selectedProvider = providerData.providers.find((item) => item.id === storedProvider && item.available)
         ?? providerData.providers.find((item) => item.id === "codex")
@@ -944,8 +948,8 @@ export function App() {
         api<{ operations: Operation[] }>("/api/runs"),
         api<{ approvals: ApprovalItem[] }>("/api/approvals"),
         api<WorkspaceResponse>("/api/workspaces"),
-        api<{ policy: JournalPolicy }>("/api/journal/policy")
-          .catch(() => ({ policy: null })),
+        api<{ policy: JournalPolicy; limits: JournalPolicyLimits }>("/api/journal/policy")
+          .catch(() => ({ policy: null, limits: null })),
       ]);
       if (deviceRef.current !== requestedDevice) return;
       setOperationSnapshots(runData.operations);
@@ -953,6 +957,7 @@ export function App() {
       setWorkspaces(workspaceData.workspaces);
       setCreationLocations(workspaceData.creationLocations);
       setJournalPolicy(journalData.policy);
+      setJournalPolicyLimits(journalData.limits);
       if (!silent) showToast("프로젝트 작업 상태를 새로 확인했습니다.");
     } catch (error) {
       if (!silent && deviceRef.current === requestedDevice) showToast(errorMessage(error));
@@ -1101,6 +1106,11 @@ export function App() {
         setOperation(null);
         stopRunning();
       }
+      return;
+    }
+    if (event.type === "journal" && event.action === "policy_updated" && event.policy) {
+      setJournalPolicy(event.policy);
+      void refreshOperationalSnapshot(true);
       return;
     }
     if (event.type === "journal" && event.action === "reset") {
@@ -1750,6 +1760,8 @@ export function App() {
     setShowOperationsDashboard(false);
     setDecidingApprovalId(null);
     setJournalPolicy(null);
+    setJournalPolicyLimits(null);
+    setUpdatingJournalPolicy(false);
     setExportingWorkspace(null);
     setDeletingWorkspace(null);
     replayingEventsRef.current = false;
@@ -2520,6 +2532,34 @@ export function App() {
     }
   }
 
+  async function updateCompanionJournalPolicy(policy: JournalPolicy) {
+    if (updatingJournalPolicy) return false;
+    const requestedDevice = deviceRef.current;
+    setUpdatingJournalPolicy(true);
+    try {
+      const data = await api<{ policy: JournalPolicy; limits: JournalPolicyLimits }>("/api/journal/policy", {
+        method: "PUT",
+        body: {
+          retentionMs: policy.retentionMs,
+          maxOperations: policy.maxOperations,
+          maxEvents: policy.maxEvents,
+          confirm: "apply-retention-policy",
+        },
+      });
+      if (deviceRef.current !== requestedDevice) return false;
+      setJournalPolicy(data.policy);
+      setJournalPolicyLimits(data.limits);
+      await refreshOperationalSnapshot(true);
+      showToast("Companion 보존 정책을 저장하고 오래된 기록을 정리했습니다.");
+      return true;
+    } catch (error) {
+      if (deviceRef.current === requestedDevice) showToast(errorMessage(error));
+      return false;
+    } finally {
+      if (deviceRef.current === requestedDevice) setUpdatingJournalPolicy(false);
+    }
+  }
+
   async function updateOperationMetadata(current: Operation, patch: OperationMetadataPatch) {
     if (updatingOperationId) return false;
     setUpdatingOperationId(current.id);
@@ -2748,12 +2788,15 @@ export function App() {
           decidingApprovalId={decidingApprovalId}
           updatingOperationId={updatingOperationId}
           journalPolicy={journalPolicy}
+          journalPolicyLimits={journalPolicyLimits}
+          updatingJournalPolicy={updatingJournalPolicy}
           exportingWorkspace={exportingWorkspace}
           deletingWorkspace={deletingWorkspace}
           onClose={() => setShowOperationsDashboard(false)}
           onRefresh={() => void refreshOperationalSnapshot(false)}
           onOpenOperation={openOperationFromDashboard}
           onUpdateOperation={updateOperationMetadata}
+          onUpdateJournalPolicy={updateCompanionJournalPolicy}
           onDecision={(approval, decision) => void decideApproval(approval, decision)}
           onExportWorkspace={exportCompanionJournal}
           onDeleteWorkspaceHistory={deleteCompanionJournal}

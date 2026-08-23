@@ -24,7 +24,7 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | OpenAI API milestone | official SDK 6.49.0 | encrypted bounded `store:false` multi-turn replay and fake tool-loop/SSE/Models tests; no API key configured and no paid request sent |
 | OpenRouter milestone | Chat Completions + Models HTTP API | encrypted bounded multi-turn replay and fake strict-routing/tool-loop/SSE tests; no API key configured and no paid request sent |
 | Android journal milestone | app-owned SQLite schema 1 | encrypted snapshot migration and rollback mirror implemented; CI-only, no device migration performed |
-| Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, policy summary, bounded workspace JSON export and protected delete implemented; no field restart performed |
+| Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, HMAC-authenticated bounded user retention, workspace JSON export and protected delete implemented; no field restart performed |
 | Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation, touch-only approvals, durable goal/pin/archive and two-touch history deletion implemented; no field APK handed off |
 | Android work notifications | opt-in native channel | generic private completed/approval/error alerts and authenticated retained-operation navigation implemented while WebView SSE is alive; process-death delivery and field acceptance pending |
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; restart recovery; delete/directory/chmod/binary blocked; check/test/build only |
@@ -78,6 +78,13 @@ Android notification checkpoint decision: opt-in native 완료·승인·오류 �
 token과 bounded device/operation ID만 전달한다. 이 checkpoint도 source와 CI-only APK만 갱신하며 APK
 전달·설치, Companion 재시작과 실기기 권한·deep-link acceptance는 수행하지 않는다. current v1 후보
 1.8.2와 검증된 rollback 1.8.1을 그대로 보존한다.
+
+User retention checkpoint decision: Companion journal의 기간·operation·event 상한을 사용자가 bounded
+범위에서 조정하고 즉시 정리하는 v2 기능이므로 기존 `breaking`/`2.0.0`, Android `versionCode 20000`,
+대상 `feature/v2-control-plane`을 유지한다. 설정은 schema 1 additive table에 key-HMAC으로 인증하고,
+same-origin API 확인값과 모바일 두 번째 터치를 요구한다. 이 checkpoint도 source와 CI-only APK만
+갱신하며 APK 전달·설치, Companion 재시작과 실제 사용자 기록 migration을 수행하지 않는다. current
+v1 후보 1.8.2와 검증된 rollback 1.8.1을 그대로 보존한다.
 
 Approved API tool checkpoint decision: 기존 텍스트 파일 한 개의 검토된 교체와 격리된 npm 검증을
 OpenAI/OpenRouter run에 추가하는 v2 기능이므로 `breaking`/`2.0.0`, Android `versionCode 20000`,
