@@ -95,8 +95,8 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   이후 PocketLink 요청에서 인증서 누락·만료·pin 불일치를 거부한다. 기존 v1 auth state는 version을
   바꾸지 않는 선택 필드로 확장하고 TLS binding을 임의로 만들지 않으며, TLS session resume을 꺼 매
   연결에서 새 proof를 요구한다.
-- 이 PocketLink checkpoint는 수동 LAN bootstrap이다. discovery/P2P, relay, client-device key rotation,
-  background 계측은 남아 있으며 Termux/SSH를 검증된 rollback adapter로 유지한다.
+- 이 PocketLink checkpoint는 수동 LAN bootstrap이다. discovery/P2P, relay와 background 계측은 남아
+  있으며 Termux/SSH를 검증된 rollback adapter로 유지한다.
 - PocketLink QR bootstrap을 추가했다. TTY Companion은 host·TLS port·server SPKI pin·device ID/name과
   기존 10분 pairing code만 담은 QR을 출력하고 Provider key·프로젝트 경로는 포함하지 않는다. Android는
   Apache-2.0 ZXing embedded scanner를 로컬에서 QR_CODE 전용·이미지 미저장·2분 timeout으로 실행한다.
@@ -107,6 +107,11 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   시각만 표시하고, 사용자가 2분 안에 대상·폐기 경고를 두 번 확인해야 native 계층이 새 pin을 primary로
   옮기고 이전 pin을 제거한다. 전환 취소 시에는 staged backup pin만 제거할 수 있으며, 실패·시간 만료
   때는 승격하거나 SSH로 우회하지 않는다.
+- Android PocketLink client identity를 Keystore A/B 슬롯으로 교체하는 복구 가능 protocol을 추가했다.
+  시작은 현재 bearer와 기존 key의 실제 mTLS proof를 모두 요구하고 5분 승인 원문은 Android 보안
+  저장소, hash만 Companion `0600` state에 남긴다. 새 key의 TLS proof와 서버 영속화를 확인한 뒤에만
+  이전 alias를 삭제하며, 만료 전 중단은 기존 key를 보존하고 응답이 불확실하면 두 key를 모두 유지한다.
+  완료된 서버 binding은 중단으로 되돌리거나 Termux/SSH로 자동 우회하지 않는다.
 - 이 기준선은 CI·개발용이며 v1.8.1 설치본이나 실행 중인 Companion을 교체하지 않는다.
 
 ## 1.8.2 hotfix candidate — project-scoped session handoff

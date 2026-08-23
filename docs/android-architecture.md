@@ -44,8 +44,12 @@ Companion에 개인키 보유를 증명한다. 최초 Gateway pairing은 client 
 결합하며 이후 PocketLink 요청은 둘이 모두 일치해야 한다. 10분 QR bootstrap도 구현되어 Android의
 로컬 QR scanner가 host·port·server pin·device ID와 pairing code를 읽고 검토 후 등록한다. 서버
 인증서 교체는 새 backup pin을 먼저 저장하고 실제 backup handshake 성공을 관찰한 뒤에만 두 번의
-화면 확인으로 이전 pin을 폐기한다. 자동 discovery/P2P, relay와 client-device key rotation은 아직
-구현하지 않았다. 자세한 설정과 보안 경계는
+화면 확인으로 이전 pin을 폐기한다. client-device key 교체는 현재 key의 mTLS proof로 받은 5분 승인을
+Keystore-backed 보안 저장소에 두고, 현재 alias를 보존한 채 반대 A/B 슬롯에 새 non-exportable key를
+만든다. 새 key의 실제 TLS proof를 Companion이 영속화하고 이전 binding을 거부한 뒤에만 native 계층이
+이전 alias를 삭제한다. 암호화 pending 슬롯은 앱 process 회수와 응답 유실 뒤 복구되며, 불확실하면 두
+key를 유지하고 SSH로 자동 우회하지 않는다. 자동 discovery/P2P와 relay는 아직 구현하지 않았다.
+자세한 설정과 보안 경계는
 [PocketLink TLS bootstrap](pocket-link.md)에 있다.
 
 ## 완전 독립형 SSH의 호환 후속 단계

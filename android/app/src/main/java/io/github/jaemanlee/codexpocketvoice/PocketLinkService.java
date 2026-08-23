@@ -55,6 +55,7 @@ public class PocketLinkService extends Service {
     private static final ConcurrentHashMap<Integer, Forwarder> RUNNING = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Integer, String> ERRORS = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Integer, PinObservation> PIN_OBSERVATIONS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Integer, String> ACTIVE_IDENTITY_SLOTS = new ConcurrentHashMap<>();
 
     private ExecutorService controlExecutor;
     private ExecutorService connectionExecutor;
@@ -90,6 +91,11 @@ public class PocketLinkService extends Service {
                         observation.pin.getBytes(StandardCharsets.UTF_8),
                         expectedPin.getBytes(StandardCharsets.UTF_8)
                 );
+    }
+
+    static boolean identitySlotActive(int localPort, String expectedSlot) {
+        String activeSlot = ACTIVE_IDENTITY_SLOTS.get(localPort);
+        return activeSlot != null && activeSlot.equals(expectedSlot);
     }
 
     static void clearPinSlot(int localPort) {
@@ -131,6 +137,7 @@ public class PocketLinkService extends Service {
         for (Forwarder forwarder : RUNNING.values()) forwarder.close();
         RUNNING.clear();
         PIN_OBSERVATIONS.clear();
+        ACTIVE_IDENTITY_SLOTS.clear();
         if (controlExecutor != null) controlExecutor.shutdownNow();
         if (connectionExecutor != null) connectionExecutor.shutdownNow();
         super.onDestroy();
@@ -166,6 +173,7 @@ public class PocketLinkService extends Service {
         Forwarder previous = RUNNING.remove(config.localPort);
         if (previous != null) previous.close();
         PIN_OBSERVATIONS.remove(config.localPort);
+        ACTIVE_IDENTITY_SLOTS.remove(config.localPort);
         if (RUNNING.size() >= MAX_LINKS) {
             ERRORS.put(config.localPort, "PocketLink 등록 한도를 초과했습니다.");
             updateNotification("PocketLink 등록 한도를 초과했습니다.");
@@ -173,10 +181,14 @@ public class PocketLinkService extends Service {
         }
         Forwarder forwarder = null;
         try {
-            PocketLinkIdentityStore.Identity identity = new PocketLinkIdentityStore().ensure(config.localPort);
+            PocketLinkIdentityStore.Identity identity = new PocketLinkIdentityStore().ensure(
+                    config.localPort,
+                    config.effectiveIdentitySlot()
+            );
             forwarder = new Forwarder(config, identity, connectionExecutor);
             forwarder.start();
             RUNNING.put(config.localPort, forwarder);
+            ACTIVE_IDENTITY_SLOTS.put(config.localPort, config.effectiveIdentitySlot());
             ERRORS.remove(config.localPort);
             updateNotification(config.label + "의 암호화 요청을 기다리는 중");
         } catch (Exception error) {
@@ -191,6 +203,7 @@ public class PocketLinkService extends Service {
         if (forwarder != null) forwarder.close();
         ERRORS.remove(localPort);
         PIN_OBSERVATIONS.remove(localPort);
+        ACTIVE_IDENTITY_SLOTS.remove(localPort);
         if (disable) {
             try {
                 configStore.setActive(localPort, false);

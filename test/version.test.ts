@@ -23,4 +23,5 @@ test("application version has one package source of truth", async () => {
   assert.equal(GATEWAY_CAPABILITIES.pocketLinkMtls, true);
   assert.equal(GATEWAY_CAPABILITIES.pocketLinkQr, true);
   assert.equal(GATEWAY_CAPABILITIES.pocketLinkPinRotation, true);
+  assert.equal(GATEWAY_CAPABILITIES.pocketLinkIdentityRotation, true);
 });

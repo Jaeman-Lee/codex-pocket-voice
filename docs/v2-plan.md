@@ -25,7 +25,7 @@
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 읽기 도구, SHA-bound 단일 파일 교체와 격리 npm 검증 구현; 다중 파일 patch·durable multi-turn 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, live branch/worktree identity, workspace export/protected delete 구현; 사용자 retention 설정·pin/archive·native 알림 잔여 |
-| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, Android Keystore P-256 device certificate·server/client SPKI binding·connectedDevice loopback forward 구현; relay·rotation·background release gate 잔여 |
+| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion과 recoverable A/B client-key rotation 구현; discovery/P2P·relay·background release gate 잔여 |
 
 ## 2. 제품 정의
 
@@ -360,8 +360,13 @@ certificate proof를 제공하고, Companion은 최초 pairing의 client SPKI pi
 PocketLink 요청마다 인증서 유효기간과 binding을 확인하며 TLS session resume을 허용하지 않는다.
 Companion TTY는 공개 연결 정보와 기존 10분 pairing code만 담은 QR을 출력하고 Android는 QR_CODE만
 로컬 스캔한다. 앱은 QR을 저장하지 않고 등록 전 host·port·pin·device·만료를 검토시키며, 실제 연결의
-device ID가 다르면 pairing code를 사용하지 않는다. LAN discovery, relay fallback, key rotation
-protocol과 실기기 background release gate는 남아 있다.
+device ID가 다르면 pairing code를 사용하지 않는다. 서버 인증서는 실제 backup-pin handshake 관찰과
+두 번의 화면 확인 뒤에만 이전 pin을 폐기한다. Android client identity는 현재 mTLS proof로 5분 승인을
+받고 Keystore A/B 슬롯에 새 non-exportable key를 준비한다. Companion이 새 key의 실제 TLS proof를
+영속화하고 이전 binding을 거부한 뒤에만 Android가 이전 alias를 삭제한다. 승인 hash와 pending 슬롯은
+각각 Companion `0600` state와 Android 암호화 설정에 남아 재시작·응답 유실을 복구하며, 불확실하면 두
+key를 모두 유지하고 자동 downgrade하지 않는다. LAN discovery/P2P, relay fallback과 실기기 background
+release gate는 남아 있다.
 
 완료 조건: Termux 없이 핵심 흐름이 동작하고, 연결 실패 시 비밀정보를 노출하거나 다른 Provider로
 우회하지 않으며 1.8.1로 복구할 수 있다.

@@ -96,8 +96,9 @@ Keystore-backed AES-GCM storage, listens only on loopback, verifies certificate 
 primary/backup SPKI pins, and never silently downgrades to Termux. The first non-exportable Android P-256 device
 identity, pairing-bound mTLS proof and reviewed 10-minute QR bootstrap are implemented. Server-certificate rotation
 can stage a backup pin, requires an observed successful backup-pin handshake, and uses a two-touch promotion that
-retires the prior pin. LAN discovery/P2P, relay fallback, client-device key rotation and field battery/background
-measurements remain open.
+retires the prior pin. Android client-device identity rotation now uses a reviewed five-minute approval, durable
+Keystore A/B slots and actual new-key mTLS proof before the prior alias is retired; uncertain responses preserve both
+slots for recovery. LAN discovery/P2P, relay fallback and field battery/background measurements remain open.
 
 ## Final definition of done
 

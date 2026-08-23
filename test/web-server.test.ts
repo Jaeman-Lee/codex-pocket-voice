@@ -118,6 +118,100 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   );
   assert.equal(wrongTlsIdentity.status, 401);
   assert.equal(wrongTlsIdentity.body.code, "TLS_DEVICE_MISMATCH");
+  const nonTlsRotationStart = await fetch(`${base}/api/pairing/tls-key-rotation/start`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${tlsPaired.body.token}`,
+      Origin: "http://localhost",
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+  assert.equal(nonTlsRotationStart.status, 401);
+  assert.equal(((await nonTlsRotationStart.json()) as { code?: string }).code, "TLS_DEVICE_PROOF_REQUIRED");
+  const rotationStart = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    clientIdentity,
+    {
+      path: "/api/pairing/tls-key-rotation/start",
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tlsPaired.body.token}`,
+        Origin: "http://localhost",
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    },
+  );
+  assert.equal(rotationStart.status, 201);
+  assert.match(rotationStart.body.rotationToken, /^[A-Za-z0-9_-]{43}$/);
+  const rotationPending = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    otherClientIdentity,
+    {
+      path: "/api/pairing/tls-key-rotation/status",
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tlsPaired.body.token}`,
+        Origin: "http://localhost",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ rotationToken: rotationStart.body.rotationToken }),
+    },
+  );
+  assert.equal(rotationPending.status, 200);
+  assert.equal(rotationPending.body.status, "pending");
+  const rotationCompleted = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    otherClientIdentity,
+    {
+      path: "/api/pairing/tls-key-rotation/complete",
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tlsPaired.body.token}`,
+        Origin: "http://localhost",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ rotationToken: rotationStart.body.rotationToken }),
+    },
+  );
+  assert.equal(rotationCompleted.status, 200);
+  assert.equal(rotationCompleted.body.previousKeyRetired, true);
+  const retiredTlsIdentity = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    clientIdentity,
+    { path: "/api/health", headers: { Authorization: `Bearer ${tlsPaired.body.token}` } },
+  );
+  assert.equal(retiredTlsIdentity.status, 401);
+  assert.equal(retiredTlsIdentity.body.code, "TLS_DEVICE_MISMATCH");
+  const rotatedTlsHealth = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    otherClientIdentity,
+    { path: "/api/health", headers: { Authorization: `Bearer ${tlsPaired.body.token}` } },
+  );
+  assert.equal(rotatedTlsHealth.status, 200);
+  const rotationFinalized = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    otherClientIdentity,
+    {
+      path: "/api/pairing/tls-key-rotation/finalize",
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tlsPaired.body.token}`,
+        Origin: "http://localhost",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ rotationToken: rotationStart.body.rotationToken }),
+    },
+  );
+  assert.equal(rotationFinalized.status, 200);
+  assert.equal(rotationFinalized.body.finalized, true);
 
   const page = await fetch(`${base}/`);
   assert.equal(page.status, 200);

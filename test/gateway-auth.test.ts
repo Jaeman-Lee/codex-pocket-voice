@@ -57,6 +57,85 @@ test("gateway auth binds PocketLink bearer tokens to the TLS device public key",
   assert.equal(saved.clients[1].tlsPublicKeyPin, firstPin);
 });
 
+test("gateway auth rotates a PocketLink TLS device key only after the new key proves possession", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-pocket-auth-tls-rotation-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const stateFile = join(directory, "auth.json");
+  const firstPin = `sha256/${Buffer.alloc(32, 3).toString("base64")}`;
+  const secondPin = `sha256/${Buffer.alloc(32, 4).toString("base64")}`;
+  const auth = await GatewayAuth.create({ stateFile, pairingCode: "33445566" });
+  const paired = await auth.claim("33445566", "Rotating phone", firstPin);
+  const authorization = `Bearer ${paired.token}`;
+
+  await assert.rejects(
+    auth.startTlsKeyRotation(paired.client.id, undefined),
+    (error: unknown) => error instanceof GatewayAuthError && error.code === "TLS_DEVICE_PROOF_REQUIRED",
+  );
+  const started = await auth.startTlsKeyRotation(paired.client.id, firstPin);
+  assert.match(started.rotationToken, /^[A-Za-z0-9_-]{43}$/);
+  await assert.rejects(
+    auth.startTlsKeyRotation(paired.client.id, firstPin),
+    (error: unknown) => error instanceof GatewayAuthError && error.code === "TLS_KEY_ROTATION_ALREADY_PENDING",
+  );
+  assert.equal((await auth.inspectTlsKeyRotation(authorization, started.rotationToken, secondPin)).status, "pending");
+  await assert.rejects(
+    auth.inspectTlsKeyRotation(authorization, started.rotationToken, firstPin),
+    (error: unknown) => error instanceof GatewayAuthError && error.code === "TLS_KEY_ROTATION_STATE_MISMATCH",
+  );
+  assert.throws(
+    () => auth.requireAuthorization(authorization, secondPin),
+    (error: unknown) => error instanceof GatewayAuthError && error.code === "TLS_DEVICE_MISMATCH",
+  );
+
+  const completed = await auth.completeTlsKeyRotation(authorization, started.rotationToken, secondPin);
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.previousKeyRetired, true);
+  assert.equal(auth.requireAuthorization(authorization, secondPin).tlsBound, true);
+  assert.throws(
+    () => auth.requireAuthorization(authorization, firstPin),
+    (error: unknown) => error instanceof GatewayAuthError && error.code === "TLS_DEVICE_MISMATCH",
+  );
+
+  const savedBeforeFinalize = await readFile(stateFile, "utf8");
+  assert.doesNotMatch(savedBeforeFinalize, new RegExp(started.rotationToken));
+  assert.equal(JSON.parse(savedBeforeFinalize).version, 1);
+  const restored = await GatewayAuth.create({ stateFile, pairingCode: "77889900" });
+  assert.equal((await restored.inspectTlsKeyRotation(authorization, started.rotationToken, secondPin)).status, "completed");
+  assert.equal((await restored.completeTlsKeyRotation(authorization, started.rotationToken, secondPin)).status, "completed");
+  assert.equal((await restored.finalizeTlsKeyRotation(authorization, started.rotationToken, secondPin)).finalized, true);
+  const savedAfterFinalize = JSON.parse(await readFile(stateFile, "utf8"));
+  assert.equal(savedAfterFinalize.clients[0].tlsPublicKeyPin, secondPin);
+  assert.equal(savedAfterFinalize.clients[0].tlsKeyRotation, undefined);
+});
+
+test("gateway auth can abort or expire an uncompleted PocketLink key rotation without changing the old binding", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-pocket-auth-tls-rotation-abort-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let now = Date.parse("2026-08-24T00:00:00.000Z");
+  const auth = await GatewayAuth.create({
+    stateFile: join(directory, "auth.json"),
+    pairingCode: "55667788",
+    now: () => now,
+  });
+  const firstPin = `sha256/${Buffer.alloc(32, 5).toString("base64")}`;
+  const secondPin = `sha256/${Buffer.alloc(32, 6).toString("base64")}`;
+  const paired = await auth.claim("55667788", "Abort phone", firstPin);
+  const authorization = `Bearer ${paired.token}`;
+
+  const firstAttempt = await auth.startTlsKeyRotation(paired.client.id, firstPin);
+  const aborted = await auth.abortTlsKeyRotation(authorization, firstAttempt.rotationToken, secondPin);
+  assert.equal(aborted.retainedPreviousKey, true);
+  assert.equal(auth.requireAuthorization(authorization, firstPin).tlsBound, true);
+
+  const secondAttempt = await auth.startTlsKeyRotation(paired.client.id, firstPin);
+  now += 5 * 60_000 + 1;
+  await assert.rejects(
+    auth.inspectTlsKeyRotation(authorization, secondAttempt.rotationToken, secondPin),
+    (error: unknown) => error instanceof GatewayAuthError && error.code === "TLS_KEY_ROTATION_EXPIRED",
+  );
+  assert.equal(auth.requireAuthorization(authorization, firstPin).tlsBound, true);
+});
+
 test("gateway auth keeps the v1 rollback schema and does not invent a TLS binding", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "codex-pocket-auth-v1-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

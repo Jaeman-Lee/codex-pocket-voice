@@ -73,7 +73,8 @@ port와 SPKI pin을 직접 입력할 수 있다. 선택적으로 서로 다른 �
   연결에서 private-key proof를 새로 확인한다.
 - pin 불일치나 설정 손상 때 Termux/SSH로 자동 downgrade하지 않는다.
 - Gateway bearer token은 기존처럼 Android 보안 저장소에 두며 Companion에는 hash만 남긴다.
-- PocketLink 등록을 삭제하면 암호화 연결 설정과 해당 local-port device identity를 함께 삭제한다.
+- PocketLink 등록을 삭제하면 암호화 연결 설정과 해당 local-port의 현재·교체 대기 device identity를
+  함께 삭제한다.
 - QR에서 읽은 host·port·server pin 중 하나를 사용자가 편집하면 QR pairing code를 폐기한다. 연결 후
   `/api/pairing/status`의 실제 Companion device ID가 QR과 달라도 code를 채우지 않는다.
 
@@ -106,6 +107,30 @@ Companion과 Android 기기에서 먼저 검증한다.
 process가 끝나면 사라진다. 시간 만료·hostname 실패·pin 불일치·설정 오류 때 자동 승격하거나
 Termux/SSH로 downgrade하지 않는다.
 
+## Android 단말 identity key 교체
+
+Android client identity도 기존 key를 자동으로 덮어쓰지 않는 A/B 슬롯 절차로 교체한다. AI 연결
+센터에서 현재 선택되고 이미 페어링된 정확한 PocketLink 대상을 `단말 key 교체`로 검토한 뒤 두 번째
+터치에서만 시작한다. 서버 인증서 pin 교체가 진행 중이면 두 절차를 동시에 시작하지 않는다.
+
+1. 현재 bearer token과 현재 Android identity의 실제 mTLS proof가 모두 일치할 때만 Companion이
+   5분 유효 1회용 교체 승인을 만든다. 원문 승인은 Android의 Keystore-backed 보안 저장소에만 두고,
+   Companion의 mode `0600` auth state에는 SHA-256 hash, 이전 공개 SPKI pin과 만료 시각만 기록한다.
+2. Android는 현재 슬롯을 보존한 채 반대 슬롯에 새 non-exportable P-256 key/certificate를 만들고,
+   암호화 PocketLink 설정에 pending 슬롯을 기록한 뒤 forwarder를 새 슬롯으로 다시 연다. pending
+   상태는 WebView나 앱 process가 종료돼도 남고 private key bytes는 Java·WebView 밖으로 나오지 않는다.
+3. 앱은 1회용 승인과 새 certificate의 실제 TLS proof로 Companion 상태를 조회한다. 아직 pending이면
+   Companion이 새 SPKI pin을 영속화하고 즉시 이전 certificate를 거부한 뒤 `completed`를 반환한다.
+4. 앱은 Companion의 completed metadata 정리를 확인한 다음에만 Android의 이전 Keystore alias를
+   삭제하고 pending 슬롯을 현재 슬롯으로 확정한다. 이 순서 때문에 서버 응답 전에는 기존 private
+   key를 잃지 않는다.
+
+완료 응답이나 metadata 정리 응답이 유실되면 새 pending key로 상태 조회와 인증된 health 요청을 다시
+수행한다. Companion이 이미 새 key만 허용하면 Android가 새 슬롯을 확정하고, 완료 전 5분 승인이
+만료됐거나 사용자가 중단하면 Companion의 기존 binding을 확인한 뒤 pending key만 삭제한다. 네트워크
+결과가 불확실하면 어느 key도 자동 폐기하지 않고 `단말 key 교체 확인 필요` 상태를 유지한다. 이미
+완료된 교체는 중단 요청으로 되돌릴 수 없으며 Termux/SSH나 다른 Provider로 자동 downgrade하지 않는다.
+
 Android target SDK 36에서는 외부 Linux 장치와 지속적인 네트워크 연결이므로 `connectedDevice`
 foreground-service type을 사용한다. `dataSync` service는 Android 15+의 시간 제한 대상이라 장시간 SSE
 transport에 사용하지 않는다. 관련 기준은 Android 공식 문서의
@@ -119,8 +144,8 @@ QR-only capture activity를 사용하며 barcode image output을 끈다.
 이 checkpoint는 수동 LAN bootstrap이며 PocketLink의 최종 완료판이 아니다.
 
 - LAN discovery/P2P와 outbound relay fallback 미구현
-- Android device identity/client key rotation protocol 미구현
-- 서버 인증서 staged pin 교체는 구현됐지만 실기기·실제 LAN 전환 acceptance 미검증
+- 서버 인증서 staged pin 교체와 Android client identity A/B 교체는 구현됐지만 실기기·실제 LAN 전환
+  acceptance 미검증
 - 부팅 후 자동 복구, Android 계측 기반 CPU·메모리·배터리 release gate 미검증
 - 완료·승인·오류 알림 deep link 미구현
 

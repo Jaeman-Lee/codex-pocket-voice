@@ -391,7 +391,58 @@ async function handleApi(
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/pairing/tls-key-rotation/status") {
+    assertSameOrigin(request);
+    const body = await readJson(request) as { rotationToken?: unknown };
+    sendJson(response, 200, await auth.inspectTlsKeyRotation(
+      request.headers.authorization,
+      body.rotationToken,
+      tlsPublicKeyPin,
+    ));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/pairing/tls-key-rotation/complete") {
+    assertSameOrigin(request);
+    const body = await readJson(request) as { rotationToken?: unknown };
+    sendJson(response, 200, await auth.completeTlsKeyRotation(
+      request.headers.authorization,
+      body.rotationToken,
+      tlsPublicKeyPin,
+    ));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/pairing/tls-key-rotation/abort") {
+    assertSameOrigin(request);
+    const body = await readJson(request) as { rotationToken?: unknown };
+    sendJson(response, 200, await auth.abortTlsKeyRotation(
+      request.headers.authorization,
+      body.rotationToken,
+      tlsPublicKeyPin,
+    ));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/pairing/tls-key-rotation/finalize") {
+    assertSameOrigin(request);
+    const body = await readJson(request) as { rotationToken?: unknown };
+    sendJson(response, 200, await auth.finalizeTlsKeyRotation(
+      request.headers.authorization,
+      body.rotationToken,
+      tlsPublicKeyPin,
+    ));
+    return;
+  }
+
   const authenticatedClient = auth.requireAuthorization(request.headers.authorization, tlsPublicKeyPin);
+
+  if (request.method === "POST" && url.pathname === "/api/pairing/tls-key-rotation/start") {
+    assertSameOrigin(request);
+    await readJson(request, true);
+    sendJson(response, 201, await auth.startTlsKeyRotation(authenticatedClient.id, tlsPublicKeyPin));
+    return;
+  }
 
   if (request.method === "GET" && url.pathname === "/api/health") {
     const initialized = await options.client.start();

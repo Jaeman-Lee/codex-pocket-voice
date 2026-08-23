@@ -1,15 +1,23 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
+  abortActiveDeviceIdentityRotation,
   api,
   apiBlob,
   activeDeviceTarget,
   addLinuxDevice,
   ApiError,
+  beginActiveDeviceIdentityRotation,
+  clearActiveDeviceIdentityRotation,
+  completeActiveDeviceIdentityRotation,
   deviceTargetLabel,
+  finalizeActiveDeviceIdentityRotation,
+  inspectActiveDeviceIdentityRotation,
   listDeviceTargets,
+  loadActiveDeviceIdentityRotation,
   pairActiveDevice,
   pairingStatus,
   PairingRequiredError,
+  PocketLinkIdentityRotationRequiredError,
   removeDeviceTarget,
   setApiDevice,
   subscribeEvents,
@@ -44,6 +52,11 @@ import {
   pocketLinkSecurityStatus,
   POCKET_LINK_PIN_PROMOTION_MAX_AGE_MS,
 } from "./pocket-link-rotation";
+import {
+  abortPocketLinkIdentityRotationFlow,
+  finishPocketLinkIdentityRotationFlow,
+  type PocketLinkIdentityRotationPorts,
+} from "./pocket-link-identity-rotation";
 import type {
   ChatMessage,
   ApprovalItem,
@@ -188,6 +201,8 @@ export function App() {
   const [stagingPinBusy, setStagingPinBusy] = useState(false);
   const [confirmingPinPromotionTarget, setConfirmingPinPromotionTarget] = useState<DeviceId | null>(null);
   const [promotingPinTarget, setPromotingPinTarget] = useState<DeviceId | null>(null);
+  const [reviewingIdentityRotationTarget, setReviewingIdentityRotationTarget] = useState<DeviceId | null>(null);
+  const [rotatingIdentityTarget, setRotatingIdentityTarget] = useState<DeviceId | null>(null);
   const [uiLanguage, setUiLanguage] = useState<UiLanguage>(initialUiLanguage);
   const [speechLanguage, setSpeechLanguage] = useState(initialSpeechLanguage);
   const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null);
@@ -576,7 +591,12 @@ export function App() {
         setThreadId(cachedThread);
         threadRef.current = cachedThread;
       }
-      if (error instanceof PairingRequiredError) void requestPairing();
+      if (error instanceof PocketLinkIdentityRotationRequiredError) {
+        setPairing(null);
+        setShowConnectionCenter(true);
+      } else if (error instanceof PairingRequiredError) {
+        void requestPairing();
+      }
       showToast(errorMessage(error));
     } finally {
       initializingRef.current = false;
@@ -623,6 +643,13 @@ export function App() {
             void requestPairing();
             setConnection("pending");
             setConnectionText("페어링 필요");
+            return;
+          }
+          if (error instanceof PocketLinkIdentityRotationRequiredError) {
+            setPairing(null);
+            setShowConnectionCenter(true);
+            setConnection("pending");
+            setConnectionText("PocketLink 단말 key 교체 확인 필요");
             return;
           }
           setConnection("pending");
@@ -1320,6 +1347,7 @@ export function App() {
     setStagingPinTarget(null);
     setStagedBackupPin("");
     setConfirmingPinPromotionTarget(null);
+    setReviewingIdentityRotationTarget(null);
     setShowConnectionCenter(false);
   }
 
@@ -1878,6 +1906,10 @@ export function App() {
   }
 
   function reviewPocketLinkPinPromotion(target: DeviceTarget) {
+    if (pocketLinkStatuses[target.id]?.identityRotationPending) {
+      showToast("단말 identity key 교체를 먼저 완료하거나 중단해 주세요.");
+      return;
+    }
     if (!isRecentBackupPinObservation(pocketLinkStatuses[target.id])) {
       showToast("최근 2분 안에 교체용 pin으로 성공한 연결을 먼저 확인해 주세요.");
       void refreshPocketLinkStatuses(deviceTargets);
@@ -1885,11 +1917,17 @@ export function App() {
     }
     setStagingPinTarget(null);
     setStagedBackupPin("");
+    setReviewingIdentityRotationTarget(null);
     setConfirmingPinPromotionTarget(target.id);
   }
 
   function openPocketLinkPinStaging(target: DeviceTarget) {
+    if (pocketLinkStatuses[target.id]?.identityRotationPending) {
+      showToast("단말 identity key 교체를 먼저 완료하거나 중단해 주세요.");
+      return;
+    }
     setConfirmingPinPromotionTarget(null);
+    setReviewingIdentityRotationTarget(null);
     setStagingPinTarget(target.id);
     setStagedBackupPin("");
   }
@@ -1955,6 +1993,130 @@ export function App() {
       await refreshPocketLinkStatuses(deviceTargets);
     } finally {
       setPromotingPinTarget(null);
+    }
+  }
+
+  function reviewPocketLinkIdentityRotation(target: DeviceTarget) {
+    if (target.id !== deviceRef.current) {
+      showToast("위의 ‘확인할 단말’에서 이 Companion을 먼저 선택해 주세요.");
+      return;
+    }
+    if (!target.remoteDeviceId) {
+      showToast("단말 identity key 교체 전에 Companion 페어링을 완료해 주세요.");
+      return;
+    }
+    setStagingPinTarget(null);
+    setStagedBackupPin("");
+    setConfirmingPinPromotionTarget(null);
+    setReviewingIdentityRotationTarget(target.id);
+  }
+
+  async function waitForPocketLinkIdentity(target: DeviceTarget, pending: boolean): Promise<PocketLinkStatus> {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const status = await NativeTunnel.status({ localPort: deviceTargetLocalPort(target) });
+      setPocketLinkStatuses((current) => ({ ...current, [target.id]: status }));
+      if (status.identityRotationPending === pending && status.identityReady
+          && (!pending || status.identityRotationReady)) return status;
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    }
+    throw new Error("PocketLink 단말 identity 전환 준비가 끝나지 않았습니다.");
+  }
+
+  async function commitLocalPocketLinkIdentityRotation(target: DeviceTarget): Promise<void> {
+    const committed = await NativeTunnel.commitPocketLinkIdentityRotation({
+      localPort: deviceTargetLocalPort(target),
+    });
+    if (!committed.committed || !committed.retiredPreviousIdentity) {
+      throw new Error("Android의 이전 PocketLink 단말 identity 폐기를 확인할 수 없습니다.");
+    }
+    await waitForPocketLinkIdentity(target, false);
+    await clearActiveDeviceIdentityRotation();
+  }
+
+  async function abortLocalPocketLinkIdentityRotation(target: DeviceTarget): Promise<void> {
+    const aborted = await NativeTunnel.abortPocketLinkIdentityRotation({
+      localPort: deviceTargetLocalPort(target),
+    });
+    if (!aborted.aborted || !aborted.retainedPreviousIdentity) {
+      throw new Error("Android의 기존 PocketLink 단말 identity 복구를 확인할 수 없습니다.");
+    }
+    await waitForPocketLinkIdentity(target, false);
+    await clearActiveDeviceIdentityRotation();
+  }
+
+  function pocketLinkIdentityRotationPorts(target: DeviceTarget): PocketLinkIdentityRotationPorts {
+    return {
+      hasStoredApproval: async () => Boolean(await loadActiveDeviceIdentityRotation()),
+      waitForPendingIdentity: async () => { await waitForPocketLinkIdentity(target, true); },
+      inspectRemote: inspectActiveDeviceIdentityRotation,
+      completeRemote: completeActiveDeviceIdentityRotation,
+      finalizeRemote: finalizeActiveDeviceIdentityRotation,
+      abortRemote: async () => { await abortActiveDeviceIdentityRotation(); },
+      isNewIdentityAuthorized: async () => {
+        try {
+          await api<{ ok: boolean }>("/api/health");
+          return true;
+        } catch (error) {
+          if (error instanceof PocketLinkIdentityRotationRequiredError) return false;
+          throw error;
+        }
+      },
+      commitLocal: async () => { await commitLocalPocketLinkIdentityRotation(target); },
+      abortLocal: async () => { await abortLocalPocketLinkIdentityRotation(target); },
+    };
+  }
+
+  async function beginPocketLinkIdentityRotation(target: DeviceTarget) {
+    if (rotatingIdentityTarget) return;
+    if (target.id !== deviceRef.current) {
+      showToast("위의 ‘확인할 단말’에서 이 Companion을 먼저 선택해 주세요.");
+      return;
+    }
+    setRotatingIdentityTarget(target.id);
+    setReviewingIdentityRotationTarget(null);
+    try {
+      const status = await NativeTunnel.status({ localPort: deviceTargetLocalPort(target) });
+      if (!status.identityRotationPending) {
+        await waitForPocketLinkIdentity(target, false);
+        if (!await loadActiveDeviceIdentityRotation()) await beginActiveDeviceIdentityRotation();
+        const prepared = await NativeTunnel.preparePocketLinkIdentityRotation({
+          localPort: deviceTargetLocalPort(target),
+        });
+        if (!prepared.prepared) throw new Error("새 PocketLink 단말 identity 준비 결과를 확인할 수 없습니다.");
+      }
+      const result = await finishPocketLinkIdentityRotationFlow(pocketLinkIdentityRotationPorts(target));
+      initializedRef.current = false;
+      setAuthRevision((current) => current + 1);
+      showToast(result === "completed"
+        ? `${target.name}의 단말 key를 교체하고 이전 key를 폐기했습니다.`
+        : `${target.name}의 만료된 key 교체를 중단하고 기존 key를 복구했습니다.`);
+    } catch (error) {
+      await refreshPocketLinkStatuses(deviceTargets);
+      showToast(`${errorMessage(error)} 연결 센터에서 교체 상태를 다시 확인할 수 있습니다.`);
+    } finally {
+      setRotatingIdentityTarget(null);
+    }
+  }
+
+  async function abortPocketLinkIdentityRotation(target: DeviceTarget) {
+    if (rotatingIdentityTarget) return;
+    if (target.id !== deviceRef.current) {
+      showToast("위의 ‘확인할 단말’에서 이 Companion을 먼저 선택해 주세요.");
+      return;
+    }
+    setRotatingIdentityTarget(target.id);
+    try {
+      const result = await abortPocketLinkIdentityRotationFlow(pocketLinkIdentityRotationPorts(target));
+      initializedRef.current = false;
+      setAuthRevision((current) => current + 1);
+      showToast(result === "completed"
+        ? `${target.name}에서 이미 승인된 새 단말 key를 확정했습니다.`
+        : `${target.name}의 key 교체를 중단하고 기존 단말 key를 유지했습니다.`);
+    } catch (error) {
+      await refreshPocketLinkStatuses(deviceTargets);
+      showToast(errorMessage(error));
+    } finally {
+      setRotatingIdentityTarget(null);
     }
   }
 
@@ -2042,6 +2204,7 @@ export function App() {
         return remaining;
       });
       setConfirmingPinPromotionTarget((current) => current === target.id ? null : current);
+      setReviewingIdentityRotationTarget((current) => current === target.id ? null : current);
       setStagingPinTarget((current) => current === target.id ? null : current);
       if (stagingPinTarget === target.id) setStagedBackupPin("");
       showToast(`${target.name} 등록을 삭제했습니다.`);
@@ -2413,7 +2576,7 @@ export function App() {
 
             <label className="connection-device">
               <span>확인할 단말</span>
-              <select value={device} disabled={activity.running} onChange={(event) => selectDevice(event.target.value as DeviceId)}>
+              <select value={device} disabled={activity.running || rotatingIdentityTarget !== null} onChange={(event) => selectDevice(event.target.value as DeviceId)}>
                 {deviceTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
               </select>
             </label>
@@ -2505,6 +2668,9 @@ export function App() {
                   const canReviewPinPromotion = isRecentBackupPinObservation(pocketLinkStatus);
                   const stagingPin = stagingPinTarget === target.id;
                   const confirmingPinPromotion = confirmingPinPromotionTarget === target.id;
+                  const identityRotationPending = pocketLinkStatus?.identityRotationPending === true;
+                  const reviewingIdentityRotation = reviewingIdentityRotationTarget === target.id;
+                  const rotatingIdentity = rotatingIdentityTarget === target.id;
                   return (
                     <div key={target.id}>
                       <div className="device-list-row">
@@ -2513,19 +2679,30 @@ export function App() {
                           <small>
                             {target.transport === "pocketlink" ? pocketLinkSecurityStatus(pocketLinkStatus) : "Termux / SSH"}
                             {target.transport === "pocketlink" && pocketLinkStatus?.backupPinConfigured && !canReviewPinPromotion ? " · 교체 pin 준비됨" : ""}
+                            {identityRotationPending ? " · 단말 key 교체 확인 필요" : ""}
                             {` · ${target.baseUrl || "현재 주소"}`}{target.remoteDeviceId ? ` · ${target.remoteDeviceId.slice(0, 8)}` : " · 미페어링"}
                           </small>
                         </span>
                         <div className="device-list-actions">
-                          {canReviewPinPromotion && !confirmingPinPromotion && (
+                          {canReviewPinPromotion && !confirmingPinPromotion && !identityRotationPending && !reviewingIdentityRotation && (
                             <button type="button" className="pin-promotion" onClick={() => reviewPocketLinkPinPromotion(target)}>새 pin 교체 검토</button>
                           )}
-                          {isNativeApp() && target.transport === "pocketlink" && !canReviewPinPromotion && !stagingPin && (
+                          {isNativeApp() && target.transport === "pocketlink" && !canReviewPinPromotion && !stagingPin && !identityRotationPending && !reviewingIdentityRotation && (
                             <button type="button" className="pin-promotion" onClick={() => openPocketLinkPinStaging(target)}>
                               {pocketLinkStatus?.backupPinConfigured ? "교체 pin 변경" : "교체 pin 준비"}
                             </button>
                           )}
-                          {!target.builtIn && <button type="button" className="danger" onClick={() => void deleteLinuxDevice(target)}>삭제</button>}
+                          {isNativeApp() && target.transport === "pocketlink" && target.remoteDeviceId
+                              && !identityRotationPending && !reviewingIdentityRotation && !stagingPin && !confirmingPinPromotion
+                              && !canReviewPinPromotion && (
+                            <button type="button" className="identity-rotation" onClick={() => reviewPocketLinkIdentityRotation(target)}>단말 key 교체</button>
+                          )}
+                          {identityRotationPending && (
+                            <button type="button" className="identity-rotation" disabled={rotatingIdentityTarget !== null} onClick={() => void beginPocketLinkIdentityRotation(target)}>
+                              {rotatingIdentity ? "확인 중…" : "단말 key 교체 계속"}
+                            </button>
+                          )}
+                          {!target.builtIn && <button type="button" className="danger" disabled={rotatingIdentityTarget !== null} onClick={() => void deleteLinuxDevice(target)}>삭제</button>}
                         </div>
                       </div>
                       {stagingPin && (
@@ -2563,6 +2740,38 @@ export function App() {
                             <button type="button" disabled={promotingPinTarget === target.id} onClick={() => setConfirmingPinPromotionTarget(null)}>취소</button>
                             <button type="button" className="danger" disabled={promotingPinTarget !== null} onClick={() => void promotePocketLinkPin(target)}>
                               {promotingPinTarget === target.id ? "교체 중…" : "새 pin 확정 · 이전 pin 폐기"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {reviewingIdentityRotation && !identityRotationPending && (
+                        <div className="identity-rotation-review">
+                          <strong>{target.name}의 Android 단말 identity key를 교체합니다.</strong>
+                          <small>
+                            새 P-256 private key는 Android Keystore 안에서 생성되어 밖으로 나오지 않습니다.
+                            Companion이 새 key의 실제 mTLS proof를 확인한 뒤에만 기존 key를 폐기하며, 응답이 불확실하면 자동으로 되돌리지 않고 복구 상태를 유지합니다.
+                          </small>
+                          <div>
+                            <button type="button" disabled={rotatingIdentityTarget !== null} onClick={() => setReviewingIdentityRotationTarget(null)}>취소</button>
+                            <button type="button" className="danger" disabled={rotatingIdentityTarget !== null} onClick={() => void beginPocketLinkIdentityRotation(target)}>
+                              {rotatingIdentity ? "교체 중…" : "새 단말 key 생성 · 교체 시작"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {identityRotationPending && (
+                        <div className="identity-rotation-review pending" role="alert">
+                          <strong>{target.name}의 단말 key 교체 결과를 확인해야 합니다.</strong>
+                          <small>
+                            새 key와 기존 key 중 어느 쪽이 Companion에 확정됐는지 1회용 승인과 실제 TLS proof로 다시 확인합니다.
+                            결과를 추측해 key를 폐기하거나 SSH로 자동 우회하지 않습니다.
+                          </small>
+                          <div>
+                            <button type="button" disabled={rotatingIdentityTarget !== null} onClick={() => void abortPocketLinkIdentityRotation(target)}>
+                              {rotatingIdentity ? "확인 중…" : "교체 중단 · 기존 key 유지"}
+                            </button>
+                            <button type="button" className="identity-rotation" disabled={rotatingIdentityTarget !== null} onClick={() => void beginPocketLinkIdentityRotation(target)}>
+                              {rotatingIdentity ? "확인 중…" : "교체 상태 확인 · 계속"}
                             </button>
                           </div>
                         </div>

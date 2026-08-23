@@ -21,14 +21,24 @@ import javax.security.auth.x500.X500Principal;
 final class PocketLinkIdentityStore {
     private static final String ANDROID_KEY_STORE = "AndroidKeyStore";
     private static final String ALIAS_PREFIX = "codex-pocket-link-device-v1-";
+    static final String SLOT_A = "a";
+    static final String SLOT_B = "b";
 
     synchronized boolean exists(int localPort) throws Exception {
+        return exists(localPort, SLOT_A);
+    }
+
+    synchronized boolean exists(int localPort, String slot) throws Exception {
         KeyStore keyStore = loadKeyStore();
-        return keyStore.containsAlias(alias(localPort));
+        return keyStore.containsAlias(alias(localPort, slot));
     }
 
     synchronized Identity ensure(int localPort) throws Exception {
-        String alias = alias(localPort);
+        return ensure(localPort, SLOT_A);
+    }
+
+    synchronized Identity ensure(int localPort, String slot) throws Exception {
+        String alias = alias(localPort, slot);
         KeyStore keyStore = loadKeyStore();
         if (!keyStore.containsAlias(alias)) generate(alias);
         keyStore = loadKeyStore();
@@ -49,9 +59,20 @@ final class PocketLinkIdentityStore {
     }
 
     synchronized void remove(int localPort) throws Exception {
+        remove(localPort, SLOT_A);
+        remove(localPort, SLOT_B);
+    }
+
+    synchronized void remove(int localPort, String slot) throws Exception {
         KeyStore keyStore = loadKeyStore();
-        String alias = alias(localPort);
+        String alias = alias(localPort, slot);
         if (keyStore.containsAlias(alias)) keyStore.deleteEntry(alias);
+    }
+
+    static String nextSlot(String slot) {
+        if (SLOT_A.equals(slot)) return SLOT_B;
+        if (SLOT_B.equals(slot)) return SLOT_A;
+        throw new IllegalArgumentException("invalid identity slot");
     }
 
     private static void generate(String alias) throws Exception {
@@ -84,9 +105,11 @@ final class PocketLinkIdentityStore {
         return keyStore;
     }
 
-    private static String alias(int localPort) {
+    private static String alias(int localPort, String slot) {
         if (localPort < 1024 || localPort > 65535) throw new IllegalArgumentException("invalid local port");
-        return ALIAS_PREFIX + localPort;
+        if (SLOT_A.equals(slot)) return ALIAS_PREFIX + localPort;
+        if (SLOT_B.equals(slot)) return ALIAS_PREFIX + localPort + "-b";
+        throw new IllegalArgumentException("invalid identity slot");
     }
 
     static final class Identity {

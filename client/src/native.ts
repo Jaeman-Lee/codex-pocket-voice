@@ -38,6 +38,9 @@ export interface PocketLinkStatus {
   transport: "termux" | "pocketlink";
   error?: string;
   backupPinConfigured?: boolean;
+  identityRotationPending?: boolean;
+  identityReady?: boolean;
+  identityRotationReady?: boolean;
   pinSlot?: "primary" | "backup";
   pinObservedAt?: number;
 }
@@ -54,6 +57,18 @@ interface NativeTunnelPlugin {
     backupPin?: string;
   }): Promise<{ configured: boolean; transport: "pocketlink"; localPort: number }>;
   removePocketLink(options: { localPort: number }): Promise<void>;
+  preparePocketLinkIdentityRotation(options: { localPort: number }): Promise<{
+    prepared: boolean;
+    resumed: boolean;
+  }>;
+  commitPocketLinkIdentityRotation(options: { localPort: number }): Promise<{
+    committed: boolean;
+    retiredPreviousIdentity: boolean;
+  }>;
+  abortPocketLinkIdentityRotation(options: { localPort: number }): Promise<{
+    aborted: boolean;
+    retainedPreviousIdentity: boolean;
+  }>;
   stagePocketLinkBackupPin(options: { localPort: number; backupPin: string }): Promise<{ staged: boolean }>;
   clearPocketLinkBackupPin(options: { localPort: number }): Promise<{
     cleared: boolean;

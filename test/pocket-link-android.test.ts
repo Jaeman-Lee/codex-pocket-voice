@@ -31,7 +31,16 @@ test("Android PocketLink keeps encrypted config native and pins a bounded mTLS f
   assert.match(identity, /secp256r1/);
   assert.match(identity, /PURPOSE_SIGN \| KeyProperties\.PURPOSE_VERIFY/);
   assert.match(identity, /X509KeyManager/);
+  assert.match(identity, /SLOT_A = "a"/);
+  assert.match(identity, /SLOT_B = "b"/);
+  assert.match(identity, /nextSlot/);
+  assert.match(identity, /ALIAS_PREFIX \+ localPort \+ "-b"/);
+  assert.match(identity, /remove\(localPort, SLOT_A\)[\s\S]*remove\(localPort, SLOT_B\)/);
   assert.doesNotMatch(identity, /getEncoded\(\)|Base64|SharedPreferences/);
+  assert.match(store, /identitySlot/);
+  assert.match(store, /pendingIdentitySlot/);
+  assert.match(store, /effectiveIdentitySlot/);
+  assert.match(store, /commitPendingIdentitySlot/);
   assert.doesNotMatch(nativeApi, /privateKey|certificateFile/);
   assert.doesNotMatch(clientApi, /PocketLinkHost|primaryPin|backupPin/);
 
@@ -41,6 +50,8 @@ test("Android PocketLink keeps encrypted config native and pins a bounded mTLS f
   assert.match(service, /newFixedThreadPool\(16\)/);
   assert.match(service, /setEndpointIdentificationAlgorithm\("HTTPS"\)/);
   assert.match(service, /identity\.keyManagers\(\)/);
+  assert.match(service, /config\.effectiveIdentitySlot\(\)/);
+  assert.match(service, /ACTIVE_IDENTITY_SLOTS/);
   assert.match(service, /checkValidity\(\)/);
   assert.match(service, /getPublicKey\(\)\.getEncoded\(\)/);
   assert.match(service, /MessageDigest\.isEqual/);
@@ -62,10 +73,15 @@ test("Android PocketLink keeps encrypted config native and pins a bounded mTLS f
   assert.match(plugin, /stagePocketLinkBackupPin/);
   assert.match(plugin, /clearPocketLinkBackupPin/);
   assert.match(plugin, /promotePocketLinkPin/);
+  assert.match(plugin, /preparePocketLinkIdentityRotation/);
+  assert.match(plugin, /commitPocketLinkIdentityRotation/);
+  assert.match(plugin, /abortPocketLinkIdentityRotation/);
+  assert.match(plugin, /identityRotationPending/);
+  assert.match(plugin, /identityRotationReady/);
   assert.match(plugin, /PIN_PROMOTION_MAX_AGE_MS = 120_000L/);
   assert.match(plugin, /observationAge < 0 \|\| observationAge > PIN_PROMOTION_MAX_AGE_MS/);
   assert.match(plugin, /PocketLinkService\.error\(localPort\) != null/);
-  assert.match(plugin, /config\.backupPin,[\s\S]*"",[\s\S]*config\.active/);
+  assert.match(plugin, /withServerPins\(config\.backupPin, ""\)/);
   assert.match(plugin, /retiredPreviousPin/);
   assert.match(plugin, /backupPinConfigured/);
   assert.doesNotMatch(plugin, /result\.put\("(?:primaryPin|backupPin)"/);
@@ -75,8 +91,15 @@ test("Android PocketLink keeps encrypted config native and pins a bounded mTLS f
   assert.match(nativeApi, /stagePocketLinkBackupPin/);
   assert.match(nativeApi, /clearPocketLinkBackupPin/);
   assert.match(nativeApi, /promotePocketLinkPin/);
+  assert.match(nativeApi, /preparePocketLinkIdentityRotation/);
+  assert.match(nativeApi, /commitPocketLinkIdentityRotation/);
+  assert.match(nativeApi, /abortPocketLinkIdentityRotation/);
+  assert.match(clientApi, /PocketLinkIdentityRotationRequiredError/);
+  assert.match(clientApi, /data\.code === "TLS_DEVICE_MISMATCH"[\s\S]*throw new PocketLinkIdentityRotationRequiredError/);
   assert.match(app, /새 pin 확정 · 이전 pin 폐기/);
   assert.match(app, /현재 기본 pin은 유지되며 자동 승격되지 않습니다/);
+  assert.match(app, /새 단말 key 생성 · 교체 시작/);
+  assert.match(app, /교체 상태 확인 · 계속/);
 });
 
 async function source(path: string): Promise<string> {

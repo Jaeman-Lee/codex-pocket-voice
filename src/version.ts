@@ -18,4 +18,5 @@ export const GATEWAY_CAPABILITIES = {
   pocketLinkMtls: true,
   pocketLinkQr: true,
   pocketLinkPinRotation: true,
+  pocketLinkIdentityRotation: true,
 } as const;

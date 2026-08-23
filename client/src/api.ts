@@ -36,6 +36,17 @@ export class ApiError extends Error {
 }
 
 export class PairingRequiredError extends ApiError {}
+export class PocketLinkIdentityRotationRequiredError extends ApiError {}
+
+export interface PocketLinkIdentityRotationState {
+  status: "pending" | "completed";
+  expiresAt: string;
+}
+
+interface StoredPocketLinkIdentityRotation {
+  rotationToken: string;
+  expiresAt: string;
+}
 
 let activeDevice: DeviceId = "pc";
 let deviceTargets: DeviceTarget[] = [];
@@ -91,7 +102,12 @@ export async function removeDeviceTarget(id: DeviceId): Promise<void> {
   if (!target || target.builtIn) throw new Error("기본 실행 단말은 삭제할 수 없습니다.");
   deviceTargets = deviceTargets.filter((item) => item.id !== id);
   tokens.delete(id);
-  await Promise.all([saveDeviceTargets(), secureRemove(tokenKey(id)), secureRemove(eventCursorKey(id))]);
+  await Promise.all([
+    saveDeviceTargets(),
+    secureRemove(tokenKey(id)),
+    secureRemove(eventCursorKey(id)),
+    secureRemove(identityRotationKey(id)),
+  ]);
   if (activeDevice === id) activeDevice = deviceTargets[0]!.id;
 }
 
@@ -119,7 +135,10 @@ export async function pairActiveDevice(code: string, label: string): Promise<Dev
     body: { code, label },
   });
   tokens.set(activeDevice, result.token);
-  await secureSet(tokenKey(activeDevice), result.token);
+  await Promise.all([
+    secureSet(tokenKey(activeDevice), result.token),
+    secureRemove(identityRotationKey(activeDevice)),
+  ]);
   deviceTargets = deviceTargets.map((target) => target.id === activeDevice
     ? { ...target, name: result.device.name, kind: result.device.kind, remoteDeviceId: result.device.id }
     : target);
@@ -132,8 +151,54 @@ export async function forgetActiveDevice(): Promise<void> {
     await api("/api/pairing/revoke", { method: "POST", body: {} });
   } finally {
     tokens.delete(activeDevice);
-    await secureRemove(tokenKey(activeDevice));
+    await Promise.all([
+      secureRemove(tokenKey(activeDevice)),
+      secureRemove(identityRotationKey(activeDevice)),
+    ]);
   }
+}
+
+export async function beginActiveDeviceIdentityRotation(): Promise<{ expiresAt: string }> {
+  const selectedDevice = activeDevice;
+  const started = await api<{ rotationToken: string; expiresAt: string }>(
+    "/api/pairing/tls-key-rotation/start",
+    { method: "POST", body: {} },
+  );
+  if (!/^[A-Za-z0-9_-]{43}$/.test(started.rotationToken) || !Number.isFinite(Date.parse(started.expiresAt))) {
+    throw new Error("Companion의 PocketLink key 교체 승인을 검증할 수 없습니다.");
+  }
+  await secureSet(identityRotationKey(selectedDevice), JSON.stringify(started));
+  return { expiresAt: started.expiresAt };
+}
+
+export async function loadActiveDeviceIdentityRotation(): Promise<{ expiresAt: string } | null> {
+  const rotation = await storedIdentityRotation(activeDevice);
+  return rotation ? { expiresAt: rotation.expiresAt } : null;
+}
+
+export async function inspectActiveDeviceIdentityRotation(): Promise<PocketLinkIdentityRotationState> {
+  return identityRotationRequest<PocketLinkIdentityRotationState>("status");
+}
+
+export async function completeActiveDeviceIdentityRotation(): Promise<
+  PocketLinkIdentityRotationState & { previousKeyRetired: true }
+> {
+  return identityRotationRequest("complete");
+}
+
+export async function abortActiveDeviceIdentityRotation(): Promise<{
+  aborted: true;
+  retainedPreviousKey: true;
+}> {
+  return identityRotationRequest("abort");
+}
+
+export async function finalizeActiveDeviceIdentityRotation(): Promise<{ finalized: true }> {
+  return identityRotationRequest("finalize");
+}
+
+export async function clearActiveDeviceIdentityRotation(): Promise<void> {
+  await secureRemove(identityRotationKey(activeDevice));
 }
 
 export async function api<T>(path: string, options: ApiOptions = {}): Promise<T> {
@@ -215,10 +280,19 @@ export function uploadMedia<T>(file: File, onProgress: (percentage: number) => v
     request.onerror = () => reject(new Error(
       "첨부 파일을 Linux PC로 보내지 못했습니다. PC 연결을 확인하세요.",
     ));
-    request.onload = () => {
+    request.onload = async () => {
       const response = (request.response ?? {}) as UploadResponse<T>;
       if (request.status < 200 || request.status >= 300 || !response.media) {
         if (request.status === 401) {
+          if (response.code === "TLS_DEVICE_MISMATCH" && activeDeviceTarget().transport === "pocketlink"
+              && await storedIdentityRotation(activeDevice)) {
+            reject(new PocketLinkIdentityRotationRequiredError(
+              "PocketLink 단말 key 교체 상태를 확인해야 합니다.",
+              request.status,
+              response.code,
+            ));
+            return;
+          }
           void discardInvalidToken();
           reject(new PairingRequiredError(response.error ?? "페어링이 필요합니다.", request.status, response.code));
           return;
@@ -310,6 +384,14 @@ function isSafeLoopbackBase(value: string): boolean {
 async function throwResponseError(response: Response, authenticated: boolean): Promise<never> {
   const data = await response.json().catch(() => ({})) as ApiErrorBody;
   if (response.status === 401 && authenticated) {
+    if (data.code === "TLS_DEVICE_MISMATCH" && activeDeviceTarget().transport === "pocketlink"
+        && await storedIdentityRotation(activeDevice)) {
+      throw new PocketLinkIdentityRotationRequiredError(
+        "PocketLink 단말 key 교체 상태를 확인해야 합니다.",
+        response.status,
+        data.code,
+      );
+    }
     await discardInvalidToken();
     throw new PairingRequiredError(data.error ?? "페어링이 필요합니다.", response.status, data.code);
   }
@@ -326,7 +408,10 @@ function authorizedHeaders(json: boolean): Record<string, string> {
 
 async function discardInvalidToken(): Promise<void> {
   tokens.delete(activeDevice);
-  await secureRemove(tokenKey(activeDevice)).catch(() => undefined);
+  await Promise.all([
+    secureRemove(tokenKey(activeDevice)),
+    secureRemove(identityRotationKey(activeDevice)),
+  ]).catch(() => undefined);
 }
 
 function tokenKey(device: DeviceId): string {
@@ -335,6 +420,33 @@ function tokenKey(device: DeviceId): string {
 
 function eventCursorKey(device: DeviceId): string {
   return `event-cursor:${device}`;
+}
+
+function identityRotationKey(device: DeviceId): string {
+  return `pocketlink-identity-rotation:${device}`;
+}
+
+async function storedIdentityRotation(device: DeviceId): Promise<StoredPocketLinkIdentityRotation | null> {
+  const serialized = await secureGet(identityRotationKey(device)).catch(() => null);
+  if (!serialized) return null;
+  try {
+    const value = JSON.parse(serialized) as Partial<StoredPocketLinkIdentityRotation>;
+    return typeof value.rotationToken === "string" && /^[A-Za-z0-9_-]{43}$/.test(value.rotationToken)
+      && typeof value.expiresAt === "string" && Number.isFinite(Date.parse(value.expiresAt))
+      ? { rotationToken: value.rotationToken, expiresAt: value.expiresAt }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function identityRotationRequest<T>(action: "status" | "complete" | "abort" | "finalize"): Promise<T> {
+  const rotation = await storedIdentityRotation(activeDevice);
+  if (!rotation) throw new Error("저장된 PocketLink key 교체 승인이 없습니다.");
+  return api<T>(`/api/pairing/tls-key-rotation/${action}`, {
+    method: "POST",
+    body: { rotationToken: rotation.rotationToken },
+  });
 }
 
 async function loadEventCursor(device: DeviceId): Promise<number | undefined> {

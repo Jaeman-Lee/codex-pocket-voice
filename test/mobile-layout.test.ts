@@ -46,6 +46,7 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   assert.match(css, /\.pocket-link-qr-scan/);
   assert.match(css, /\.pin-staging-review > input/);
   assert.match(css, /\.pin-staging-review > div\.three-actions \{[^}]*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(css, /\.identity-rotation-review > div \{[^}]*minmax\(0,\s*1fr\)[^}]*minmax\(0,\s*2fr\)/);
   assert.match(pinPromotionActions, /minmax\(0,\s*1fr\)/);
   assert.match(pinPromotionActions, /minmax\(0,\s*2fr\)/);
   assert.match(pairingActions, /minmax\(0,\s*1fr\)/);

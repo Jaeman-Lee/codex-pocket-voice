@@ -172,6 +172,109 @@ public class PocketTunnelPlugin extends Plugin {
     }
 
     @PluginMethod
+    public synchronized void preparePocketLinkIdentityRotation(PluginCall call) {
+        int localPort = optionalPort(call, "localPort", -1);
+        if (localPort < 0) {
+            call.reject("localPort는 1024~65535 사이여야 합니다.");
+            return;
+        }
+        PocketLinkConfigStore configStore = new PocketLinkConfigStore(getContext());
+        PocketLinkIdentityStore identityStore = new PocketLinkIdentityStore();
+        String nextSlot = null;
+        boolean saved = false;
+        try {
+            PocketLinkConfigStore.Config config = configStore.load(localPort);
+            if (config == null) {
+                call.reject("PocketLink 설정이 없습니다.");
+                return;
+            }
+            if (!config.pendingIdentitySlot.isEmpty()) {
+                identityStore.ensure(localPort, config.pendingIdentitySlot);
+                PocketLinkService.clearPinSlot(localPort);
+                startPocketLinkService(localPort);
+                JSObject result = new JSObject();
+                result.put("prepared", true);
+                result.put("resumed", true);
+                call.resolve(result);
+                return;
+            }
+            nextSlot = PocketLinkIdentityStore.nextSlot(config.identitySlot);
+            identityStore.remove(localPort, nextSlot);
+            identityStore.ensure(localPort, nextSlot);
+            configStore.save(config.withPendingIdentitySlot(nextSlot));
+            saved = true;
+            PocketLinkService.clearPinSlot(localPort);
+            startPocketLinkService(localPort);
+            JSObject result = new JSObject();
+            result.put("prepared", true);
+            result.put("resumed", false);
+            call.resolve(result);
+        } catch (Exception error) {
+            if (!saved && nextSlot != null) {
+                try { identityStore.remove(localPort, nextSlot); } catch (Exception ignored) {}
+            }
+            call.reject("새 PocketLink 단말 identity를 준비하지 못했습니다.", error);
+        }
+    }
+
+    @PluginMethod
+    public synchronized void commitPocketLinkIdentityRotation(PluginCall call) {
+        int localPort = optionalPort(call, "localPort", -1);
+        if (localPort < 0) {
+            call.reject("localPort는 1024~65535 사이여야 합니다.");
+            return;
+        }
+        try {
+            PocketLinkConfigStore configStore = new PocketLinkConfigStore(getContext());
+            PocketLinkConfigStore.Config config = configStore.load(localPort);
+            if (config == null || config.pendingIdentitySlot.isEmpty()) {
+                call.reject("확정할 PocketLink 단말 identity 교체가 없습니다.");
+                return;
+            }
+            PocketLinkIdentityStore identityStore = new PocketLinkIdentityStore();
+            identityStore.ensure(localPort, config.pendingIdentitySlot);
+            identityStore.remove(localPort, config.identitySlot);
+            configStore.save(config.commitPendingIdentitySlot());
+            PocketLinkService.clearPinSlot(localPort);
+            startPocketLinkService(localPort);
+            JSObject result = new JSObject();
+            result.put("committed", true);
+            result.put("retiredPreviousIdentity", true);
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("PocketLink 단말 identity 교체를 확정하지 못했습니다.", error);
+        }
+    }
+
+    @PluginMethod
+    public synchronized void abortPocketLinkIdentityRotation(PluginCall call) {
+        int localPort = optionalPort(call, "localPort", -1);
+        if (localPort < 0) {
+            call.reject("localPort는 1024~65535 사이여야 합니다.");
+            return;
+        }
+        try {
+            PocketLinkConfigStore configStore = new PocketLinkConfigStore(getContext());
+            PocketLinkConfigStore.Config config = configStore.load(localPort);
+            if (config == null || config.pendingIdentitySlot.isEmpty()) {
+                call.reject("중단할 PocketLink 단말 identity 교체가 없습니다.");
+                return;
+            }
+            String pendingSlot = config.pendingIdentitySlot;
+            configStore.save(config.withPendingIdentitySlot(""));
+            PocketLinkService.clearPinSlot(localPort);
+            startPocketLinkService(localPort);
+            new PocketLinkIdentityStore().remove(localPort, pendingSlot);
+            JSObject result = new JSObject();
+            result.put("aborted", true);
+            result.put("retainedPreviousIdentity", true);
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("PocketLink 단말 identity 교체를 중단하지 못했습니다.", error);
+        }
+    }
+
+    @PluginMethod
     public synchronized void stagePocketLinkBackupPin(PluginCall call) {
         int localPort = optionalPort(call, "localPort", -1);
         String backupPin = normalizedPin(call.getString("backupPin"), false);
@@ -190,15 +293,7 @@ public class PocketTunnelPlugin extends Plugin {
                 call.reject("교체용 SPKI pin은 현재 기본 pin과 달라야 합니다.");
                 return;
             }
-            PocketLinkConfigStore.Config staged = new PocketLinkConfigStore.Config(
-                    config.label,
-                    config.localPort,
-                    config.host,
-                    config.remotePort,
-                    config.primaryPin,
-                    backupPin,
-                    config.active
-            );
+            PocketLinkConfigStore.Config staged = config.withServerPins(config.primaryPin, backupPin);
             configStore.save(staged);
             PocketLinkService.clearPinSlot(localPort);
             startPocketLinkService(localPort);
@@ -224,15 +319,7 @@ public class PocketTunnelPlugin extends Plugin {
                 call.reject("취소할 교체용 SPKI pin이 없습니다.");
                 return;
             }
-            PocketLinkConfigStore.Config cleared = new PocketLinkConfigStore.Config(
-                    config.label,
-                    config.localPort,
-                    config.host,
-                    config.remotePort,
-                    config.primaryPin,
-                    "",
-                    config.active
-            );
+            PocketLinkConfigStore.Config cleared = config.withServerPins(config.primaryPin, "");
             configStore.save(cleared);
             PocketLinkService.clearPinSlot(localPort);
             startPocketLinkService(localPort);
@@ -267,15 +354,7 @@ public class PocketTunnelPlugin extends Plugin {
                 call.reject("최근 2분 안에 교체용 pin으로 성공한 연결을 먼저 확인해야 합니다.");
                 return;
             }
-            PocketLinkConfigStore.Config promoted = new PocketLinkConfigStore.Config(
-                    config.label,
-                    config.localPort,
-                    config.host,
-                    config.remotePort,
-                    config.backupPin,
-                    "",
-                    config.active
-            );
+            PocketLinkConfigStore.Config promoted = config.withServerPins(config.backupPin, "");
             configStore.save(promoted);
             PocketLinkService.clearPinSlot(localPort);
             startPocketLinkService(localPort);
@@ -304,6 +383,13 @@ public class PocketTunnelPlugin extends Plugin {
             result.put("transport", configured ? "pocketlink" : "termux");
             if (configured) {
                 result.put("backupPinConfigured", config.backupPin != null && !config.backupPin.isEmpty());
+                result.put("identityRotationPending", !config.pendingIdentitySlot.isEmpty());
+                result.put("identityReady", PocketLinkService.identitySlotActive(
+                        localPort,
+                        config.effectiveIdentitySlot()
+                ));
+                result.put("identityRotationReady", !config.pendingIdentitySlot.isEmpty()
+                        && PocketLinkService.identitySlotActive(localPort, config.pendingIdentitySlot));
             }
             String error = PocketLinkService.error(localPort);
             if (error != null) result.put("error", error);

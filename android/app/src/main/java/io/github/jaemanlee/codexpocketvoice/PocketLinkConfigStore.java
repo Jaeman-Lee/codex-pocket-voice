@@ -125,8 +125,35 @@ final class PocketLinkConfigStore {
         final String primaryPin;
         final String backupPin;
         final boolean active;
+        final String identitySlot;
+        final String pendingIdentitySlot;
 
         Config(String label, int localPort, String host, int remotePort, String primaryPin, String backupPin, boolean active) {
+            this(label, localPort, host, remotePort, primaryPin, backupPin, active, PocketLinkIdentityStore.SLOT_A, "");
+        }
+
+        Config(
+                String label,
+                int localPort,
+                String host,
+                int remotePort,
+                String primaryPin,
+                String backupPin,
+                boolean active,
+                String identitySlot,
+                String pendingIdentitySlot
+        ) {
+            if (!PocketLinkIdentityStore.SLOT_A.equals(identitySlot)
+                    && !PocketLinkIdentityStore.SLOT_B.equals(identitySlot)) {
+                throw new IllegalArgumentException("invalid identity slot");
+            }
+            if (pendingIdentitySlot == null) pendingIdentitySlot = "";
+            if (!pendingIdentitySlot.isEmpty()
+                    && ((!PocketLinkIdentityStore.SLOT_A.equals(pendingIdentitySlot)
+                    && !PocketLinkIdentityStore.SLOT_B.equals(pendingIdentitySlot))
+                    || pendingIdentitySlot.equals(identitySlot))) {
+                throw new IllegalArgumentException("invalid pending identity slot");
+            }
             this.label = label;
             this.localPort = localPort;
             this.host = host;
@@ -134,10 +161,41 @@ final class PocketLinkConfigStore {
             this.primaryPin = primaryPin;
             this.backupPin = backupPin;
             this.active = active;
+            this.identitySlot = identitySlot;
+            this.pendingIdentitySlot = pendingIdentitySlot;
         }
 
         Config withActive(boolean nextActive) {
-            return new Config(label, localPort, host, remotePort, primaryPin, backupPin, nextActive);
+            return new Config(
+                    label, localPort, host, remotePort, primaryPin, backupPin, nextActive,
+                    identitySlot, pendingIdentitySlot
+            );
+        }
+
+        Config withServerPins(String nextPrimaryPin, String nextBackupPin) {
+            return new Config(
+                    label, localPort, host, remotePort, nextPrimaryPin, nextBackupPin, active,
+                    identitySlot, pendingIdentitySlot
+            );
+        }
+
+        Config withPendingIdentitySlot(String nextPendingIdentitySlot) {
+            return new Config(
+                    label, localPort, host, remotePort, primaryPin, backupPin, active,
+                    identitySlot, nextPendingIdentitySlot
+            );
+        }
+
+        Config commitPendingIdentitySlot() {
+            if (pendingIdentitySlot.isEmpty()) throw new IllegalStateException("identity rotation is not pending");
+            return new Config(
+                    label, localPort, host, remotePort, primaryPin, backupPin, active,
+                    pendingIdentitySlot, ""
+            );
+        }
+
+        String effectiveIdentitySlot() {
+            return pendingIdentitySlot.isEmpty() ? identitySlot : pendingIdentitySlot;
         }
 
         JSONObject toJson() throws Exception {
@@ -150,6 +208,8 @@ final class PocketLinkConfigStore {
             value.put("primaryPin", primaryPin);
             value.put("backupPin", backupPin);
             value.put("active", active);
+            value.put("identitySlot", identitySlot);
+            value.put("pendingIdentitySlot", pendingIdentitySlot);
             return value;
         }
 
@@ -162,7 +222,9 @@ final class PocketLinkConfigStore {
                     value.getInt("remotePort"),
                     value.getString("primaryPin"),
                     value.optString("backupPin", ""),
-                    value.optBoolean("active", false)
+                    value.optBoolean("active", false),
+                    value.optString("identitySlot", PocketLinkIdentityStore.SLOT_A),
+                    value.optString("pendingIdentitySlot", "")
             );
         }
     }
