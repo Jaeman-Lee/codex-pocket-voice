@@ -13,6 +13,9 @@ const MAX_READ_BYTES = 64 * 1024;
 const MAX_READ_FILE_BYTES = 1024 * 1024;
 const MAX_READ_LINES = 500;
 const MAX_SEARCH_RESULTS = 100;
+const MAX_FALLBACK_SEARCH_FILES = 2_000;
+const MAX_FALLBACK_SEARCH_ENTRIES = 10_000;
+const MAX_FALLBACK_SEARCH_BYTES = 16 * 1024 * 1024;
 const MAX_PROCESS_OUTPUT_BYTES = 256 * 1024;
 const MAX_TOOL_OUTPUT_CHARS = 80_000;
 const PROCESS_TIMEOUT_MS = 10_000;
@@ -71,11 +74,18 @@ interface ProcessResult {
   stderr: string;
 }
 
-export function createReadOnlyWorkspaceTools(paths: PathPolicy): RegisteredTool[] {
+export interface ReadOnlyWorkspaceToolOptions {
+  searchCommand?: string;
+}
+
+export function createReadOnlyWorkspaceTools(
+  paths: PathPolicy,
+  options: ReadOnlyWorkspaceToolOptions = {},
+): RegisteredTool[] {
   return [
     workspaceListTool(paths),
     workspaceReadTool(paths),
-    workspaceSearchTool(paths),
+    workspaceSearchTool(paths, options.searchCommand ?? "rg"),
     gitStatusTool(paths),
     gitDiffTool(paths),
   ];
@@ -170,7 +180,7 @@ function workspaceReadTool(paths: PathPolicy): RegisteredTool<ReadInput> {
   };
 }
 
-function workspaceSearchTool(paths: PathPolicy): RegisteredTool<SearchInput> {
+function workspaceSearchTool(paths: PathPolicy, searchCommand: string): RegisteredTool<SearchInput> {
   return {
     definition: {
       name: "workspace_search",
@@ -204,7 +214,15 @@ function workspaceSearchTool(paths: PathPolicy): RegisteredTool<SearchInput> {
       assertNotSensitive(projectPath(cwd, target));
       const args = ["--json", "--fixed-strings", "--no-messages", "--", input.query, target];
       if (input.fileGlob) args.splice(3, 0, "--glob", input.fileGlob);
-      const result = await runProcess("rg", args, cwd, context.signal);
+      let result: ProcessResult;
+      try {
+        result = await runProcess(searchCommand, args, cwd, context.signal);
+      } catch (error) {
+        if (isMissingCommand(error)) {
+          return fallbackWorkspaceSearch(cwd, target, input, context.signal);
+        }
+        throw error;
+      }
       if (result.code !== 0 && result.code !== 1) {
         throw new ToolBrokerError(502, "Workspace search is unavailable");
       }
@@ -228,6 +246,110 @@ function workspaceSearchTool(paths: PathPolicy): RegisteredTool<SearchInput> {
       return { query: input.query, matches, truncated: matches.length >= input.maxResults };
     },
   };
+}
+
+async function fallbackWorkspaceSearch(
+  cwd: string,
+  target: string,
+  input: SearchInput,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const matches: Array<Record<string, unknown>> = [];
+  const files: string[] = [];
+  let scannedBytes = 0;
+  let visitedEntries = 0;
+  let truncated = false;
+  const targetInfo = await stat(target);
+  if (targetInfo.isFile()) {
+    files.push(target);
+  } else if (targetInfo.isDirectory()) {
+    const pending = [target];
+    while (pending.length > 0 && files.length < MAX_FALLBACK_SEARCH_FILES) {
+      if (signal?.aborted) throw new ToolBrokerError(499, "Tool execution was cancelled");
+      const directory = pending.pop()!;
+      const entries = (await readdir(directory, { withFileTypes: true }))
+        .sort((left, right) => right.name.localeCompare(left.name));
+      for (const entry of entries) {
+        visitedEntries += 1;
+        if (visitedEntries > MAX_FALLBACK_SEARCH_ENTRIES) {
+          truncated = true;
+          pending.length = 0;
+          break;
+        }
+        const candidate = path.join(directory, entry.name);
+        const relative = projectPath(cwd, candidate);
+        if (isSensitivePath(relative) || entry.isSymbolicLink()) continue;
+        if (!entry.isDirectory() && !entry.isFile()) continue;
+        const canonical = await realpath(candidate).catch(() => null);
+        if (!canonical || !isWithin(cwd, canonical) || isSensitivePath(projectPath(cwd, canonical))) continue;
+        if (entry.isDirectory()) pending.push(canonical);
+        else files.push(canonical);
+        if (files.length >= MAX_FALLBACK_SEARCH_FILES) {
+          truncated = true;
+          break;
+        }
+      }
+    }
+    if (pending.length > 0) truncated = true;
+  } else {
+    throw new ToolBrokerError(400, "workspace_search path must be a file or directory");
+  }
+
+  const glob = input.fileGlob ? globRegex(input.fileGlob) : null;
+  for (const file of files) {
+    if (signal?.aborted) throw new ToolBrokerError(499, "Tool execution was cancelled");
+    const relative = projectPath(cwd, file);
+    if (glob && !glob.test(relative)) continue;
+    const info = await stat(file);
+    if (info.size > MAX_READ_FILE_BYTES || scannedBytes + info.size > MAX_FALLBACK_SEARCH_BYTES) {
+      truncated = true;
+      continue;
+    }
+    scannedBytes += info.size;
+    const bytes = await readFile(file);
+    if (bytes.includes(0)) continue;
+    const lines = bytes.toString("utf8").split(/\r?\n/);
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!lines[index]!.includes(input.query)) continue;
+      matches.push({
+        path: relative,
+        line: index + 1,
+        text: truncate(redactWorkspaceSecrets(lines[index]!), 600).value,
+      });
+      if (matches.length >= input.maxResults) {
+        truncated = true;
+        return { query: input.query, matches, truncated };
+      }
+    }
+  }
+  return { query: input.query, matches, truncated };
+}
+
+function globRegex(value: string): RegExp {
+  let pattern = "^";
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]!;
+    if (character === "*" && value[index + 1] === "*") {
+      index += 1;
+      if (value[index + 1] === "/") {
+        index += 1;
+        pattern += "(?:.*/)?";
+      } else {
+        pattern += ".*";
+      }
+    } else if (character === "*") {
+      pattern += "[^/]*";
+    } else if (character === "?") {
+      pattern += "[^/]";
+    } else {
+      pattern += character.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+    }
+  }
+  return new RegExp(`${pattern}$`);
+}
+
+function isMissingCommand(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 function gitStatusTool(paths: PathPolicy): RegisteredTool<Record<string, never>> {

@@ -33,7 +33,9 @@ Responses·이미지·도구 capability를 추정하지 않으며, 허용 목록
 현재 함수 도구는 읽기 전용이다. 프로젝트 밖 경로와 외부 symlink, `.git`, `.env`, 개인 키·keystore,
 credential 계열 파일을 거절하고 파일·검색·diff 결과에 크기와 시간 상한을 적용한다. Git 호출은 고정된
 `status`, `diff`, `rev-parse` 인자만 사용하며 외부 diff, textconv, fsmonitor와 외부 Git 환경 override를
-비활성화한다. 도구 원문 결과는 Gateway SSE로 보내지 않고 redacted summary만 전달한다.
+비활성화한다. 검색은 `rg`를 우선 사용하고 설치되지 않은 Companion에서는 같은 경로·파일 수·byte
+상한을 적용한 내장 검색으로 전환한다. 도구 원문 결과는 Gateway SSE로 보내지 않고 redacted
+summary만 전달한다.
 
 아직 대화 재개, 파일 변경, patch, 임의 명령과 network 도구는 비활성화되어 있다. 쓰기와 실행은
 durable journal 및 터치 승인함이 구현되고 별도 보안 검증을 통과한 뒤에만 활성화한다.

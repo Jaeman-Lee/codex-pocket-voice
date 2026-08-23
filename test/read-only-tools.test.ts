@@ -28,7 +28,9 @@ test("read-only workspace tools contain paths, hide secrets, and never request a
   const paths = await PathPolicy.fromEnvironment(workspace);
   const approvals = new InMemoryApprovalBroker();
   t.after(() => approvals.close());
-  const broker = new LocalToolBroker(createReadOnlyWorkspaceTools(paths), approvals, paths);
+  const broker = new LocalToolBroker(createReadOnlyWorkspaceTools(paths, {
+    searchCommand: "codex-pocket-missing-ripgrep-for-fallback-test",
+  }), approvals, paths);
   let call = 0;
   const execute = (name: string, input: unknown) => broker.execute({
     providerId: "openai",
