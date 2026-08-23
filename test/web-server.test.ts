@@ -313,6 +313,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(nativePreflight.status, 204);
   assert.equal(nativePreflight.headers.get("access-control-allow-origin"), "http://localhost");
   assert.match(nativePreflight.headers.get("access-control-allow-headers") ?? "", /Last-Event-ID/);
+  assert.match(nativePreflight.headers.get("access-control-allow-methods") ?? "", /PATCH/);
 
   const streamAbort = new AbortController();
   const stream = await fetch(`${base}/api/events`, { signal: streamAbort.signal, headers: authorized() });
@@ -428,6 +429,25 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(nativeHealth.headers.get("access-control-allow-origin"), "http://localhost");
 
   const operationId = started.operation.id;
+  const crossOriginMetadata = await fetch(`${base}/api/runs/${operationId}/metadata`, {
+    method: "PATCH",
+    headers: authorized({ "Content-Type": "application/json", Origin: "https://evil.example" }),
+    body: JSON.stringify({ pinned: true }),
+  });
+  assert.equal(crossOriginMetadata.status, 403);
+  const organized = await jsonFetch(`${base}/api/runs/${operationId}/metadata`, {
+    method: "PATCH",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ goalName: "Mobile release audit", pinned: true }),
+  });
+  assert.equal(organized.operation.goalName, "Mobile release audit");
+  assert.equal(typeof organized.operation.pinnedAt, "string");
+  const activeArchive = await fetch(`${base}/api/runs/${operationId}/metadata`, {
+    method: "PATCH",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ archived: true }),
+  });
+  assert.equal(activeArchive.status, 409);
   const activeRuns = await jsonFetch(`${base}/api/runs?status=running`, { headers: authorized() });
   assert.equal(activeRuns.operations.length, 1);
   assert.equal(activeRuns.operations[0].id, operationId);
@@ -452,6 +472,8 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const journalExport = await journalExportResponse.json() as any;
   assert.equal(journalExport.workspace, cwd);
   assert.equal(journalExport.operations[0].id, operationId);
+  assert.equal(journalExport.operations[0].goalName, "Mobile release audit");
+  assert.equal(journalExport.operations[0].pinnedAt, organized.operation.pinnedAt);
   const activeDelete = await fetch(`${base}/api/journal/workspace`, {
     method: "DELETE",
     headers: authorized({ "Content-Type": "application/json", Origin: base }),
@@ -507,6 +529,13 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
     const operation = await jsonFetch(`${base}/api/runs/${operationId}`, { headers: authorized() });
     return operation.operation.status === "interrupted";
   });
+  const archived = await jsonFetch(`${base}/api/runs/${operationId}/metadata`, {
+    method: "PATCH",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ archived: true }),
+  });
+  assert.equal(typeof archived.operation.archivedAt, "string");
+  assert.equal(archived.operation.pinnedAt, undefined);
 
   const invalidCursor = await fetch(`${base}/api/events`, {
     headers: authorized({ "Last-Event-ID": "not-a-cursor" }),
@@ -529,6 +558,8 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.match(replayText, /id: \d+/);
   assert.match(replayText, /"action":"started"/);
   assert.match(replayText, /"action":"completed"/);
+  assert.match(replayText, /"action":"metadata_updated"/);
+  assert.match(replayText, /"goalName":"Mobile release audit"/);
   assert.match(replayText, /"type":"approval"/);
   assert.match(replayText, /"action":"resolved"/);
   assert.match(replayText, /"latestCursor":\d+/);

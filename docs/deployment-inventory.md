@@ -25,7 +25,7 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | OpenRouter milestone | Chat Completions + Models HTTP API | encrypted bounded multi-turn replay and fake strict-routing/tool-loop/SSE tests; no API key configured and no paid request sent |
 | Android journal milestone | app-owned SQLite schema 1 | encrypted snapshot migration and rollback mirror implemented; CI-only, no device migration performed |
 | Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, policy summary, bounded workspace JSON export and protected delete implemented; no field restart performed |
-| Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation, touch-only approvals and two-touch history deletion implemented; no field APK handed off |
+| Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation, touch-only approvals, durable goal/pin/archive and two-touch history deletion implemented; no field APK handed off |
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; restart recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
 | PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | reviewed QR, observed backup-pin server certificate promotion and recoverable Keystore A/B client identity rotation implemented; discovery/P2P, relay and field validation pending |
@@ -63,6 +63,13 @@ Operations dashboard checkpoint decision: 프로젝트별 run 추적, approval A
 `feature/v2-control-plane` 결정을 유지한다. 이 checkpoint는 source/CI 전용이며 APK를 현장 전달하거나
 실행 중인 Companion을 재시작하지 않는다. current v1 후보 1.8.2와 검증된 rollback 1.8.1은 그대로
 보존한다.
+
+Operation organization checkpoint decision: 목표 이름·고정·보관과 이를 동기화하는 Gateway API/SSE를
+추가하는 user-visible v2 기능이므로 기존 `breaking`/`2.0.0`, Android `versionCode 20000`, 대상
+`feature/v2-control-plane`을 유지한다. metadata는 기존 operation 암호문 안에 저장해 journal schema를
+바꾸지 않는다. pin은 7일/500 operation retention을 연장하지 않고 명시적 workspace 기록 삭제도
+차단하지 않는다. 이번 변경은 source와 CI-only APK만 갱신하며 APK 전달·설치, 실행 중 Companion 재시작,
+실제 Provider 호출을 수행하지 않는다. current v1 후보 1.8.2와 검증된 rollback 1.8.1을 그대로 보존한다.
 
 Approved API tool checkpoint decision: 기존 텍스트 파일 한 개의 검토된 교체와 격리된 npm 검증을
 OpenAI/OpenRouter run에 추가하는 v2 기능이므로 `breaking`/`2.0.0`, Android `versionCode 20000`,

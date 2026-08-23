@@ -192,9 +192,18 @@ export interface Operation {
   startedAt?: string;
   completedAt?: string;
   acknowledgedAt?: string;
+  goalName?: string;
+  pinnedAt?: string;
+  archivedAt?: string;
   error?: string;
   result?: RunResult;
   resumable?: boolean;
+}
+
+export interface OperationMetadataPatch {
+  goalName?: string | null;
+  pinned?: boolean;
+  archived?: boolean;
 }
 
 export type ApprovalRisk = "observation" | "change" | "execution" | "high_risk" | "external_effect";

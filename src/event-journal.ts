@@ -617,6 +617,12 @@ function assertStoredOperation(value: StoredOperationPayload, expectedId: string
     || !boundedTimestamp(operation.startedAt)
     || (operation.completedAt !== undefined && !boundedTimestamp(operation.completedAt))
     || (operation.acknowledgedAt !== undefined && !boundedTimestamp(operation.acknowledgedAt))
+    || (operation.goalName !== undefined && (
+      !boundedString(operation.goalName, 120) || /[\u0000-\u001f\u007f\u2028\u2029]/.test(operation.goalName)
+    ))
+    || (operation.pinnedAt !== undefined && !boundedTimestamp(operation.pinnedAt))
+    || (operation.archivedAt !== undefined && !boundedTimestamp(operation.archivedAt))
+    || (operation.pinnedAt !== undefined && operation.archivedAt !== undefined)
     || (operation.error !== undefined && (typeof operation.error !== "string" || operation.error.length > 20_000))
     || !validResult
     || !validResumeState(operation.resumeState, operation.providerId, operation.model)

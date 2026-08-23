@@ -37,6 +37,8 @@ key를 잃으면 기존 payload를 복구하지 못하므로 DB와 key는 함께
   결과와 Git 상태를 확인하기 전에는 이를 완료·실패로 추정하거나 그 프로젝트 queue를 재개하지 않는다.
 - 사용자의 확인 시각은 operation에 암호화해 commit한 뒤 `acknowledged` event로 연결 기기에 전파한다.
   따라서 앱이나 Companion을 다시 열어도 이미 확인한 `unknown` 작업이 queue를 다시 막지 않는다.
+- 목표 이름, 고정 시각과 보관 시각도 operation ciphertext에 저장하고 `metadata_updated` event로
+  연결된 기기에 전파한다. 목표 이름은 한 줄 120자, 고정은 retained operation 중 최대 50개다.
 
 기본 retention은 7일, 최대 500 operation과 2,000 event다. 오래된 terminal operation 삭제 시 관련
 event도 함께 삭제한다. 실행 중 operation은 retention 정리 대상에서 제외된다. 작업 대시보드는
@@ -48,12 +50,15 @@ workspace 기록 삭제는 화면에서 정확한 전체 경로와 영향 범위
 실행된다. 해당 workspace에 실행·승인 중인 operation이나 사용자가 아직 확인하지 않은
 `unknown` operation이 있으면 Gateway가 409로 거절한다. 삭제는 Companion의 operation, idempotency
 기록과 연관 event만 제거하며 실제 프로젝트 파일, Android의 conversation과 queue journal은 바꾸지
-않는다. retention 사용자 설정과 pin/archive는 아직 구현하지 않았다.
+않는다. 보관은 대시보드 기본 목록에서만 숨기며 실행·승인·미확인 `unknown`에는 적용할 수 없다.
+고정은 retained 범위 안에서 정렬 우선순위만 높이고 7일/500 operation retention을 우회하지 않는다.
+명시적인 workspace 기록 삭제는 고정·보관 operation과 관련 event도 함께 제거한다. retention 사용자
+설정은 아직 구현하지 않았다.
 
 ## 검사 범위
 
 자동 테스트는 private directory와 DB/key/WAL 권한, symlink·hard link 차단, 평문
 prompt·workspace·event·idempotency 비노출, ciphertext와 metadata tamper 감지, retention gap과 cursor
-reset, 중복 cursor 제거, idempotent retry, `running → unknown` 재시작 복구, durable acknowledgement,
-workspace 경계 내보내기·응답 크기 상한과 active/unknown 삭제 보호를
+reset, 중복 cursor 제거, idempotent retry, `running → unknown` 재시작 복구, durable acknowledgement와
+목표 이름·고정·보관 복원, workspace 경계 내보내기·응답 크기 상한과 active/unknown 삭제 보호를
 가짜 Provider로 검증한다. 공개 CI는 실제 Provider 요청이나 사용자 데이터를 사용하지 않는다.

@@ -59,6 +59,10 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 - 모바일 작업 대시보드가 선택한 Linux Companion의 최근 run을 프로젝트별로 묶고 실행·승인·대기열·
   unknown·완료·실패 수, Provider·모델·경과 시간·token·비용을 표시한다. 작업을 열 때 다른 프로젝트의
   실행을 중단하지 않고 화면 초점만 정확한 workspace·Provider·conversation으로 옮긴다.
+- 작업 카드의 목표 이름, 최대 50개 고정과 보관 상태를 Companion 암호화 operation에 저장하고
+  `metadata_updated` SSE로 연결된 화면에 동기화한다. 보관한 작업은 기본 대시보드에서 숨기되 다시
+  표시·복원할 수 있으며, 실행·승인·미확인 작업은 보관할 수 없다. 고정은 7일/500 operation 보존
+  상한을 우회하지 않고, 명시적인 프로젝트 기록 삭제는 고정·보관 작업도 함께 지운다.
 - 승인 요청은 run과 workspace가 일치할 때만 승인함에 노출한다. redacted summary/details의 크기와 JSON
   형식을 제한하고, approve/decline 모두 same-origin 화면 터치 API로만 처리한다. 음성 source를 보내도
   서버가 `touch`로 고정하며 만료·거절·재연결 중 자동 승인은 없다.

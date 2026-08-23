@@ -301,6 +301,58 @@ test("RunCoordinator deletes only terminal workspace history and protects active
   restoredCoordinator.close();
 });
 
+test("RunCoordinator validates and persists operation names, pins, and archives", async () => {
+  const providers = new FakeRunProviders();
+  const saved: Array<{ goalName?: string; pinnedAt?: string; archivedAt?: string }> = [];
+  const events: RunCoordinatorEvent[] = [];
+  let now = Date.parse("2026-08-24T03:00:00.000Z");
+  const coordinator = new RunCoordinator(providers, {
+    now: () => now,
+    createId: () => "operation-organized",
+    stateStore: {
+      load: () => ({ operations: [], idempotency: [] }),
+      saveOperation: (operation) => saved.push(structuredClone(operation)),
+      deleteOperation: () => undefined,
+      deleteOperations: () => undefined,
+    },
+  });
+  coordinator.subscribe((event) => events.push(event));
+  const running = await coordinator.start({
+    providerId: "fake",
+    prompt: "audit the project",
+    input: { cwd: process.cwd(), prompt: "audit the project" },
+  });
+
+  const named = coordinator.updateMetadata(running.id, { goalName: "  Release audit  ", pinned: true });
+  assert.equal(named.goalName, "Release audit");
+  assert.equal(named.pinnedAt, "2026-08-24T03:00:00.000Z");
+  assert.throws(
+    () => coordinator.updateMetadata(running.id, { goalName: "should roll back", archived: true }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  assert.equal(coordinator.get(running.id)?.goalName, "Release audit");
+  assert.throws(
+    () => coordinator.updateMetadata(running.id, { goalName: "line one\nline two" }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 400,
+  );
+
+  providers.complete(0, { status: "completed", result: { finalResponse: "done" } });
+  await waitFor(() => coordinator.get(running.id)?.status === "completed");
+  now += 1_000;
+  const archived = coordinator.updateMetadata(running.id, { archived: true });
+  assert.equal(archived.archivedAt, "2026-08-24T03:00:01.000Z");
+  assert.equal(archived.pinnedAt, undefined);
+  now += 1_000;
+  const repinned = coordinator.updateMetadata(running.id, { pinned: true });
+  assert.equal(repinned.archivedAt, undefined);
+  assert.equal(repinned.pinnedAt, "2026-08-24T03:00:02.000Z");
+  assert.equal(saved.at(-1)?.goalName, "Release audit");
+  const lastEvent = events.at(-1);
+  assert.equal(lastEvent?.type, "operation");
+  assert.equal(lastEvent?.type === "operation" ? lastEvent.action : undefined, "metadata_updated");
+  coordinator.close();
+});
+
 class FakeRunProviders implements RunProviderRegistry {
   readonly starts: Array<{ providerId: unknown; accountId: unknown; input: ProviderRunInput }> = [];
   readonly cancellations: Array<[unknown, string, string]> = [];

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   activeApprovals,
   applyApprovalEvent,
+  dashboardOperations,
   groupOperations,
   operationCounts,
   upsertOperation,
@@ -39,6 +40,22 @@ test("approval inbox removes resolved and expired requests without replay duplic
   assert.equal(activeApprovals(once, now).length, 1);
   assert.deepEqual(applyApprovalEvent(once, { ...requested, action: "resolved" }, now), []);
   assert.deepEqual(activeApprovals(once, Date.parse(approval.expiresAt) + 1), []);
+});
+
+test("operation dashboard hides archived work and orders pins ahead of ordinary terminal work", () => {
+  const ordinary = operation("ordinary", "/workspace/a", "completed", "2026-08-24T01:50:00.000Z");
+  const pinned = {
+    ...operation("pinned", "/workspace/a", "completed", "2026-08-24T01:00:00.000Z"),
+    pinnedAt: "2026-08-24T01:55:00.000Z",
+  };
+  const archived = {
+    ...operation("archived", "/workspace/a", "completed", "2026-08-24T01:59:00.000Z"),
+    archivedAt: "2026-08-24T02:00:00.000Z",
+  };
+  const hidden = dashboardOperations([archived, ordinary, pinned]);
+  assert.deepEqual(hidden.map((item) => item.id), ["ordinary", "pinned"]);
+  assert.equal(dashboardOperations([archived], true).length, 1);
+  assert.deepEqual(groupOperations(hidden, [])[0]?.operations.map((item) => item.id), ["pinned", "ordinary"]);
 });
 
 function operation(

@@ -1,12 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   activeApprovals,
+  dashboardOperations,
   groupOperations,
   operationCounts,
   type OperationGroup,
 } from "./operations-state";
 import { workspaceIdentityFor, workspaceIdentityLabel } from "./workspace-identity";
-import type { ApprovalItem, JournalPolicy, Operation, Workspace, WorkspaceIdentity } from "./types";
+import type {
+  ApprovalItem,
+  JournalPolicy,
+  Operation,
+  OperationMetadataPatch,
+  Workspace,
+  WorkspaceIdentity,
+} from "./types";
 
 interface OperationsDashboardProps {
   deviceName: string;
@@ -18,9 +26,11 @@ interface OperationsDashboardProps {
   journalPolicy: JournalPolicy | null;
   exportingWorkspace: string | null;
   deletingWorkspace: string | null;
+  updatingOperationId: string | null;
   onClose(): void;
   onRefresh(): void;
   onOpenOperation(operation: Operation): void;
+  onUpdateOperation(operation: Operation, patch: OperationMetadataPatch): Promise<boolean>;
   onDecision(approval: ApprovalItem, decision: "approved" | "declined"): void;
   onExportWorkspace(workspace: string): Promise<void>;
   onDeleteWorkspaceHistory(workspace: string): Promise<void>;
@@ -29,13 +39,19 @@ interface OperationsDashboardProps {
 export function OperationsDashboard(props: OperationsDashboardProps) {
   const [now, setNow] = useState(Date.now());
   const [confirmingWorkspace, setConfirmingWorkspace] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 15_000);
     return () => window.clearInterval(timer);
   }, []);
   const approvals = useMemo(() => activeApprovals(props.approvals, now), [now, props.approvals]);
-  const counts = useMemo(() => operationCounts(props.operations, approvals), [approvals, props.operations]);
-  const groups = useMemo(() => groupOperations(props.operations, approvals), [approvals, props.operations]);
+  const archivedCount = useMemo(() => props.operations.filter((operation) => operation.archivedAt).length, [props.operations]);
+  const visibleOperations = useMemo(
+    () => dashboardOperations(props.operations, showArchived),
+    [props.operations, showArchived],
+  );
+  const counts = useMemo(() => operationCounts(visibleOperations, approvals), [approvals, visibleOperations]);
+  const groups = useMemo(() => groupOperations(visibleOperations, approvals), [approvals, visibleOperations]);
   useEffect(() => {
     const confirmingGroup = groups.find((group) => group.cwd === confirmingWorkspace);
     if (confirmingWorkspace && (!confirmingGroup || deletionProtected(confirmingGroup))) {
@@ -85,7 +101,14 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
         <section className="workspace-operations" aria-labelledby="workspace-operations-title">
           <div className="dashboard-section-title">
             <strong id="workspace-operations-title">프로젝트 작업</strong>
-            <span>{journalPolicyLabel(props.operations.length, props.journalPolicy)}</span>
+            <div className="dashboard-section-tools">
+              <span>{journalPolicyLabel(props.operations.length, props.journalPolicy)}</span>
+              {archivedCount > 0 && (
+                <button type="button" aria-pressed={showArchived} onClick={() => setShowArchived((current) => !current)}>
+                  보관됨 {archivedCount}건 {showArchived ? "숨기기" : "보기"}
+                </button>
+              )}
+            </div>
           </div>
           {groups.length === 0 ? (
             <p className="dashboard-empty">아직 기록된 작업이 없습니다.</p>
@@ -100,7 +123,9 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
               confirmingDelete={confirmingWorkspace === group.cwd}
               exportingWorkspace={props.exportingWorkspace}
               deletingWorkspace={props.deletingWorkspace}
+              updatingOperationId={props.updatingOperationId}
               onOpenOperation={props.onOpenOperation}
+              onUpdateOperation={props.onUpdateOperation}
               onConfirmDelete={(confirming) => setConfirmingWorkspace(confirming ? group.cwd : null)}
               onExportWorkspace={props.onExportWorkspace}
               onDeleteWorkspaceHistory={props.onDeleteWorkspaceHistory}
@@ -121,7 +146,9 @@ function WorkspaceOperationGroup({
   confirmingDelete,
   exportingWorkspace,
   deletingWorkspace,
+  updatingOperationId,
   onOpenOperation,
+  onUpdateOperation,
   onConfirmDelete,
   onExportWorkspace,
   onDeleteWorkspaceHistory,
@@ -134,7 +161,9 @@ function WorkspaceOperationGroup({
   confirmingDelete: boolean;
   exportingWorkspace: string | null;
   deletingWorkspace: string | null;
+  updatingOperationId: string | null;
   onOpenOperation(operation: Operation): void;
+  onUpdateOperation(operation: Operation, patch: OperationMetadataPatch): Promise<boolean>;
   onConfirmDelete(confirming: boolean): void;
   onExportWorkspace(workspace: string): Promise<void>;
   onDeleteWorkspaceHistory(workspace: string): Promise<void>;
@@ -158,7 +187,9 @@ function WorkspaceOperationGroup({
             identity={operation.workspaceIdentity ?? workspaceIdentityFor(workspaces, operation.cwd)}
             waiting={approvals.some((item) => item.operationId === operation.id)}
             now={now}
+            busy={updatingOperationId === operation.id}
             onOpen={onOpenOperation}
+            onUpdate={onUpdateOperation}
           />
         ))}
       </div>
@@ -247,24 +278,39 @@ function OperationCard({
   identity,
   waiting,
   now,
+  busy,
   onOpen,
+  onUpdate,
 }: {
   operation: Operation;
   identity: WorkspaceIdentity | undefined;
   waiting: boolean;
   now: number;
+  busy: boolean;
   onOpen(operation: Operation): void;
+  onUpdate(operation: Operation, patch: OperationMetadataPatch): Promise<boolean>;
 }) {
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(operation.goalName ?? "");
+  useEffect(() => {
+    if (!editingName) setNameDraft(operation.goalName ?? "");
+  }, [editingName, operation.goalName]);
   const usage = operation.result?.usage;
   const model = operation.model || stringResult(operation.result, "model") || "기본 모델";
   const status = waiting ? "waiting" : operation.status;
+  const archiveBlocked = waiting || operation.status === "running"
+    || (operation.status === "unknown" && !operation.acknowledgedAt);
+  const saveName = async () => {
+    if (await onUpdate(operation, { goalName: nameDraft.trim() || null })) setEditingName(false);
+  };
   return (
-    <article className={`operation-card status-${status}`}>
+    <article className={`operation-card status-${status}${operation.archivedAt ? " archived" : ""}`}>
       <div className="operation-card-head">
-        <span>{statusLabel(status, operation.acknowledgedAt)}</span>
+        <span>{operation.pinnedAt ? "고정 · " : ""}{statusLabel(status, operation.acknowledgedAt)}</span>
         <small>{elapsed(operation, now)}</small>
       </div>
-      <strong>{short(operation.prompt, 100)}</strong>
+      <strong>{short(operation.goalName ?? operation.prompt, 100)}</strong>
+      {operation.goalName && <small className="operation-prompt">{short(operation.prompt, 140)}</small>}
       <div className="operation-facts">
         <span>{operation.providerId ?? "codex"}</span>
         <span>{model}</span>
@@ -272,7 +318,39 @@ function OperationCard({
         {usage?.totalTokens !== undefined && <span>{usage.totalTokens.toLocaleString()} tokens</span>}
         {usage?.costCredits !== undefined && <span>{usage.costCredits.toFixed(6)} credits</span>}
       </div>
-      <button type="button" onClick={() => onOpen(operation)}>작업 열기</button>
+      {editingName && (
+        <form className="operation-name-editor" onSubmit={(event) => { event.preventDefault(); void saveName(); }}>
+          <label htmlFor={`goal-name-${operation.id}`}>목표 이름</label>
+          <input
+            id={`goal-name-${operation.id}`}
+            value={nameDraft}
+            maxLength={120}
+            autoFocus
+            placeholder="이 작업의 이름"
+            disabled={busy}
+            onChange={(event) => setNameDraft(event.target.value)}
+          />
+          <div>
+            <button type="button" disabled={busy} onClick={() => setEditingName(false)}>취소</button>
+            <button type="submit" disabled={busy}>{busy ? "저장 중…" : "저장"}</button>
+          </div>
+        </form>
+      )}
+      <div className="operation-card-actions">
+        <button type="button" disabled={busy} onClick={() => onOpen(operation)}>열기</button>
+        <button type="button" disabled={busy} onClick={() => setEditingName((current) => !current)}>이름</button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void onUpdate(operation, { pinned: !operation.pinnedAt })}
+        >{operation.pinnedAt ? "고정 해제" : "고정"}</button>
+        <button
+          type="button"
+          disabled={busy || archiveBlocked}
+          title={archiveBlocked ? "실행·승인·확인 필요 작업은 보관할 수 없습니다." : undefined}
+          onClick={() => void onUpdate(operation, { archived: !operation.archivedAt })}
+        >{operation.archivedAt ? "복원" : "보관"}</button>
+      </div>
     </article>
   );
 }

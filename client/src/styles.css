@@ -312,6 +312,8 @@ select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shad
 .dashboard-section-title { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.55rem; }
 .dashboard-section-title strong { flex: 0 0 auto; font-size: 0.83rem; }
 .dashboard-section-title span { min-width: 0; color: var(--muted); font-size: 0.61rem; line-height: 1.4; text-align: right; }
+.dashboard-section-tools { display: flex; min-width: 0; align-items: flex-end; flex-direction: column; gap: 0.3rem; }
+.dashboard-section-tools button { min-height: 1.8rem; padding: 0.25rem 0.55rem; border: 1px solid var(--line); border-radius: 999px; color: var(--accent); background: transparent; cursor: pointer; font-size: 0.6rem; font-weight: 750; }
 .approval-inbox { padding: 0.72rem; border: 1px solid rgba(255, 203, 136, 0.32); border-radius: 0.85rem; background: rgba(255, 203, 136, 0.04); }
 .approval-card { min-width: 0; padding: 0.72rem; border: 1px solid var(--line); border-radius: 0.72rem; background: var(--surface-2); }
 .approval-card + .approval-card { margin-top: 0.55rem; }
@@ -336,6 +338,7 @@ select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shad
 .operation-group > header small { margin-top: 0.16rem; color: var(--muted); font-size: 0.58rem; }
 .operation-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
 .operation-card { min-width: 0; padding: 0.68rem; border: 1px solid var(--line); border-radius: 0.68rem; background: var(--surface-2); }
+.operation-card.archived { opacity: 0.72; }
 .operation-card.status-running { border-color: rgba(62, 213, 165, 0.34); }
 .operation-card.status-waiting, .operation-card.status-unknown { border-color: rgba(255, 203, 136, 0.38); }
 .operation-card.status-failed { border-color: rgba(255, 129, 124, 0.34); }
@@ -345,9 +348,16 @@ select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shad
 .status-failed .operation-card-head span { color: var(--danger); }
 .operation-card-head small { color: var(--muted); font-size: 0.58rem; }
 .operation-card > strong { display: block; min-height: 2.4em; margin-top: 0.42rem; font-size: 0.73rem; line-height: 1.35; overflow-wrap: anywhere; }
+.operation-prompt { display: block; max-height: 3.9em; margin-top: 0.28rem; overflow: hidden; color: var(--muted); font-size: 0.6rem; line-height: 1.3; overflow-wrap: anywhere; }
 .operation-facts { display: flex; min-width: 0; flex-wrap: wrap; gap: 0.28rem; margin-top: 0.48rem; }
 .operation-facts span { max-width: 100%; overflow: hidden; padding: 0.22rem 0.34rem; border-radius: 999px; color: var(--muted); background: rgba(146, 165, 168, 0.09); font-size: 0.55rem; text-overflow: ellipsis; white-space: nowrap; }
-.operation-card > button { width: 100%; min-height: 2.25rem; margin-top: 0.55rem; border: 1px solid var(--line); border-radius: 0.56rem; color: var(--accent); background: transparent; cursor: pointer; font-size: 0.65rem; font-weight: 750; }
+.operation-card-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.38rem; margin-top: 0.55rem; }
+.operation-card-actions button, .operation-name-editor button { min-width: 0; min-height: 2.25rem; border: 1px solid var(--line); border-radius: 0.56rem; color: var(--accent); background: transparent; cursor: pointer; font-size: 0.63rem; font-weight: 750; }
+.operation-card-actions button:disabled, .operation-name-editor button:disabled { opacity: 0.4; cursor: wait; }
+.operation-name-editor { min-width: 0; max-width: 100%; margin-top: 0.55rem; padding: 0.55rem; border: 1px solid var(--line); border-radius: 0.58rem; }
+.operation-name-editor label { display: block; color: var(--muted); font-size: 0.58rem; }
+.operation-name-editor input { width: 100%; max-width: 100%; min-width: 0; min-height: 2.4rem; margin-top: 0.35rem; padding: 0.48rem; border: 1px solid var(--line); border-radius: 0.48rem; color: var(--text); background: var(--bg); font: inherit; font-size: 0.7rem; }
+.operation-name-editor > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.38rem; margin-top: 0.4rem; }
 .journal-controls { min-width: 0; max-width: 100%; margin-top: 0.62rem; padding-top: 0.62rem; border-top: 1px solid var(--line); }
 .journal-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.45rem; min-width: 0; }
 .journal-actions button, .journal-delete-confirm button { min-width: 0; min-height: 2.3rem; border: 1px solid var(--line); border-radius: 0.56rem; color: var(--accent); background: transparent; cursor: pointer; font-size: 0.64rem; font-weight: 750; }

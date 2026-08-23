@@ -55,6 +55,13 @@ export function operationCounts(
   };
 }
 
+export function dashboardOperations(
+  operations: readonly Operation[],
+  includeArchived = false,
+): Operation[] {
+  return operations.filter((operation) => includeArchived || !operation.archivedAt);
+}
+
 export function groupOperations(
   operations: readonly Operation[],
   approvals: readonly ApprovalItem[],
@@ -70,11 +77,22 @@ export function groupOperations(
   };
   for (const operation of operations) group(operation.cwd).operations.push(operation);
   for (const approval of approvals) group(approval.cwd).approvals.push(approval);
+  for (const workspace of byWorkspace.values()) {
+    workspace.operations.sort((left, right) => operationPriority(right) - operationPriority(left)
+      || operationTime(right) - operationTime(left));
+  }
   return [...byWorkspace.values()].sort((left, right) => {
     const leftPriority = groupPriority(left);
     const rightPriority = groupPriority(right);
     return rightPriority - leftPriority || left.name.localeCompare(right.name);
   });
+}
+
+function operationPriority(operation: Operation): number {
+  if (operation.status === "running") return 4;
+  if (operation.status === "unknown" && !operation.acknowledgedAt) return 3;
+  if (operation.pinnedAt) return 2;
+  return 1;
 }
 
 function groupPriority(group: OperationGroup): number {

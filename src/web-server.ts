@@ -36,6 +36,7 @@ import {
   RunCoordinator,
   RunCoordinatorError,
   type RunOperation,
+  type RunOperationMetadataPatch,
 } from "./run-coordinator.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
@@ -839,6 +840,35 @@ async function handleApi(
     return;
   }
 
+  const operationMetadataMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/metadata$/);
+  if (request.method === "PATCH" && operationMetadataMatch) {
+    assertSameOrigin(request);
+    const value = await readJson(request);
+    if (!isRecord(value)) throw new HttpError(400, "Operation metadata body is invalid");
+    const allowedFields = new Set(["goalName", "pinned", "archived"]);
+    if (Object.keys(value).some((key) => !allowedFields.has(key))) {
+      throw new HttpError(400, "Operation metadata body contains an unsupported field");
+    }
+    const patch: RunOperationMetadataPatch = {};
+    if (Object.hasOwn(value, "goalName")) {
+      if (value.goalName !== null && typeof value.goalName !== "string") {
+        throw new HttpError(400, "goalName must be a string or null");
+      }
+      patch.goalName = value.goalName;
+    }
+    for (const field of ["pinned", "archived"] as const) {
+      if (!Object.hasOwn(value, field)) continue;
+      if (typeof value[field] !== "boolean") throw new HttpError(400, `${field} must be a boolean`);
+      patch[field] = value[field];
+    }
+    const operationId = decodeURIComponent(operationMetadataMatch[1]!);
+    const operation = runs.get(operationId);
+    if (!operation) throw new HttpError(404, "Operation not found");
+    options.paths.assertAllowed(operation.cwd);
+    sendJson(response, 200, { operation: publicOperation(runs.updateMetadata(operationId, patch)) });
+    return;
+  }
+
   const interruptMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/interrupt$/);
   if (request.method === "POST" && interruptMatch) {
     assertSameOrigin(request);
@@ -1110,7 +1140,7 @@ function applyApiCors(request: IncomingMessage, response: ServerResponse): void 
   }
   if (!allowedOrigin) return;
   response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
-  response.setHeader("Access-Control-Allow-Methods", "DELETE, GET, POST, OPTIONS");
+  response.setHeader("Access-Control-Allow-Methods", "DELETE, GET, PATCH, POST, OPTIONS");
   response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID");
   response.setHeader("Vary", "Origin");
 }

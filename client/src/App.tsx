@@ -69,6 +69,7 @@ import type {
   HistoryItem,
   JournalPolicy,
   Operation,
+  OperationMetadataPatch,
   MediaItem,
   ModelOption,
   ModelResponse,
@@ -215,6 +216,7 @@ export function App() {
   const [approvalInbox, setApprovalInbox] = useState<ApprovalItem[]>([]);
   const [showOperationsDashboard, setShowOperationsDashboard] = useState(false);
   const [decidingApprovalId, setDecidingApprovalId] = useState<string | null>(null);
+  const [updatingOperationId, setUpdatingOperationId] = useState<string | null>(null);
   const [journalPolicy, setJournalPolicy] = useState<JournalPolicy | null>(null);
   const [exportingWorkspace, setExportingWorkspace] = useState<string | null>(null);
   const [deletingWorkspace, setDeletingWorkspace] = useState<string | null>(null);
@@ -2416,6 +2418,34 @@ export function App() {
     }
   }
 
+  async function updateOperationMetadata(current: Operation, patch: OperationMetadataPatch) {
+    if (updatingOperationId) return false;
+    setUpdatingOperationId(current.id);
+    try {
+      const data = await api<{ operation: Operation }>(
+        `/api/runs/${encodeURIComponent(current.id)}/metadata`,
+        { method: "PATCH", body: patch },
+      );
+      handleOperationEvent("metadata_updated", data.operation);
+      showToast(patch.archived === true
+        ? "작업을 보관했습니다."
+        : patch.archived === false
+          ? "보관한 작업을 복원했습니다."
+          : patch.pinned === true
+            ? "작업을 위에 고정했습니다."
+            : patch.pinned === false
+              ? "작업 고정을 해제했습니다."
+              : "작업 이름을 저장했습니다.");
+      return true;
+    } catch (error) {
+      await refreshOperationalSnapshot(true);
+      showToast(errorMessage(error));
+      return false;
+    } finally {
+      setUpdatingOperationId(null);
+    }
+  }
+
   async function deleteCompanionJournal(targetWorkspace: string) {
     if (deletingWorkspace || exportingWorkspace) return;
     setDeletingWorkspace(targetWorkspace);
@@ -2612,12 +2642,14 @@ export function App() {
           workspaces={workspaces}
           queuedCount={promptQueue.length}
           decidingApprovalId={decidingApprovalId}
+          updatingOperationId={updatingOperationId}
           journalPolicy={journalPolicy}
           exportingWorkspace={exportingWorkspace}
           deletingWorkspace={deletingWorkspace}
           onClose={() => setShowOperationsDashboard(false)}
           onRefresh={() => void refreshOperationalSnapshot(false)}
           onOpenOperation={openOperationFromDashboard}
+          onUpdateOperation={updateOperationMetadata}
           onDecision={(approval, decision) => void decideApproval(approval, decision)}
           onExportWorkspace={exportCompanionJournal}
           onDeleteWorkspaceHistory={deleteCompanionJournal}

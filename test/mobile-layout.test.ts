@@ -24,6 +24,9 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   const pocketLinkFields = css.match(/\.pocket-link-fields \{([^}]+)\}/)?.[1] ?? "";
   const pinPromotionActions = css.match(/\.pin-promotion-review > div, \.pin-staging-review > div \{([^}]+)\}/)?.[1] ?? "";
   const pairingActions = css.match(/\.pairing-actions \{([^}]+)\}/)?.[1] ?? "";
+  const operationActions = css.match(/\.operation-card-actions \{([^}]+)\}/)?.[1] ?? "";
+  const operationEditor = css.match(/\.operation-name-editor \{([^}]+)\}/)?.[1] ?? "";
+  const operationNameInput = css.match(/\.operation-name-editor input \{([^}]+)\}/)?.[1] ?? "";
 
   assert.match(overlay, /grid-template-rows:\s*minmax\(0,\s*1fr\)/);
   assert.match(overlay, /overflow:\s*hidden/);
@@ -50,6 +53,10 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   assert.match(pinPromotionActions, /minmax\(0,\s*1fr\)/);
   assert.match(pinPromotionActions, /minmax\(0,\s*2fr\)/);
   assert.match(pairingActions, /minmax\(0,\s*1fr\)/);
+  assert.match(operationActions, /minmax\(0,\s*1fr\)/);
+  assert.match(operationEditor, /max-width:\s*100%/);
+  assert.match(operationNameInput, /max-width:\s*100%/);
+  assert.match(operationNameInput, /min-width:\s*0/);
 });
 
 test("the app shell cannot grow beyond a narrow mobile viewport", async () => {

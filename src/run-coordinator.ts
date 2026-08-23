@@ -10,6 +10,8 @@ import type { WorkspaceIdentity } from "./workspace-identity.js";
 
 const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const DEFAULT_MAX_OPERATIONS = 500;
+const MAX_PINNED_OPERATIONS = 50;
+const MAX_GOAL_NAME_LENGTH = 120;
 
 export type RunOperationStatus = "running" | "unknown" | ProviderRunStatus;
 
@@ -29,6 +31,9 @@ export interface RunOperation {
   startedAt: string;
   completedAt?: string;
   acknowledgedAt?: string;
+  goalName?: string;
+  pinnedAt?: string;
+  archivedAt?: string;
   result?: Record<string, unknown>;
   resumeState?: ProviderResumeState;
   error?: string;
@@ -54,6 +59,12 @@ export interface RunIdempotencyRecord {
   operationId: string;
 }
 
+export interface RunOperationMetadataPatch {
+  goalName?: string | null;
+  pinned?: boolean;
+  archived?: boolean;
+}
+
 export interface RestoredRunState {
   operations: readonly RunOperation[];
   idempotency: readonly RunIdempotencyRecord[];
@@ -69,7 +80,7 @@ export interface RunStateStore {
 export type RunCoordinatorEvent =
   | {
       type: "operation";
-      action: "started" | "completed" | "failed" | "acknowledged";
+      action: "started" | "completed" | "failed" | "acknowledged" | "metadata_updated";
       operation: RunOperation;
     }
   | {
@@ -237,6 +248,66 @@ export class RunCoordinator {
     }
     this.emit({ type: "operation", action: "acknowledged", operation: cloneOperation(operation) });
     return cloneOperation(operation);
+  }
+
+  updateMetadata(operationId: string, patch: RunOperationMetadataPatch): RunOperation {
+    this.cleanup();
+    const operation = this.operations.get(operationId);
+    if (!operation) throw new RunCoordinatorError(404, "Operation not found");
+    if (patch.goalName === undefined && patch.pinned === undefined && patch.archived === undefined) {
+      throw new RunCoordinatorError(400, "At least one operation metadata field is required");
+    }
+    const previous = {
+      goalName: operation.goalName,
+      pinnedAt: operation.pinnedAt,
+      archivedAt: operation.archivedAt,
+    };
+    const now = new Date(this.now()).toISOString();
+    if (patch.goalName !== undefined) {
+      if (patch.goalName === null) delete operation.goalName;
+      else {
+        const goalName = patch.goalName.trim();
+        if (!goalName || goalName.length > MAX_GOAL_NAME_LENGTH || /[\u0000-\u001f\u007f\u2028\u2029]/.test(goalName)) {
+          throw new RunCoordinatorError(400, `Goal name must be one line up to ${MAX_GOAL_NAME_LENGTH} characters`);
+        }
+        operation.goalName = goalName;
+      }
+    }
+    if (patch.pinned !== undefined) {
+      if (patch.pinned) {
+        if (!operation.pinnedAt) {
+          const pinnedCount = [...this.operations.values()].filter((item) => item.pinnedAt).length;
+          if (pinnedCount >= MAX_PINNED_OPERATIONS) {
+            throw new RunCoordinatorError(409, `At most ${MAX_PINNED_OPERATIONS} operations can be pinned`);
+          }
+          operation.pinnedAt = now;
+        }
+        delete operation.archivedAt;
+      } else {
+        delete operation.pinnedAt;
+      }
+    }
+    if (patch.archived !== undefined) {
+      if (patch.archived) {
+        if (operation.status === "running" || (operation.status === "unknown" && !operation.acknowledgedAt)) {
+          restoreMetadata(operation, previous);
+          throw new RunCoordinatorError(409, "Active or unacknowledged operations cannot be archived");
+        }
+        operation.archivedAt ??= now;
+        delete operation.pinnedAt;
+      } else {
+        delete operation.archivedAt;
+      }
+    }
+    try {
+      this.stateStore?.saveOperation(operation, this.idempotencyForOperation(operation.id));
+    } catch (error) {
+      restoreMetadata(operation, previous);
+      throw error;
+    }
+    const updated = cloneOperation(operation);
+    this.emit({ type: "operation", action: "metadata_updated", operation: updated });
+    return updated;
   }
 
   deleteWorkspaceHistory(workspace: string): { deletedOperationIds: string[] } {
@@ -505,6 +576,16 @@ function cloneOperation(operation: RunOperation): RunOperation {
 
 function operationTime(operation: RunOperation): number {
   return Date.parse(operation.completedAt ?? operation.startedAt);
+}
+
+function restoreMetadata(
+  operation: RunOperation,
+  previous: Pick<RunOperation, "goalName" | "pinnedAt" | "archivedAt">,
+): void {
+  for (const key of ["goalName", "pinnedAt", "archivedAt"] as const) {
+    if (previous[key] === undefined) delete operation[key];
+    else operation[key] = previous[key];
+  }
 }
 
 function safeError(error: unknown): string {

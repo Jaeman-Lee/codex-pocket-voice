@@ -21,7 +21,7 @@ test("encrypted event journal restores running work as unknown and preserves ide
   t.after(() => rm(directory, { recursive: true, force: true }));
   const databaseFile = join(directory, "events.sqlite3");
   let now = Date.parse("2026-08-24T01:00:00.000Z");
-  const ids = ["event-started", "event-recovered"];
+  const ids = ["event-started", "event-recovered", "event-acknowledged", "event-metadata"];
   const firstJournal = await EventJournal.create(databaseFile, {
     now: () => now,
     createId: () => ids.shift() ?? "unexpected-event",
@@ -95,8 +95,12 @@ test("encrypted event journal restores running work as unknown and preserves ide
   assert.equal(acknowledged.status, "unknown");
   assert.equal(typeof acknowledged.acknowledgedAt, "string");
   assert.equal(restoredCoordinator.acknowledge(running.id).acknowledgedAt, acknowledged.acknowledgedAt);
+  const organized = restoredCoordinator.updateMetadata(running.id, { goalName: "Recovered audit", pinned: true });
+  assert.equal(organized.goalName, "Recovered audit");
+  assert.equal(typeof organized.pinnedAt, "string");
   const acknowledgedReplay = restoredJournal.replayAfter(replay.events[0]!.cursor);
   assert.equal(acknowledgedReplay.events[0]?.event.action, "acknowledged");
+  assert.equal(acknowledgedReplay.events[1]?.event.action, "metadata_updated");
   stopMirroring();
   restoredCoordinator.close();
   restoredJournal.close();
@@ -104,6 +108,8 @@ test("encrypted event journal restores running work as unknown and preserves ide
   const verifiedJournal = await EventJournal.create(databaseFile, { now: () => now + 1_000 });
   const verifiedCoordinator = new RunCoordinator(new JournalFakeProviders(), { stateStore: verifiedJournal });
   assert.equal(verifiedCoordinator.get(running.id)?.acknowledgedAt, acknowledged.acknowledgedAt);
+  assert.equal(verifiedCoordinator.get(running.id)?.goalName, "Recovered audit");
+  assert.equal(verifiedCoordinator.get(running.id)?.pinnedAt, organized.pinnedAt);
   verifiedCoordinator.close();
   verifiedJournal.close();
 });
