@@ -1,5 +1,8 @@
 # Roadmap
 
+v1.8.1 이후의 다중 프로젝트 운영판, Provider 공통 실행 계층, OpenAI API와 OpenRouter 연동,
+승인·비용·개인정보 보호 및 단계별 출시 기준은 [v2 실행 계획](v2-plan.md)에 정리한다.
+
 ## Supported PC platform
 
 The desktop/server companion targets **Linux only**. Native Windows and macOS
