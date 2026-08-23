@@ -35,6 +35,11 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 - OpenRouter 요청은 모델 하나, `allow_fallbacks:false`, `require_parameters:true`,
   `data_collection:deny`, `zdr:true`로 고정한다. 실제 upstream은 결과에 기록하지만 다른 모델이나
   Provider로 자동 우회하지 않으며, 공개 검사는 가짜 HTTP/SSE만 사용한다.
+- Android의 암호화된 `WorkJournal` conversation·queue snapshot을 앱 전용 SQLite로 옮기는
+  `PocketJournal` 플러그인을 추가했다. SQLite는 AES-GCM envelope만 받고 원래 workspace/device
+  식별자 대신 domain-separated SHA-256 index를 바인딩하며 payload 크기를 제한한다.
+- 기존 IndexedDB/localStorage 기록은 읽을 때 SQLite로 복사하되 삭제하지 않고, v2 검증 중 새 저장은
+  기존 저장소에도 함께 기록해 v1.8.1 rollback의 로컬 기록 호환을 유지한다.
 - 이 기준선은 CI·개발용이며 v1.8.1 설치본이나 실행 중인 Companion을 교체하지 않는다.
 
 ## 1.8.2 hotfix candidate — project-scoped session handoff

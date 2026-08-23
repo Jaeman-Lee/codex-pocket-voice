@@ -24,7 +24,7 @@
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환 구현; UI 상태 모듈 분리 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key와 read-only 함수 도구 구현; write/command·durable journal 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, read-only broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
-| Phase D | 대기 | 모바일 운영판과 SQLite journal |
+| Phase D | 진행 중 | encrypted snapshot용 Android SQLite와 rollback mirror 구현; event row·cursor replay·retention/export/delete 잔여 |
 | Phase E | 대기 | PocketLink와 출시 강화 |
 
 ## 2. 제품 정의
@@ -310,6 +310,13 @@ routing 선택지는 남아 있다.
 - Queue/Steer, diff·test·artifact 검토
 - SQLite 이벤트 journal, retention/export/delete
 - Android 완료·승인·오류 알림과 deep link
+
+현재 checkpoint에서는 Android `PocketJournal` SQLite backend가 AES-GCM envelope 형태의 conversation과
+queue snapshot만 저장한다. 원래 key/device 대신 domain-separated SHA-256 index를 바인딩하고 payload
+크기를 제한한다. 기존
+IndexedDB/localStorage 기록은 읽기 migration 뒤에도 삭제하지 않으며, v2 field acceptance 전에는
+새 snapshot을 기존 저장소에도 mirror해 1.8.1 rollback에서 기록을 계속 읽을 수 있게 한다. 세부 run
+event row, `lastEventId` replay, retention/export/delete와 다중 프로젝트 대시보드는 다음 단계다.
 
 완료 조건: 여러 프로젝트 run을 동시에 추적하고 앱 종료·네트워크 전환 후 정확한 상태로 복구한다.
 

@@ -8,10 +8,16 @@ Capacitor APK 안에 React 화면을 포함합니다. 앱은 화면을 표시하
 
 음성 입력은 네이티브 `RecognizerIntent`를 `ko-KR`로 호출합니다. 최종 인식 결과 하나만 React에 반환하므로 브라우저의 누적 중간 결과가 반복되는 문제를 피합니다. 음성 데이터 비용을 부과하는 별도 OpenAI API는 사용하지 않습니다.
 
+v2 개발판의 `PocketJournal` 플러그인은 Keystore가 보호하는 키로 WebView에서 먼저 AES-GCM 암호화한
+conversation·queue envelope만 앱 전용 SQLite에 저장합니다. workspace/device 원문은 SQLite index에
+넣지 않고 domain-separated SHA-256 값으로 바꿉니다. 기존 IndexedDB/localStorage 자료는 삭제하지 않고
+읽을 때 복사하며, v2 현장 승인 전에는 롤백 호환 사본도 함께 갱신합니다.
+
 ```text
 Codex Pocket APK
   ├─ React UI (APK 내부 자산)
   ├─ Android 한국어 받아쓰기
+  ├─ 암호화 WorkJournal SQLite
   └─ Termux RUN_COMMAND (최초 1회 권한)
         └─ pc-codex-web start
              └─ SSH local forward 127.0.0.1:8788 → PC 127.0.0.1:8787

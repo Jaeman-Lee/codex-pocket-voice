@@ -1,5 +1,8 @@
 import type { DeviceId } from "./types";
+import { isNativeApp } from "./native";
+import { NativeJournal } from "./native-journal";
 import { conversationKey, type JournalConversation, type JournalQueue } from "./work-journal-model";
+import { MigratingRawJournal, NativeSqliteRawJournal, type RawJournal } from "./work-journal-raw";
 import { secureGet, secureSet } from "./secure-storage";
 
 const DATABASE_NAME = "codex-pocket-work-journal";
@@ -16,13 +19,6 @@ interface EncryptedEnvelope {
   ciphertext: string;
 }
 
-interface RawJournal {
-  loadConversation(key: string): Promise<unknown>;
-  saveConversation(value: unknown): Promise<void>;
-  loadQueue(device: DeviceId): Promise<unknown>;
-  saveQueue(value: unknown): Promise<void>;
-}
-
 export interface WorkJournal {
   loadConversation(device: DeviceId, workspace: string, threadId: string): Promise<JournalConversation | undefined>;
   saveConversation(record: JournalConversation): Promise<void>;
@@ -32,9 +28,12 @@ export interface WorkJournal {
 
 export function createWorkJournal(): WorkJournal {
   const fallback = new LocalStorageRawJournal(window.localStorage);
-  const raw: RawJournal = "indexedDB" in window
+  const browser: RawJournal = "indexedDB" in window
     ? new ResilientRawJournal(new IndexedDbRawJournal(window.indexedDB), fallback)
     : fallback;
+  const raw = isNativeApp()
+    ? new MigratingRawJournal(new NativeSqliteRawJournal(NativeJournal), browser)
+    : browser;
   return new EncryptedWorkJournal(raw);
 }
 
