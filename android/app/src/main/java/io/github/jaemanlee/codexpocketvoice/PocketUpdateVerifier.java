@@ -393,7 +393,11 @@ final class PocketUpdateVerifier {
 
     private static void exactKeys(JSONObject value, String... expected) {
         Set<String> wanted = new HashSet<>(Arrays.asList(expected));
-        if (!value.keySet().equals(wanted)) throw new SecurityException("update manifest 필드 구성이 올바르지 않습니다.");
+        if (value.length() != wanted.size()) throw new SecurityException("update manifest 필드 구성이 올바르지 않습니다.");
+        java.util.Iterator<String> keys = value.keys();
+        while (keys.hasNext()) {
+            if (!wanted.contains(keys.next())) throw new SecurityException("update manifest 필드 구성이 올바르지 않습니다.");
+        }
     }
 
     private static long semverCode(String version) {
