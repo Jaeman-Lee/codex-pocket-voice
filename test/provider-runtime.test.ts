@@ -116,6 +116,7 @@ function runtimeThread(): Thread {
     ephemeral: false,
     section: null,
     sectionEnteredAt: null,
+    projectId: null,
     historyMode: "legacy",
     modelProvider: "openai",
     createdAt: 1,
@@ -140,7 +141,7 @@ function runtimeTurn(status: Turn["status"]): Turn {
   return {
     id: "turn-runtime",
     items: status === "completed"
-      ? [{ type: "agentMessage", id: "message-runtime", text: "runtime complete", phase: "final_answer", memoryCitation: null }]
+      ? [{ type: "agentMessage", id: "message-runtime", text: "runtime complete", phase: "final_answer", memoryCitation: null, delivery: null }]
       : [],
     itemsView: "full",
     status,

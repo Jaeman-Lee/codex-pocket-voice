@@ -13,6 +13,7 @@ import { ProjectManager } from "../src/project-manager.js";
 import { startWebServer, type WebCodexClient } from "../src/web-server.js";
 import { GatewayAuth } from "../src/gateway-auth.js";
 import { EventJournal } from "../src/event-journal.js";
+import { InMemoryApprovalBroker } from "../src/approval-broker.js";
 
 const cwd = process.cwd();
 
@@ -32,6 +33,10 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
     deviceKind: "linux",
     deviceName: "Test PC",
   });
+  let nextApprovalId = 0;
+  const approvals = new InMemoryApprovalBroker({
+    createId: () => nextApprovalId++ === 0 ? "approval-web" : `approval-web-${nextApprovalId}`,
+  });
   const running = await startWebServer({
     client: fake,
     paths,
@@ -39,6 +44,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
     media: new MediaManager({ rootDir: mediaDir }),
     projects,
     auth,
+    approvals,
     port: 0,
   });
   t.after(() => running.close());
@@ -170,6 +176,51 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   });
   assert.equal(retried.operation.id, started.operation.id);
   assert.equal(fake.runsStarted, 1);
+
+  const approvalHandle = approvals.requestApproval({
+    providerId: "codex",
+    conversationId: "thread-web",
+    runId: "turn-web",
+    toolCallId: "tool-call-web",
+    risk: "high_risk",
+    redactedSummary: "검증된 명령 한 건 실행",
+    redactedDetails: { command: "npm test", paths: ["package.json"] },
+  });
+  const approvalList = await jsonFetch(`${base}/api/approvals`, { headers: authorized() });
+  assert.equal(approvalList.approvals.length, 1);
+  assert.equal(approvalList.approvals[0].operationId, started.operation.id);
+  assert.equal(approvalList.approvals[0].requiresTouch, true);
+  const crossOriginApproval = await fetch(`${base}/api/approvals/approval-web/decision`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "https://evil.example" }),
+    body: JSON.stringify({ decision: "approved" }),
+  });
+  assert.equal(crossOriginApproval.status, 403);
+  const approvalDecision = await jsonFetch(`${base}/api/approvals/approval-web/decision`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ decision: "approved" }),
+  });
+  assert.equal(approvalDecision.resolution.source, "touch");
+  assert.equal((await approvalHandle.decision).decision, "approved");
+  assert.deepEqual((await jsonFetch(`${base}/api/approvals`, { headers: authorized() })).approvals, []);
+  const declinedHandle = approvals.requestApproval({
+    providerId: "codex",
+    conversationId: "thread-web",
+    runId: "turn-web",
+    toolCallId: "tool-call-declined",
+    risk: "change",
+    redactedSummary: "한 파일 변경",
+    redactedDetails: { paths: ["package.json"] },
+  });
+  const declinedDecision = await jsonFetch(`${base}/api/approvals/approval-web-2/decision`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ decision: "declined", source: "voice" }),
+  });
+  assert.equal(declinedDecision.resolution.decision, "declined");
+  assert.equal(declinedDecision.resolution.source, "touch");
+  assert.equal((await declinedHandle.decision).decision, "declined");
   const conflictingRetry = await fetch(`${base}/api/runs`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
@@ -186,6 +237,10 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const activeRuns = await jsonFetch(`${base}/api/runs?status=running`, { headers: authorized() });
   assert.equal(activeRuns.operations.length, 1);
   assert.equal(activeRuns.operations[0].id, operationId);
+  assert.equal(activeRuns.operations[0].accountId, "cli-default");
+  assert.equal(activeRuns.operations[0].model, "test-codex");
+  assert.equal(activeRuns.operations[0].effort, "high");
+  assert.equal(activeRuns.operations[0].networkAccess, false);
   const released = await jsonFetch(`${base}/api/session/handoff`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
@@ -242,12 +297,17 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(replayResponse.status, 200);
   const replayText = await readUntil(
     replayResponse.body!.getReader(),
-    (text) => text.includes(operationId) && text.includes('"status":"interrupted"'),
+    (text) => text.includes(operationId)
+      && text.includes('"status":"interrupted"')
+      && text.includes('"action":"replay_complete"'),
   );
   replayAbort.abort();
   assert.match(replayText, /id: \d+/);
   assert.match(replayText, /"action":"started"/);
   assert.match(replayText, /"action":"completed"/);
+  assert.match(replayText, /"type":"approval"/);
+  assert.match(replayText, /"action":"resolved"/);
+  assert.match(replayText, /"latestCursor":\d+/);
 });
 
 test("gateway restart persists unknown-operation acknowledgement and replays it", async (t) => {
@@ -321,7 +381,8 @@ test("gateway restart persists unknown-operation acknowledgement and replays it"
   });
   const replayText = await readUntil(
     replay.body!.getReader(),
-    (text) => text.includes('"action":"acknowledged"'),
+    (text) => text.includes('"action":"acknowledged"')
+      && text.includes('"action":"replay_complete"'),
   );
   replayAbort.abort();
   assert.match(replayText, /id: \d+/);
@@ -417,6 +478,7 @@ function thread(includeTurns = false): Thread {
     ephemeral: false,
     section: null,
     sectionEnteredAt: null,
+    projectId: null,
     historyMode: "legacy",
     modelProvider: "openai",
     createdAt: 1,
@@ -434,7 +496,7 @@ function thread(includeTurns = false): Thread {
     gitInfo: null,
     name: "Web test",
     turns: includeTurns
-      ? [{ ...turn("completed"), items: [{ type: "agentMessage", id: "message-web", text: "hello", phase: "final_answer", memoryCitation: null }] }]
+      ? [{ ...turn("completed"), items: [{ type: "agentMessage", id: "message-web", text: "hello", phase: "final_answer", memoryCitation: null, delivery: null }] }]
       : [],
   };
 }

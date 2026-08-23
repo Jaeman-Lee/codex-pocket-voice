@@ -11,6 +11,6 @@ export const GATEWAY_CAPABILITIES = {
   sessionHandoff: true,
   providerRuntime: true,
   eventReplay: true,
-  approvalBroker: false,
+  approvalBroker: true,
   usageAccounting: true,
 } as const;

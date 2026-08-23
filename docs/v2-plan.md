@@ -21,10 +21,10 @@
 
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
-| Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환 구현; UI 상태 모듈 분리 잔여 |
+| Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환, operation UI 상태 모듈 구현; 나머지 App 상태 분리 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key와 read-only 함수 도구 구현; write/command·durable multi-turn 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, read-only broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
-| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay와 unknown 복구 구현; dashboard·approval inbox·export/delete 잔여 |
+| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox 구현; branch/pin/archive·export/delete 잔여 |
 | Phase E | 대기 | PocketLink와 출시 강화 |
 
 ## 2. 제품 정의
@@ -324,8 +324,10 @@ queue snapshot만 저장한다. 원래 key/device 대신 domain-separated SHA-25
 IndexedDB/localStorage 기록은 읽기 migration 뒤에도 삭제하지 않으며, v2 field acceptance 전에는
 새 snapshot을 기존 저장소에도 mirror해 1.8.1 rollback에서 기록을 계속 읽을 수 있게 한다. Companion
 쪽에는 암호화 run event row, `Last-Event-ID` replay, 7일/500 operation/2,000 event 기본 retention과
-`unknown` 복구·확인 동기화를 구현했다. 사용자 retention 설정, export/delete와 다중 프로젝트
-대시보드는 다음 단계다.
+`unknown` 복구·확인 동기화를 구현했다. 모바일 대시보드는 run을 workspace별로 묶고 Provider·모델·
+경과 시간·usage/cost와 승인 대기 상태를 표시한다. 승인함은 matching run의 redacted 정보만 노출하고
+same-origin 터치 approve/decline, 만료와 replay 완료 뒤 snapshot 재동기화를 적용한다. 사용자 retention
+설정, export/delete, branch/worktree metadata, pin/archive와 native 알림 deep link는 다음 단계다.
 
 완료 조건: 여러 프로젝트 run을 동시에 추적하고 앱 종료·네트워크 전환 후 정확한 상태로 복구한다.
 

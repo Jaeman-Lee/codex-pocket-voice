@@ -159,12 +159,43 @@ export interface Operation {
   turnId?: string;
   cwd: string;
   prompt: string;
+  accountId?: string;
+  model?: string;
+  effort?: string;
+  networkAccess?: boolean;
   status: OperationStatus;
   startedAt?: string;
   completedAt?: string;
   acknowledgedAt?: string;
   error?: string;
   result?: RunResult;
+}
+
+export type ApprovalRisk = "observation" | "change" | "execution" | "high_risk" | "external_effect";
+export type ApprovalStatus = "pending" | "approved" | "declined" | "expired";
+
+export interface ApprovalItem {
+  id: string;
+  operationId: string;
+  cwd: string;
+  providerId: ProviderId;
+  conversationId: string;
+  runId: string;
+  toolCallId: string;
+  risk: ApprovalRisk;
+  redactedSummary: string;
+  redactedDetails?: Record<string, unknown>;
+  status: ApprovalStatus;
+  requiresTouch: boolean;
+  requestedAt: string;
+  expiresAt: string;
+}
+
+export interface ApprovalResolution {
+  requestId: string;
+  decision: Exclude<ApprovalStatus, "pending">;
+  source: "touch" | "voice" | "system";
+  decidedAt: string;
 }
 
 export interface SessionHandoff {
@@ -233,6 +264,9 @@ export interface CodexEvent {
   providerId?: ProviderId;
   action?: string;
   reason?: "database_reset" | "retention_gap" | "persistence_failure";
+  latestCursor?: number;
+  journalCursor?: number;
+  replayed?: number;
   handoffId?: string;
   operation?: Operation;
   handoff?: SessionHandoff;
@@ -256,4 +290,6 @@ export interface CodexEvent {
     costCredits?: number;
   };
   media?: MediaItem;
+  approval?: ApprovalItem;
+  resolution?: ApprovalResolution;
 }

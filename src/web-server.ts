@@ -16,7 +16,12 @@ import { GatewayAuth, GatewayAuthError } from "./gateway-auth.js";
 import { APP_VERSION, GATEWAY_CAPABILITIES, GATEWAY_PROTOCOL_MINIMUM, GATEWAY_PROTOCOL_VERSION } from "./version.js";
 import { collectSystemDiagnostics } from "./system-diagnostics.js";
 import { SessionHandoffStore } from "./session-handoff-store.js";
-import { InMemoryApprovalBroker } from "./approval-broker.js";
+import {
+  ApprovalBrokerError,
+  InMemoryApprovalBroker,
+  type ApprovalBroker,
+  type ApprovalRequest,
+} from "./approval-broker.js";
 import { createReadOnlyWorkspaceTools } from "./read-only-tools.js";
 import { LocalToolBroker } from "./tool-broker.js";
 import { EventJournal, type JournalReplayEvent } from "./event-journal.js";
@@ -56,6 +61,7 @@ export interface WebServerOptions {
   handoffs?: SessionHandoffStore;
   providers?: ProviderRegistry;
   journal?: EventJournal;
+  approvals?: ApprovalBroker;
 }
 
 export interface RunningWebServer {
@@ -111,17 +117,17 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     process.env.CODEX_POCKET_EVENT_JOURNAL ?? join(dirname(auth.stateFile), "event-journal.sqlite3"),
     { keyFile: process.env.CODEX_POCKET_EVENT_JOURNAL_KEY_FILE },
   );
-  const approvals = options.providers ? undefined : new InMemoryApprovalBroker();
-  const toolBroker = approvals
-    ? new LocalToolBroker(createReadOnlyWorkspaceTools(options.paths), approvals, options.paths)
-    : undefined;
+  const approvals = options.approvals ?? new InMemoryApprovalBroker();
+  const toolBroker = options.providers
+    ? undefined
+    : new LocalToolBroker(createReadOnlyWorkspaceTools(options.paths), approvals, options.paths);
   const providers = options.providers ?? new ProviderRegistry(options.client, undefined, { toolBroker });
   const providerLogins = new ProviderLoginManager(providers);
   const runs = new RunCoordinator(providers, {
     assertWorkspace: (cwd) => options.paths.assertAllowed(cwd),
     stateStore: journal,
   });
-  const unsubscribe = runs.subscribe((event) => {
+  const unsubscribeRuns = runs.subscribe((event) => {
     if (event.type === "operation") {
       const publicEvent = {
         type: "operation",
@@ -134,9 +140,27 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     const forwarded = sanitizeNotification(event.event);
     if (forwarded) appendAndBroadcast(journal, sseClients, event.operationId, event.cwd, forwarded);
   });
+  const unsubscribeApprovals = approvals.subscribe((event) => {
+    const operation = runs.findByProviderRun(
+      event.request.providerId,
+      event.request.conversationId,
+      event.request.runId,
+    );
+    if (!operation) {
+      process.stderr.write("[codex-approval-broker] Ignored an approval event without a matching run\n");
+      return;
+    }
+    const publicEvent = {
+      type: "approval",
+      action: event.type === "requested" ? "requested" : "resolved",
+      approval: publicApproval(event.request, operation),
+      ...(event.type === "resolved" ? { resolution: event.resolution } : {}),
+    };
+    appendAndBroadcast(journal, sseClients, operation.id, operation.cwd, publicEvent);
+  });
 
   const server = createServer((request, response) => {
-    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, journal, sseClients).catch(
+    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, sseClients).catch(
       (error) => sendError(response, error),
     );
   });
@@ -169,8 +193,9 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     async close() {
       clearInterval(heartbeat);
       providerLogins.close();
-      approvals?.close();
-      unsubscribe();
+      approvals.close();
+      unsubscribeApprovals();
+      unsubscribeRuns();
       runs.close();
       for (const response of sseClients) response.end();
       sseClients.clear();
@@ -197,6 +222,7 @@ async function handleRequest(
   providers: ProviderRegistry,
   providerLogins: ProviderLoginManager,
   runs: RunCoordinator,
+  approvals: ApprovalBroker,
   journal: EventJournal,
   sseClients: Set<ServerResponse>,
 ): Promise<void> {
@@ -213,7 +239,7 @@ async function handleRequest(
       response.end();
       return;
     }
-    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, runs, journal, sseClients);
+    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, sseClients);
     return;
   }
   await serveStatic(request, response, url.pathname, options.staticDir);
@@ -231,6 +257,7 @@ async function handleApi(
   providers: ProviderRegistry,
   providerLogins: ProviderLoginManager,
   runs: RunCoordinator,
+  approvals: ApprovalBroker,
   journal: EventJournal,
   sseClients: Set<ServerResponse>,
 ): Promise<void> {
@@ -466,6 +493,11 @@ async function handleApi(
       })}\n\n`);
     }
     for (const event of replay.events) response.write(journalFrame(event));
+    response.write(`data: ${JSON.stringify({
+      type: "journal",
+      action: "replay_complete",
+      latestCursor: replay.latestCursor,
+    })}\n\n`);
     sseClients.add(response);
     request.once("close", () => sseClients.delete(response));
     return;
@@ -514,6 +546,15 @@ async function handleApi(
     if (workspace) options.paths.assertAllowed(workspace);
     const listed = runs.list({ status: status ?? undefined, workspace: workspace ?? undefined }).map(publicOperation);
     sendJson(response, 200, { operations: listed });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/approvals") {
+    const pending = approvals.listPending().flatMap((approval) => {
+      const operation = runs.findByProviderRun(approval.providerId, approval.conversationId, approval.runId);
+      return operation ? [publicApproval(approval, operation)] : [];
+    });
+    sendJson(response, 200, { approvals: pending });
     return;
   }
 
@@ -606,6 +647,28 @@ async function handleApi(
     if (!operation) throw new HttpError(404, "Operation not found");
     options.paths.assertAllowed(operation.cwd);
     sendJson(response, 200, { operation: publicOperation(runs.acknowledge(operationId)) });
+    return;
+  }
+
+  const approvalDecisionMatch = url.pathname.match(/^\/api\/approvals\/([^/]+)\/decision$/);
+  if (request.method === "POST" && approvalDecisionMatch) {
+    assertSameOrigin(request);
+    const body = await readJson(request) as { decision?: unknown };
+    const decision = requiredString(body.decision, "decision", 20);
+    if (decision !== "approved" && decision !== "declined") {
+      throw new HttpError(400, "decision must be approved or declined");
+    }
+    const approvalId = decodeURIComponent(approvalDecisionMatch[1]!);
+    const approval = approvals.get(approvalId);
+    if (!approval) throw new HttpError(404, "Approval request not found");
+    const operation = runs.findByProviderRun(approval.providerId, approval.conversationId, approval.runId);
+    if (!operation) throw new HttpError(409, "Approval request no longer belongs to a retained run");
+    options.paths.assertAllowed(operation.cwd);
+    const resolution = approvals.resolve(approvalId, decision, "touch");
+    sendJson(response, 200, {
+      approval: publicApproval(approvals.get(approvalId)!, operation),
+      resolution,
+    });
     return;
   }
 
@@ -874,6 +937,7 @@ function sendError(response: ServerResponse, error: unknown): void {
       || error instanceof ProviderError
       || error instanceof GatewayAuthError
       || error instanceof RunCoordinatorError
+      || error instanceof ApprovalBrokerError
       ? error.statusCode
       : 500;
   const message = error instanceof Error ? error.message : String(error);
@@ -931,6 +995,25 @@ function publicOperation(operation: RunOperation): Record<string, unknown> {
     ...(operation.providerId === "codex"
       ? { threadId: operation.conversationId, turnId: operation.runId }
       : {}),
+  };
+}
+
+function publicApproval(approval: ApprovalRequest, operation: RunOperation): Record<string, unknown> {
+  return {
+    id: approval.id,
+    operationId: operation.id,
+    cwd: operation.cwd,
+    providerId: approval.providerId,
+    conversationId: approval.conversationId,
+    runId: approval.runId,
+    toolCallId: approval.toolCallId,
+    risk: approval.risk,
+    redactedSummary: approval.redactedSummary,
+    redactedDetails: approval.redactedDetails,
+    status: approval.status,
+    requiresTouch: approval.requiresTouch,
+    requestedAt: approval.requestedAt,
+    expiresAt: approval.expiresAt,
   };
 }
 

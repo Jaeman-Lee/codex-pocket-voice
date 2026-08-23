@@ -18,6 +18,10 @@ export interface RunOperation {
   runId: string;
   cwd: string;
   prompt: string;
+  accountId?: string;
+  model?: string;
+  effort?: string;
+  networkAccess?: boolean;
   status: RunOperationStatus;
   startedAt: string;
   completedAt?: string;
@@ -185,6 +189,13 @@ export class RunCoordinator {
     return operation ? cloneOperation(operation) : undefined;
   }
 
+  findByProviderRun(providerId: string, conversationId: string, runId: string): RunOperation | undefined {
+    this.cleanup();
+    const operation = [...this.operations.values()].find((item) => item.providerId === providerId
+      && item.conversationId === conversationId && item.runId === runId);
+    return operation ? cloneOperation(operation) : undefined;
+  }
+
   list(filter: RunListFilter = {}): RunOperation[] {
     this.cleanup();
     return [...this.operations.values()]
@@ -259,6 +270,10 @@ export class RunCoordinator {
         runId: begun.runId,
         cwd: begun.cwd,
         prompt: command.prompt,
+        accountId: command.accountId,
+        model: command.input.model,
+        effort: command.input.effort,
+        networkAccess: command.input.networkAccess === true,
         status: "running",
         startedAt: new Date(this.now()).toISOString(),
       };

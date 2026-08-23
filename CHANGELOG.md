@@ -49,6 +49,18 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   암호화해 보존하고 모든 연결 기기에 동기화해 앱 재시작 뒤 같은 확인을 반복하지 않는다.
 - journal DB·키는 같은 사용자 소유의 private directory와 일반 단일-link 파일만 허용하며, 평문으로
   필요한 status·timestamp·workspace index도 ciphertext의 AES-GCM AAD에 묶어 변조를 감지한다.
+- 모바일 작업 대시보드가 선택한 Linux Companion의 최근 run을 프로젝트별로 묶고 실행·승인·대기열·
+  unknown·완료·실패 수, Provider·모델·경과 시간·token·비용을 표시한다. 작업을 열 때 다른 프로젝트의
+  실행을 중단하지 않고 화면 초점만 정확한 workspace·Provider·conversation으로 옮긴다.
+- 승인 요청은 run과 workspace가 일치할 때만 승인함에 노출한다. redacted summary/details의 크기와 JSON
+  형식을 제한하고, approve/decline 모두 same-origin 화면 터치 API로만 처리한다. 음성 source를 보내도
+  서버가 `touch`로 고정하며 만료·거절·재연결 중 자동 승인은 없다.
+- SSE replay 끝에 snapshot 동기화 경계를 추가해 Companion 재시작 뒤 복구할 수 없는 과거 in-memory
+  승인이 승인함에 남지 않게 했다. replay 중 과거 요청은 알림창을 다시 열지 않는다.
+- 세션 반납 버튼과 확인창에 현재 선택한 프로젝트명을 표시해 다른 프로젝트 작업을 대상으로 오해하지
+  않게 했다. 실제 operation 연결도 workspace·conversation 범위를 계속 검증한다.
+- Codex app-server 생성 타입 기준을 CLI 0.149.0으로 갱신하고 새 project/agent-delivery 계약을 반영했다.
+  실제 app-server 연결 검사는 모델 turn 없이 수행한다.
 - 이 기준선은 CI·개발용이며 v1.8.1 설치본이나 실행 중인 Companion을 교체하지 않는다.
 
 ## 1.8.2 hotfix candidate — project-scoped session handoff

@@ -45,6 +45,7 @@ export type ApprovalBrokerEvent =
 
 export interface ApprovalBroker {
   requestApproval(input: ApprovalRequestInput): ApprovalHandle;
+  get(requestId: string): ApprovalRequest | undefined;
   resolve(
     requestId: string,
     decision: "approved" | "declined",
@@ -90,6 +91,7 @@ export class InMemoryApprovalBroker implements ApprovalBroker {
 
   requestApproval(input: ApprovalRequestInput): ApprovalHandle {
     this.sweepExpired();
+    assertApprovalInput(input);
     const toolCallKey = approvalKey(input);
     const fingerprint = approvalFingerprint(input);
     const existingId = this.byToolCall.get(toolCallKey);
@@ -122,6 +124,12 @@ export class InMemoryApprovalBroker implements ApprovalBroker {
     this.byToolCall.set(toolCallKey, request.id);
     this.emit({ type: "requested", request: cloneRequest(request) });
     return { request: cloneRequest(request), decision };
+  }
+
+  get(requestId: string): ApprovalRequest | undefined {
+    this.sweepExpired();
+    const request = this.entries.get(requestId)?.request;
+    return request ? cloneRequest(request) : undefined;
   }
 
   resolve(
@@ -247,4 +255,35 @@ function approvalFingerprint(input: ApprovalRequestInput): string {
 
 function cloneRequest(request: ApprovalRequest): ApprovalRequest {
   return structuredClone(request);
+}
+
+function assertApprovalInput(input: ApprovalRequestInput): void {
+  const risks: readonly ApprovalRisk[] = ["observation", "change", "execution", "high_risk", "external_effect"];
+  if (
+    !boundedText(input.providerId, 80)
+    || !boundedText(input.conversationId, 500)
+    || !boundedText(input.runId, 500)
+    || !boundedText(input.toolCallId, 500)
+    || !boundedText(input.redactedSummary, 2_000)
+    || !risks.includes(input.risk)
+    || (input.requiresTouch !== undefined && typeof input.requiresTouch !== "boolean")
+  ) throw new ApprovalBrokerError(400, "승인 요청 식별자 또는 요약이 올바르지 않습니다.");
+  if (input.redactedDetails !== undefined) {
+    if (!input.redactedDetails || typeof input.redactedDetails !== "object" || Array.isArray(input.redactedDetails)) {
+      throw new ApprovalBrokerError(400, "승인 요청 세부 정보가 올바른 객체가 아닙니다.");
+    }
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(input.redactedDetails);
+    } catch {
+      throw new ApprovalBrokerError(400, "승인 요청 세부 정보가 올바른 JSON이 아닙니다.");
+    }
+    if (!serialized || Buffer.byteLength(serialized) > 32 * 1024) {
+      throw new ApprovalBrokerError(400, "승인 요청 세부 정보가 크기 제한을 초과했습니다.");
+    }
+  }
+}
+
+function boundedText(value: unknown, maximum: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= maximum;
 }

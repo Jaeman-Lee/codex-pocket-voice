@@ -252,6 +252,64 @@ select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shad
 .icon-button:active { transform: scale(0.96); }
 .icon-button:disabled { opacity: 0.32; cursor: not-allowed; }
 .handoff-button { color: var(--warm); font-size: 1.15rem; font-weight: 850; }
+.operations-button { position: relative; color: var(--accent); font-size: 1rem; font-weight: 850; }
+.operations-button > b { position: absolute; top: -0.35rem; right: -0.35rem; min-width: 1.12rem; height: 1.12rem; display: grid; place-items: center; padding: 0 0.22rem; border: 2px solid var(--bg); border-radius: 999px; color: #150706; background: var(--danger); font-size: 0.58rem; line-height: 1; }
+
+.operations-dashboard { position: fixed; z-index: 40; inset: 0; display: grid; grid-template-rows: minmax(0, 1fr); justify-items: center; min-width: 0; min-height: 0; overflow: hidden; padding: max(0.75rem, env(safe-area-inset-top)) 0.75rem max(0.75rem, env(safe-area-inset-bottom)); background: rgba(3, 8, 12, 0.86); backdrop-filter: blur(10px); }
+.operations-sheet { align-self: center; width: min(100%, 52rem); max-width: 100%; max-height: 100%; min-width: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y pinch-zoom; -webkit-overflow-scrolling: touch; padding: 1rem; border: 1px solid var(--line); border-radius: 1.15rem; background: var(--surface); box-shadow: var(--shadow); }
+.operations-head { position: sticky; z-index: 2; top: -1rem; display: flex; align-items: flex-start; gap: 0.45rem; margin: -1rem -1rem 0; padding: 1rem; border-bottom: 1px solid var(--line); background: var(--surface); }
+.operations-head > div { flex: 1; min-width: 0; }
+.operations-head strong, .operations-head small { display: block; }
+.operations-head strong { font-size: 1.08rem; }
+.operations-head small { margin-top: 0.24rem; overflow: hidden; color: var(--muted); font-size: 0.7rem; text-overflow: ellipsis; white-space: nowrap; }
+.operations-head > button { flex: 0 0 auto; width: 2.25rem; height: 2.25rem; border: 0; border-radius: 50%; color: var(--muted); background: var(--surface-2); cursor: pointer; }
+.operation-counts { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0.45rem; margin-top: 0.85rem; }
+.operation-count { min-width: 0; padding: 0.58rem 0.35rem; border: 1px solid var(--line); border-radius: 0.68rem; background: var(--surface-2); text-align: center; }
+.operation-count strong, .operation-count span { display: block; }
+.operation-count strong { font-size: 1rem; }
+.operation-count span { margin-top: 0.12rem; overflow: hidden; color: var(--muted); font-size: 0.58rem; text-overflow: ellipsis; white-space: nowrap; }
+.operation-count.running strong, .operation-count.completed strong { color: var(--accent); }
+.operation-count.approval strong, .operation-count.unknown strong { color: var(--warm); }
+.operation-count.failed strong { color: var(--danger); }
+.approval-inbox, .workspace-operations { margin-top: 1rem; }
+.dashboard-section-title { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.55rem; }
+.dashboard-section-title strong { flex: 0 0 auto; font-size: 0.83rem; }
+.dashboard-section-title span { min-width: 0; color: var(--muted); font-size: 0.61rem; line-height: 1.4; text-align: right; }
+.approval-inbox { padding: 0.72rem; border: 1px solid rgba(255, 203, 136, 0.32); border-radius: 0.85rem; background: rgba(255, 203, 136, 0.04); }
+.approval-card { min-width: 0; padding: 0.72rem; border: 1px solid var(--line); border-radius: 0.72rem; background: var(--surface-2); }
+.approval-card + .approval-card { margin-top: 0.55rem; }
+.approval-card.risk-high_risk, .approval-card.risk-external_effect { border-color: rgba(255, 129, 124, 0.45); }
+.approval-meta { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.45rem; }
+.approval-meta span { color: var(--warm); font-size: 0.63rem; font-weight: 800; }
+.approval-meta small { color: var(--muted); font-size: 0.59rem; }
+.approval-card > strong { display: block; font-size: 0.78rem; line-height: 1.45; overflow-wrap: anywhere; }
+.approval-card pre { width: 100%; max-width: 100%; max-height: 10rem; min-width: 0; overflow: auto; margin: 0.55rem 0 0; padding: 0.55rem; border-radius: 0.55rem; color: #c8d9d7; background: #080d12; font: 0.61rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.approval-actions { display: grid; grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr); gap: 0.45rem; margin-top: 0.6rem; }
+.approval-actions button { min-width: 0; min-height: 2.5rem; border: 1px solid var(--line); border-radius: 0.62rem; cursor: pointer; font-size: 0.68rem; font-weight: 800; }
+.approval-actions button:disabled { opacity: 0.4; cursor: wait; }
+.approval-actions .decline { color: var(--danger); background: transparent; }
+.approval-actions .approve { color: #06120e; border-color: transparent; background: var(--accent); }
+.operation-group { min-width: 0; padding: 0.7rem; border: 1px solid var(--line); border-radius: 0.82rem; background: rgba(5, 10, 14, 0.2); }
+.operation-group + .operation-group { margin-top: 0.65rem; }
+.operation-group > header { min-width: 0; margin-bottom: 0.5rem; }
+.operation-group > header strong, .operation-group > header small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.operation-group > header strong { font-size: 0.79rem; }
+.operation-group > header small { margin-top: 0.16rem; color: var(--muted); font-size: 0.58rem; }
+.operation-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+.operation-card { min-width: 0; padding: 0.68rem; border: 1px solid var(--line); border-radius: 0.68rem; background: var(--surface-2); }
+.operation-card.status-running { border-color: rgba(62, 213, 165, 0.34); }
+.operation-card.status-waiting, .operation-card.status-unknown { border-color: rgba(255, 203, 136, 0.38); }
+.operation-card.status-failed { border-color: rgba(255, 129, 124, 0.34); }
+.operation-card-head { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 0.45rem; }
+.operation-card-head span { color: var(--accent); font-size: 0.61rem; font-weight: 800; }
+.status-waiting .operation-card-head span, .status-unknown .operation-card-head span { color: var(--warm); }
+.status-failed .operation-card-head span { color: var(--danger); }
+.operation-card-head small { color: var(--muted); font-size: 0.58rem; }
+.operation-card > strong { display: block; min-height: 2.4em; margin-top: 0.42rem; font-size: 0.73rem; line-height: 1.35; overflow-wrap: anywhere; }
+.operation-facts { display: flex; min-width: 0; flex-wrap: wrap; gap: 0.28rem; margin-top: 0.48rem; }
+.operation-facts span { max-width: 100%; overflow: hidden; padding: 0.22rem 0.34rem; border-radius: 999px; color: var(--muted); background: rgba(146, 165, 168, 0.09); font-size: 0.55rem; text-overflow: ellipsis; white-space: nowrap; }
+.operation-card > button { width: 100%; min-height: 2.25rem; margin-top: 0.55rem; border: 1px solid var(--line); border-radius: 0.56rem; color: var(--accent); background: transparent; cursor: pointer; font-size: 0.65rem; font-weight: 750; }
+.dashboard-empty { margin: 0; padding: 1.4rem 0.8rem; color: var(--muted); font-size: 0.72rem; text-align: center; }
 
 .handoff-summary { display: grid; gap: 0.45rem; padding: 0.72rem; border: 1px solid var(--line); border-radius: 0.72rem; background: var(--surface-2); }
 .handoff-summary span { display: grid; grid-template-columns: 5rem minmax(0, 1fr); gap: 0.55rem; color: var(--muted); font-size: 0.72rem; overflow-wrap: anywhere; }
@@ -458,6 +516,22 @@ textarea::placeholder { color: #6f8285; }
   .connection-center { padding: max(0.4rem, env(safe-area-inset-top)) 0.4rem max(0.4rem, env(safe-area-inset-bottom)); }
   .connection-center-sheet { align-self: stretch; padding: 0.8rem; border-radius: 0.9rem; }
   .connection-center-head { top: -0.8rem; margin: -0.8rem -0.8rem 0; padding: 0.8rem; }
+  .operations-dashboard { padding: max(0.4rem, env(safe-area-inset-top)) 0.4rem max(0.4rem, env(safe-area-inset-bottom)); }
+  .operations-sheet { align-self: stretch; padding: 0.8rem; border-radius: 0.9rem; }
+  .operations-head { top: -0.8rem; margin: -0.8rem -0.8rem 0; padding: 0.8rem; }
+  .operation-counts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .operation-list { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 380px) {
+  .topbar { gap: 0.3rem; padding-inline: 0.5rem; }
+  .brand-mark { display: none; }
+  .brand { gap: 0; }
+  .brand h1 { font-size: 0.88rem; }
+  .brand p { display: none; }
+  .top-actions { gap: 0.24rem; }
+  .top-actions .icon-button { width: 2.1rem; height: 2.1rem; }
+  .status-dot { width: 0.52rem; height: 0.52rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

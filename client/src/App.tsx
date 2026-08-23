@@ -25,12 +25,16 @@ import {
   type NativeSpeechState,
 } from "./native";
 import { mergeSpeechSegments } from "./speech-utils";
+import { OperationsDashboard } from "./OperationsDashboard";
+import { activeApprovals, applyApprovalEvent, upsertOperation } from "./operations-state";
 import { operationBelongsToSession, scopedHandoff } from "./session-scope";
 import { createWorkJournal } from "./work-journal";
 import { conversationKey, restoredMessages, serializableQueue } from "./work-journal-model";
 import { initialSpeechLanguage, initialUiLanguage, translate, type MessageKey, type UiLanguage } from "./i18n";
 import type {
   ChatMessage,
+  ApprovalItem,
+  ApprovalResolution,
   CodexEvent,
   ConnectionStatus,
   DeviceId,
@@ -163,6 +167,10 @@ export function App() {
   const [showHandoffDialog, setShowHandoffDialog] = useState(false);
   const [handoffBusy, setHandoffBusy] = useState(false);
   const [handoffSupported, setHandoffSupported] = useState(false);
+  const [operationSnapshots, setOperationSnapshots] = useState<Operation[]>([]);
+  const [approvalInbox, setApprovalInbox] = useState<ApprovalItem[]>([]);
+  const [showOperationsDashboard, setShowOperationsDashboard] = useState(false);
+  const [decidingApprovalId, setDecidingApprovalId] = useState<string | null>(null);
   const [journal] = useState(createWorkJournal);
   const tr = (key: MessageKey) => translate(uiLanguage, key);
 
@@ -197,6 +205,7 @@ export function App() {
   const initializingRef = useRef(false);
   const handleEventRef = useRef<(event: CodexEvent) => void>(() => undefined);
   const initializeRef = useRef<() => Promise<void>>(async () => undefined);
+  const replayingEventsRef = useRef(false);
 
   useEffect(() => { workspaceRef.current = workspace; }, [workspace]);
   useEffect(() => {
@@ -351,19 +360,23 @@ export function App() {
     if (initializingRef.current) return;
     initializingRef.current = true;
     try {
-      const [health, workspaceData, providerData, codexModelData, runData] = await Promise.all([
+      const [health, workspaceData, providerData, codexModelData, runData, approvalData] = await Promise.all([
         api<{ userAgent: string; device: { name: string } }>("/api/health"),
         api<WorkspaceResponse>("/api/workspaces"),
         api<ProviderResponse>("/api/providers"),
         api<ModelResponse>("/api/models?provider=codex"),
         api<{ operations: Operation[] }>("/api/runs")
           .catch(() => ({ operations: [] })),
+        api<{ approvals: ApprovalItem[] }>("/api/approvals")
+          .catch(() => ({ approvals: [] })),
       ]);
       setConnectionText(`${health.device.name} · ${health.userAgent}`);
       setConnection("online");
       setWorkspaces(workspaceData.workspaces);
       setCreationLocations(workspaceData.creationLocations);
       setProviders(providerData.providers);
+      setOperationSnapshots(runData.operations);
+      setApprovalInbox(activeApprovals(approvalData.approvals));
       const storedProvider = localStorage.getItem(storageKey("provider", deviceRef.current));
       let selectedProvider = providerData.providers.find((item) => item.id === storedProvider && item.available)
         ?? providerData.providers.find((item) => item.id === "codex")
@@ -741,6 +754,22 @@ export function App() {
     speechSynthesis.speak(utterance);
   }
 
+  async function refreshOperationalSnapshot(silent = false) {
+    const requestedDevice = deviceRef.current;
+    try {
+      const [runData, approvalData] = await Promise.all([
+        api<{ operations: Operation[] }>("/api/runs"),
+        api<{ approvals: ApprovalItem[] }>("/api/approvals"),
+      ]);
+      if (deviceRef.current !== requestedDevice) return;
+      setOperationSnapshots(runData.operations);
+      setApprovalInbox(activeApprovals(approvalData.approvals));
+      if (!silent) showToast("프로젝트 작업 상태를 새로 확인했습니다.");
+    } catch (error) {
+      if (!silent && deviceRef.current === requestedDevice) showToast(errorMessage(error));
+    }
+  }
+
   function scheduleOperationPoll(operationId: string) {
     if (pollTimerRef.current !== null) window.clearTimeout(pollTimerRef.current);
     pollTimerRef.current = window.setTimeout(() => void pollOperation(operationId), 2_000);
@@ -765,6 +794,7 @@ export function App() {
   }
 
   function handleOperationEvent(action: string, nextOperation: Operation) {
+    setOperationSnapshots((current) => upsertOperation(current, nextOperation));
     const operationProvider = nextOperation.providerId ?? "codex";
     if (action === "acknowledged") {
       if (operationRef.current?.id !== nextOperation.id) return;
@@ -820,7 +850,15 @@ export function App() {
   }
 
   function handleEvent(event: CodexEvent) {
-    if (event.type === "connected") return;
+    if (event.type === "connected") {
+      replayingEventsRef.current = (event.replayed ?? 0) > 0;
+      return;
+    }
+    if (event.type === "journal" && event.action === "replay_complete") {
+      replayingEventsRef.current = false;
+      void refreshOperationalSnapshot(true);
+      return;
+    }
     if (event.type === "journal" && event.action === "reset") {
       const current = operationRef.current;
       if (event.reason === "database_reset" && current?.status === "running") {
@@ -844,6 +882,14 @@ export function App() {
     }
     if (event.type === "operation" && event.operation) {
       handleOperationEvent(event.action ?? "", event.operation);
+      return;
+    }
+    if (event.type === "approval" && event.approval) {
+      setApprovalInbox((current) => applyApprovalEvent(current, event));
+      if (event.action === "requested" && !replayingEventsRef.current) {
+        setShowOperationsDashboard(true);
+        showToast("화면에서 검토해야 할 도구 승인이 도착했습니다.");
+      }
       return;
     }
     if (event.type === "session" && event.action === "released" && event.handoff) {
@@ -1081,6 +1127,7 @@ export function App() {
       });
       operationRef.current = data.operation;
       setOperation(data.operation);
+      setOperationSnapshots((current) => upsertOperation(current, data.operation));
       if (queued.provider === "codex" && data.operation.threadId && !threadRef.current) {
         setThreadId(data.operation.threadId);
         threadRef.current = data.operation.threadId;
@@ -1195,6 +1242,7 @@ export function App() {
         method: "POST",
         body: {},
       });
+      setOperationSnapshots((snapshots) => upsertOperation(snapshots, data.operation));
       if (operationRef.current?.id === current.id) handleOperationEvent("acknowledged", data.operation);
       showToast(hadQueuedPrompts
         ? "상태 확인을 마쳤습니다. 보관한 대기열을 다시 시작합니다."
@@ -1359,6 +1407,11 @@ export function App() {
     setHandoff(null);
     setShowHandoffDialog(false);
     setHandoffSupported(false);
+    setOperationSnapshots([]);
+    setApprovalInbox([]);
+    setShowOperationsDashboard(false);
+    setDecidingApprovalId(null);
+    replayingEventsRef.current = false;
   }
 
   function selectModel(nextModel: string) {
@@ -1712,6 +1765,103 @@ export function App() {
     }
   }
 
+  async function decideApproval(approval: ApprovalItem, decision: "approved" | "declined") {
+    if (decidingApprovalId) return;
+    setDecidingApprovalId(approval.id);
+    try {
+      const data = await api<{ approval: ApprovalItem; resolution: ApprovalResolution }>(
+        `/api/approvals/${encodeURIComponent(approval.id)}/decision`,
+        { method: "POST", body: { decision } },
+      );
+      setApprovalInbox((current) => applyApprovalEvent(current, {
+        type: "approval",
+        action: "resolved",
+        approval: data.approval,
+        resolution: data.resolution,
+      }));
+      showToast(decision === "approved" ? "검토한 도구 실행을 승인했습니다." : "도구 실행을 거절했습니다.");
+    } catch (error) {
+      await refreshOperationalSnapshot(true);
+      showToast(errorMessage(error));
+    } finally {
+      setDecidingApprovalId(null);
+    }
+  }
+
+  function openOperationFromDashboard(nextOperation: Operation) {
+    const nextProvider = nextOperation.providerId ?? "codex";
+    const nextThread = nextProvider === "codex"
+      ? nextOperation.threadId ?? nextOperation.conversationId ?? ""
+      : "";
+    stopRunning();
+    operationRef.current = null;
+    setOperation(null);
+    liveMessageIdRef.current = null;
+    liveTextRef.current = "";
+    latestDiffRef.current = "";
+
+    setProvider(nextProvider);
+    providerRef.current = nextProvider;
+    localStorage.setItem(storageKey("provider", deviceRef.current), nextProvider);
+    setAccountId(nextOperation.accountId ?? "");
+    if (nextOperation.accountId) {
+      localStorage.setItem(storageKey("account", deviceRef.current), nextOperation.accountId);
+    }
+    setModel(nextOperation.model ?? "");
+    setEffort(nextOperation.effort ?? "");
+    setNetworkAccess(nextOperation.networkAccess === true);
+    setWorkspace(nextOperation.cwd);
+    workspaceRef.current = nextOperation.cwd;
+    localStorage.setItem(storageKey("workspace", deviceRef.current), nextOperation.cwd);
+    setThreadId(nextThread);
+    threadRef.current = nextThread;
+    if (nextThread) localStorage.setItem(storageKey("thread", deviceRef.current), nextThread);
+    else localStorage.removeItem(storageKey("thread", deviceRef.current));
+    setThreads((current) => current.filter((item) => item.cwd === nextOperation.cwd));
+    setHandoff(null);
+    setJournalRestored(false);
+
+    const assistantId = newId("operation-assistant");
+    const terminalText = nextOperation.status === "failed"
+      ? `작업 실패: ${nextOperation.error || "알 수 없는 오류"}`
+      : nextOperation.status === "unknown"
+        ? nextOperation.error || "Companion 재시작 전 작업의 최종 상태를 확인할 수 없습니다."
+        : nextOperation.result?.finalResponse || statusMessage(nextOperation.status);
+    const restored: ChatMessage[] = [
+      { id: newId("operation-user"), role: "user", text: nextOperation.prompt },
+      {
+        id: assistantId,
+        role: "assistant",
+        text: nextOperation.status === "running" ? "" : terminalText,
+        pending: nextOperation.status === "running",
+        error: nextOperation.status === "failed" || nextOperation.status === "unknown",
+        details: nextOperation.status === "running" ? undefined : buildResultDetails(nextOperation.result ?? {}) || undefined,
+      },
+    ];
+    messagesRef.current = restored;
+    setMessages(restored);
+
+    if (nextOperation.status === "running") {
+      liveMessageIdRef.current = assistantId;
+      operationRef.current = nextOperation;
+      setOperation(nextOperation);
+      handleOperationEvent("started", nextOperation);
+    } else if (nextOperation.status === "unknown" && !nextOperation.acknowledgedAt) {
+      operationRef.current = nextOperation;
+      setOperation(nextOperation);
+      handleOperationEvent("recovered", nextOperation);
+    }
+    setShowOperationsDashboard(false);
+    if (nextProvider === "codex") void loadProjectHandoff(nextOperation.cwd);
+    void api<ModelResponse>(`/api/models?provider=${encodeURIComponent(nextProvider)}`)
+      .then((data) => {
+        if (providerRef.current === nextProvider) setModels(data.models);
+      })
+      .catch(() => undefined);
+  }
+
+  const pendingApprovalCount = activeApprovals(approvalInbox).length;
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -1724,10 +1874,23 @@ export function App() {
         </div>
         <div className="top-actions">
           <button
+            className="icon-button operations-button"
+            type="button"
+            aria-label="프로젝트 작업 대시보드 열기"
+            title="이 PC의 프로젝트별 작업과 승인"
+            onClick={() => {
+              setShowOperationsDashboard(true);
+              void refreshOperationalSnapshot(true);
+            }}
+          >
+            <span aria-hidden="true">▤</span>
+            {pendingApprovalCount > 0 && <b aria-label={`승인 필요 ${pendingApprovalCount}건`}>{Math.min(99, pendingApprovalCount)}</b>}
+          </button>
+          <button
             className="icon-button handoff-button"
             type="button"
-            aria-label="현재 세션 반납"
-            title={handoffSupported ? "세션 반납 · 다른 기기에서 이어가기" : "Companion 1.8.0 이상에서 사용할 수 있습니다"}
+            aria-label="선택한 프로젝트의 현재 세션 반납"
+            title={handoffSupported ? `${workspaceName(workspace)} 프로젝트 세션 반납` : "Companion 1.8.0 이상에서 사용할 수 있습니다"}
             disabled={!handoffSupported || handoffBusy || (!threadId && !operationBelongsToSession(operation, workspace, threadId))}
             onClick={() => setShowHandoffDialog(true)}
           >⇥</button>
@@ -1761,6 +1924,20 @@ export function App() {
         </div>
       </header>
 
+      {showOperationsDashboard && (
+        <OperationsDashboard
+          deviceName={deviceLabel(device)}
+          operations={operationSnapshots}
+          approvals={approvalInbox}
+          queuedCount={promptQueue.length}
+          decidingApprovalId={decidingApprovalId}
+          onClose={() => setShowOperationsDashboard(false)}
+          onRefresh={() => void refreshOperationalSnapshot(false)}
+          onOpenOperation={openOperationFromDashboard}
+          onDecision={(approval, decision) => void decideApproval(approval, decision)}
+        />
+      )}
+
       {pairing && (
         <section className="pairing-dialog" role="dialog" aria-modal="true" aria-labelledby="pairing-title">
           <div className="pairing-card">
@@ -1790,7 +1967,7 @@ export function App() {
           <div className="project-dialog-card handoff-dialog-card">
             <div className="project-dialog-head">
               <div>
-                <strong id="handoff-dialog-title">이 기기에서 세션 반납</strong>
+                <strong id="handoff-dialog-title">{workspaceName(workspaceRef.current)} 프로젝트 세션 반납</strong>
                 <small>대화와 프로젝트 파일은 PC에 그대로 보존됩니다.</small>
               </div>
               <button type="button" aria-label="닫기" onClick={() => setShowHandoffDialog(false)}>×</button>

@@ -16,5 +16,6 @@ test("application version has one package source of truth", async () => {
   assert.equal(GATEWAY_PROTOCOL_MINIMUM, 2);
   assert.equal(GATEWAY_CAPABILITIES.providerRuntime, true);
   assert.equal(GATEWAY_CAPABILITIES.eventReplay, true);
+  assert.equal(GATEWAY_CAPABILITIES.approvalBroker, true);
   assert.equal(GATEWAY_CAPABILITIES.usageAccounting, true);
 });

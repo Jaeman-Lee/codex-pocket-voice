@@ -13,6 +13,23 @@ test("AI connection center stays inside the mobile viewport and scrolls internal
   assert.match(sheet, /overflow-y:\s*auto/);
 });
 
+test("operations dashboard and approval details stay inside the mobile viewport", async () => {
+  const css = await readFile(new URL("../client/src/styles.css", import.meta.url), "utf8");
+  const overlay = css.match(/\.operations-dashboard \{([^}]+)\}/)?.[1] ?? "";
+  const sheet = css.match(/\.operations-sheet \{([^}]+)\}/)?.[1] ?? "";
+  const details = css.match(/\.approval-card pre \{([^}]+)\}/)?.[1] ?? "";
+
+  assert.match(overlay, /grid-template-rows:\s*minmax\(0,\s*1fr\)/);
+  assert.match(overlay, /overflow:\s*hidden/);
+  assert.match(sheet, /max-width:\s*100%/);
+  assert.match(sheet, /max-height:\s*100%/);
+  assert.match(sheet, /overflow-x:\s*hidden/);
+  assert.match(sheet, /overflow-y:\s*auto/);
+  assert.match(details, /max-width:\s*100%/);
+  assert.match(details, /white-space:\s*pre-wrap/);
+  assert.match(details, /overflow-wrap:\s*anywhere/);
+});
+
 test("the app shell cannot grow beyond a narrow mobile viewport", async () => {
   const css = await readFile(new URL("../client/src/styles.css", import.meta.url), "utf8");
   const root = css.match(/html, body, #root \{([^}]+)\}/)?.[1] ?? "";

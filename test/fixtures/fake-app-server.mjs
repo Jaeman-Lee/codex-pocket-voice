@@ -11,6 +11,7 @@ const thread = {
   ephemeral: false,
   section: null,
   sectionEnteredAt: null,
+  projectId: null,
   historyMode: "full",
   modelProvider: "openai",
   createdAt: 1,
@@ -107,7 +108,7 @@ function completeTurn() {
     method: "turn/completed",
     params: {
       threadId: thread.id,
-      turn: turn("completed", [{ type: "agentMessage", id: "message-1", text: "done", phase: "final_answer", memoryCitation: null }]),
+      turn: turn("completed", [{ type: "agentMessage", id: "message-1", text: "done", phase: "final_answer", memoryCitation: null, delivery: null }]),
     },
   });
 }

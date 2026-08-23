@@ -467,6 +467,10 @@ function assertStoredOperation(value: StoredOperationPayload, expectedId: string
     || !boundedString(operation.runId, 500)
     || !boundedString(operation.cwd, 4_096)
     || typeof operation.prompt !== "string" || operation.prompt.length > 100_000
+    || (operation.accountId !== undefined && !boundedString(operation.accountId, 100))
+    || (operation.model !== undefined && !boundedString(operation.model, 200))
+    || (operation.effort !== undefined && !boundedString(operation.effort, 40))
+    || (operation.networkAccess !== undefined && typeof operation.networkAccess !== "boolean")
     || !validStatus
     || !boundedTimestamp(operation.startedAt)
     || (operation.completedAt !== undefined && !boundedTimestamp(operation.completedAt))

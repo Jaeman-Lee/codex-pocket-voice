@@ -40,6 +40,30 @@ test("ApprovalBroker deduplicates tool calls and requires touch for high-risk ap
   assert.equal((await first.decision).decision, "approved");
   assert.equal((await duplicate.decision).source, "touch");
   assert.deepEqual(approvals.listPending(), []);
+  assert.equal(approvals.get(first.request.id)?.status, "approved");
+  approvals.close();
+});
+
+test("ApprovalBroker rejects unbounded or non-JSON review details", () => {
+  const approvals = new InMemoryApprovalBroker();
+  const base = {
+    providerId: "fake",
+    conversationId: "conversation-1",
+    runId: "run-1",
+    toolCallId: "tool-1",
+    risk: "change" as const,
+    redactedSummary: "review change",
+  };
+  assert.throws(
+    () => approvals.requestApproval({ ...base, redactedDetails: { value: "x".repeat(33 * 1024) } }),
+    (error: unknown) => error instanceof ApprovalBrokerError && error.statusCode === 400,
+  );
+  const cyclic: Record<string, unknown> = {};
+  cyclic.self = cyclic;
+  assert.throws(
+    () => approvals.requestApproval({ ...base, redactedDetails: cyclic }),
+    (error: unknown) => error instanceof ApprovalBrokerError && error.statusCode === 400,
+  );
   approvals.close();
 });
 
