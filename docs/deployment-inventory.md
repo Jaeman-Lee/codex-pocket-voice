@@ -16,6 +16,14 @@ Workspace migration decision: Linux PC의 Git clone을 유일한 주 개발 작�
 `1.8.0`과 rollback `1.7.4`도 교체하지 않는다. Termux checkout은 APK 설치·실기기 검증,
 터널 복구와 체크섬 확인을 위한 경량 제어 사본으로만 유지한다.
 
+Companion field-test rollout decision: 2026-08-23에 기존 `1.8.0` feature/minor
+candidate를 `agent/react-capacitor-android` 브랜치의 Linux PC Git clone에서 실행했다.
+이 전환은 이미 기록한 candidate의 운영 배포이므로 SemVer를 올리지 않고,
+Android APK는 `1.8.0` current와 `1.7.4` rollback 세트를 그대로 보존한다. 타입
+검사, 빌드, 단위 테스트 16개, 실제 app-server 통합 테스트 3개와 페어링
+유지를 확인한 뒤 전환했다. 기존 `1.7.4` 실행 폴더는 복구 가능한 휴지통으로
+이동했고, Companion rollback snapshot은 별도로 보존했다.
+
 | Component | Version / revision | State |
 | --- | --- | --- |
 | Runtime code baseline | `5c4d0bb` on `agent/react-capacitor-android` | pushed; local checks passing |
@@ -23,9 +31,10 @@ Workspace migration decision: Linux PC의 Git clone을 유일한 주 개발 작�
 | Termux workspace | lightweight Git mirror at `f08d9e7` | reproducible dependencies and build output scheduled for removal |
 | Pull request | Draft PR #1 into `main` | Linux and Android checks passing; field test pending |
 | Android APK | 1.8.0 signed candidate | CI artifact, checksum and CycloneDX SBOM produced; 1.7.4 remains installed until update |
-| Linux Companion | 1.7.4 | running and protocol 2 health check passing |
+| Linux Companion | 1.8.0 | field-test candidate running from the PC Git clone; PWA and pairing checks passing |
 | Pairing | one Android client | paired; secrets remain outside Git |
 | Previous Companion | 0.2.0 directory snapshot | retained temporarily for rollback |
+| Superseded Companion | 1.7.4 working directory | moved to recoverable trash after the 1.8.0 cutover |
 | Latest official release | `v1.6.0` | Git tag and GitHub Release |
 
 ## Workspace roles
