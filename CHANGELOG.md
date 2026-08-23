@@ -10,9 +10,14 @@ Update decision: 스마트폰 화면을 넘는 레이아웃을 고치는 버그 
 candidate로 두고, 검증된 `1.7.4`를 rollback 세트로 유지하며, `1.8.0` candidate는
 설치 혼동이 없도록 superseded 보관 대상으로 전환한다.
 
-## 1.8.0 candidate — validation
+- 앱 셸·상단·대화·입력 영역이 스마트폰 뷰포트보다 커지지 않도록 폭과 높이를 제한했다.
+- 좁은 화면과 큰 글자 설정에서 하단 도구가 줄바꿈되고 입력 영역이 내부 스크롤되도록 수정했다.
+- Android 키보드가 열리면 WebView가 남은 화면에 맞게 조절되며, 필요할 때 핀치 줌으로 축소·확대할 수 있다.
+- Node 20/22와 Android 서명 APK CI가 커밋 `c5563ec`에서 통과했다.
 
-GitHub Release나 Git tag로 확정하지 않은 현재 시험 기준선이다.
+## 1.8.0 candidate — superseded feature baseline
+
+GitHub Release나 Git tag로 확정하지 않았으며, `1.8.1` candidate에 포함된 기능 기준선이다.
 
 - 현재 기기의 Codex thread를 삭제하지 않고 다른 기기에 반납하는 UX를 추가했다.
 - 실행 중인 PC 작업은 반납 후에도 계속되며, 다른 페어링 기기가 같은 run과 thread에 다시 붙는다.
@@ -43,7 +48,8 @@ Candidate build history:
 | 1.7.2 | `2a3348c` | superseded field build | 프로젝트 생성 오류 표시 |
 | 1.7.3 | `c6b0440` | CI only | 연결 센터 모바일 레이아웃 수정 |
 | 1.7.4 | `91f27b4` | superseded field build | 구형 Git 프로젝트 생성 호환 |
-| 1.8.0 | `5c4d0bb` | current candidate | 교차 기기 세션 인계와 순차 배포 호환 |
+| 1.8.0 | `5c4d0bb` | superseded candidate | 교차 기기 세션 인계와 순차 배포 호환 |
+| 1.8.1 | `c5563ec` | current CI candidate | 스마트폰 뷰포트 수용과 조절 가능한 WebView |
 
 ## 1.6.0 — 2026-08-16
 
