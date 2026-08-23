@@ -11,6 +11,11 @@ Update decision: `1.8.0`은 새 교차 기기 세션 흐름과 Companion API를 
 `feature`/minor 변경이다. Draft feature PR에서 유지하고 현장 승인 전에는 `main`에 병합하지
 않는다. Android에서는 `1.8.0`을 current, 검증된 `1.7.4`를 유일한 rollback 세트로 보관한다.
 
+Workspace migration decision: Linux PC의 Git clone을 유일한 주 개발 작업공간으로 사용한다.
+이 변경은 배포 코드나 APK를 바꾸지 않는 운영 변경이므로 SemVer는 올리지 않으며 current
+`1.8.0`과 rollback `1.7.4`도 교체하지 않는다. Termux checkout은 APK 설치·실기기 검증,
+터널 복구와 체크섬 확인을 위한 경량 제어 사본으로만 유지한다.
+
 | Component | Version / revision | State |
 | --- | --- | --- |
 | Runtime code baseline | `5c4d0bb` on `agent/react-capacitor-android` | pushed; local checks passing |
@@ -20,6 +25,18 @@ Update decision: `1.8.0`은 새 교차 기기 세션 흐름과 Companion API를 
 | Pairing | one Android client | paired; secrets remain outside Git |
 | Previous Companion | 0.2.0 directory snapshot | retained temporarily for rollback |
 | Latest official release | `v1.6.0` | Git tag and GitHub Release |
+
+## Workspace roles
+
+| Workspace | Role | Keeps |
+| --- | --- | --- |
+| Linux PC Git clone | authoritative development workspace | source, `.git`, dependencies, build/test output, Codex threads |
+| Termux Git mirror | lightweight control and recovery | source mirror, tunnel scripts, Git metadata only |
+| Android Downloads | field-test artifacts | one current APK set, one rollback APK set, temporary legacy archive |
+
+PC Codex CLI의 버전이 저장소의 app-server schema 기준보다 앞서면 이관과 섞어 자동 갱신하지
+않는다. 별도 patch로 분류하고 바인딩 재생성, 실제 app-server 통합 검사와 APK 버전 판단을
+거친다.
 
 `1.8.0`는 아직 정식 Release가 아니다. 사용자 현장 테스트가 끝난 뒤 PR을 병합하고 같은
 병합 커밋에 `v1.8.0` 태그와 GitHub Release를 만들어야 한다. Companion을 1.8.0로 재시작하면
