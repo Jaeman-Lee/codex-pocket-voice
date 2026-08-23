@@ -144,6 +144,8 @@ export interface RunResult {
 export interface Operation {
   id: string;
   providerId?: ProviderId;
+  conversationId?: string;
+  runId?: string;
   threadId: string;
   turnId: string;
   cwd: string;
@@ -218,6 +220,7 @@ export interface CodexEvent {
   type: string;
   providerId?: ProviderId;
   action?: string;
+  handoffId?: string;
   operation?: Operation;
   handoff?: SessionHandoff;
   method?: string;

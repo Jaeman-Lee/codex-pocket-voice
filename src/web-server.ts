@@ -2,11 +2,10 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { basename, dirname, extname, join } from "node:path";
-import { randomUUID } from "node:crypto";
 import type { ThreadListResponse } from "../generated/app-server/v2/ThreadListResponse";
 import type { ThreadReadResponse } from "../generated/app-server/v2/ThreadReadResponse";
 import type { CodexProviderClient } from "./providers/codex-provider.js";
-import type { ProviderEvent, ProviderRun } from "./providers/types.js";
+import type { ProviderEvent } from "./providers/types.js";
 import { PathPolicy } from "./path-policy.js";
 import { compactThread, presentThread } from "./result.js";
 import { MediaError, MediaManager } from "./media-manager.js";
@@ -17,6 +16,11 @@ import { GatewayAuth, GatewayAuthError } from "./gateway-auth.js";
 import { APP_VERSION, GATEWAY_CAPABILITIES, GATEWAY_PROTOCOL_MINIMUM, GATEWAY_PROTOCOL_VERSION } from "./version.js";
 import { collectSystemDiagnostics } from "./system-diagnostics.js";
 import { SessionHandoffStore } from "./session-handoff-store.js";
+import {
+  RunCoordinator,
+  RunCoordinatorError,
+  type RunOperation,
+} from "./run-coordinator.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_EVENT_TEXT = 80_000;
@@ -58,23 +62,8 @@ export interface RunningWebServer {
   close(): Promise<void>;
 }
 
-type OperationStatus = "running" | "completed" | "interrupted" | "failed";
-
-interface Operation {
-  id: string;
-  providerId: string;
-  threadId: string;
-  turnId: string;
-  cwd: string;
-  prompt: string;
-  status: OperationStatus;
-  startedAt: string;
-  completedAt?: string;
-  result?: Record<string, unknown>;
-  error?: string;
-}
-
 interface RunBody {
+  requestId?: unknown;
   prompt?: unknown;
   cwd?: unknown;
   threadId?: unknown;
@@ -102,8 +91,6 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   if (!rootInfo.isDirectory()) throw new Error(`Web static directory is invalid: ${options.staticDir}`);
 
   const sseClients = new Set<ServerResponse>();
-  const operations = new Map<string, Operation>();
-  const activeThreads = new Set<string>();
   const media = options.media ?? new MediaManager({
     onUpdate: (item) => broadcast(sseClients, { type: "media", media: item }),
   });
@@ -115,13 +102,24 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   );
   const providers = new ProviderRegistry(options.client);
   const providerLogins = new ProviderLoginManager(providers);
-  const unsubscribe = providers.subscribe((event) => {
-    const forwarded = sanitizeNotification(event, activeThreads);
+  const runs = new RunCoordinator(providers, {
+    assertWorkspace: (cwd) => options.paths.assertAllowed(cwd),
+  });
+  const unsubscribe = runs.subscribe((event) => {
+    if (event.type === "operation") {
+      broadcast(sseClients, {
+        type: "operation",
+        action: event.action,
+        operation: publicOperation(event.operation),
+      });
+      return;
+    }
+    const forwarded = sanitizeNotification(event.event);
     if (forwarded) broadcast(sseClients, forwarded);
   });
 
   const server = createServer((request, response) => {
-    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, operations, activeThreads, sseClients).catch(
+    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, sseClients).catch(
       (error) => sendError(response, error),
     );
   });
@@ -155,6 +153,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
       clearInterval(heartbeat);
       providerLogins.close();
       unsubscribe();
+      runs.close();
       for (const response of sseClients) response.end();
       sseClients.clear();
       await new Promise<void>((resolve, reject) => {
@@ -174,8 +173,7 @@ async function handleRequest(
   projects: ProjectManager,
   providers: ProviderRegistry,
   providerLogins: ProviderLoginManager,
-  operations: Map<string, Operation>,
-  activeThreads: Set<string>,
+  runs: RunCoordinator,
   sseClients: Set<ServerResponse>,
 ): Promise<void> {
   setSecurityHeaders(response);
@@ -191,7 +189,7 @@ async function handleRequest(
       response.end();
       return;
     }
-    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, operations, activeThreads, sseClients);
+    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, runs, sseClients);
     return;
   }
   await serveStatic(request, response, url.pathname, options.staticDir);
@@ -208,8 +206,7 @@ async function handleApi(
   projects: ProjectManager,
   providers: ProviderRegistry,
   providerLogins: ProviderLoginManager,
-  operations: Map<string, Operation>,
-  activeThreads: Set<string>,
+  runs: RunCoordinator,
   sseClients: Set<ServerResponse>,
 ): Promise<void> {
   if (request.method === "GET" && url.pathname === "/api/status") {
@@ -351,8 +348,11 @@ async function handleApi(
   }
 
   if (request.method === "GET" && url.pathname === "/api/session/handoff") {
-    const handoff = handoffs.current();
-    const operation = handoff?.operationId ? operations.get(handoff.operationId) : undefined;
+    const workspace = url.searchParams.get("workspace") || undefined;
+    const threadId = url.searchParams.get("threadId") || undefined;
+    if (workspace) options.paths.assertAllowed(workspace);
+    const handoff = handoffs.current({ workspace, threadId });
+    const operation = handoff?.operationId ? runs.get(handoff.operationId) : undefined;
     sendJson(response, 200, {
       handoff,
       operation: operation ? publicOperation(operation) : null,
@@ -364,16 +364,19 @@ async function handleApi(
     assertSameOrigin(request);
     const body = await readJson(request) as { workspace?: unknown; threadId?: unknown; operationId?: unknown };
     const requestedOperationId = optionalString(body.operationId, "operationId", 200);
-    const operation = requestedOperationId ? operations.get(requestedOperationId) : undefined;
+    const operation = requestedOperationId ? runs.get(requestedOperationId) : undefined;
     if (requestedOperationId && !operation) throw new HttpError(404, "Operation not found");
-    const threadId = optionalString(body.threadId, "threadId", 200) ?? operation?.threadId;
+    if (operation && operation.providerId !== "codex") {
+      throw new HttpError(409, "이 세션 인계 방식은 Codex 대화에서만 사용할 수 있습니다.");
+    }
+    const threadId = optionalString(body.threadId, "threadId", 200) ?? operation?.conversationId;
     if (!threadId) throw new HttpError(400, "threadId is required");
     const read = await options.client.readThread(threadId, false);
     options.paths.assertAllowed(read.thread.cwd);
     const workspace = await options.paths.resolveWorkspace(
       optionalString(body.workspace, "workspace", 4_096) ?? operation?.cwd ?? read.thread.cwd,
     );
-    if (operation && (operation.threadId !== threadId || operation.cwd !== workspace)) {
+    if (operation && (operation.conversationId !== threadId || operation.cwd !== workspace)) {
       throw new HttpError(409, "Operation does not belong to this session");
     }
     const handoff = await handoffs.release({
@@ -387,6 +390,20 @@ async function handleApi(
       handoff,
       operation: operation ? publicOperation(operation) : null,
     });
+    return;
+  }
+
+  const claimHandoffMatch = url.pathname.match(/^\/api\/session\/handoffs\/([^/]+)\/claim$/);
+  if (request.method === "POST" && claimHandoffMatch) {
+    assertSameOrigin(request);
+    await readJson(request, true);
+    const handoffId = decodeURIComponent(claimHandoffMatch[1]!);
+    const existing = handoffs.list().find((item) => item.id === handoffId);
+    if (!existing) throw new HttpError(404, "Session handoff not found");
+    options.paths.assertAllowed(existing.workspace);
+    const claimed = await handoffs.claim(handoffId);
+    broadcast(sseClients, { type: "session", action: "claimed", handoffId });
+    sendJson(response, 200, { claimed });
     return;
   }
 
@@ -450,14 +467,10 @@ async function handleApi(
   }
 
   if (request.method === "GET" && url.pathname === "/api/runs") {
-    cleanupOperations(operations);
     const status = url.searchParams.get("status");
     const workspace = url.searchParams.get("workspace");
     if (workspace) options.paths.assertAllowed(workspace);
-    const listed = [...operations.values()]
-      .filter((operation) => (!status || operation.status === status) && (!workspace || operation.cwd === workspace))
-      .sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt))
-      .map(publicOperation);
+    const listed = runs.list({ status: status ?? undefined, workspace: workspace ?? undefined }).map(publicOperation);
     sendJson(response, 200, { operations: listed });
     return;
   }
@@ -465,6 +478,7 @@ async function handleApi(
   if (request.method === "POST" && url.pathname === "/api/runs") {
     assertSameOrigin(request);
     const body = (await readJson(request)) as RunBody;
+    const requestId = optionalString(body.requestId, "requestId", 200);
     const prompt = requiredString(body.prompt, "prompt", 100_000);
     const provider = optionalString(body.provider, "provider", 40) ?? "codex";
     const accountId = optionalString(body.accountId, "accountId", 100);
@@ -489,40 +503,29 @@ async function handleApi(
     const timeoutSeconds = optionalInteger(body.timeoutSeconds, 30, 3600, 900, "timeoutSeconds");
     const attachmentIds = optionalStringArray(body.attachments, "attachments", 4, 200);
     const attachmentInput = media.resolveForTurn(attachmentIds);
-    const begun = await providers.startRun(provider, accountId, {
-      conversationId: threadId,
-      cwd,
-      prompt: `${prompt}${attachmentInput.promptContext}`,
-      imagePaths: attachmentInput.imagePaths,
-      networkAccess,
-      model,
-      effort,
-      timeoutMs: timeoutSeconds * 1_000,
-    });
-    options.paths.assertAllowed(begun.cwd);
-
-    const operation: Operation = {
-      id: randomUUID(),
-      providerId: begun.providerId,
-      threadId: begun.conversationId,
-      turnId: begun.runId,
-      cwd: begun.cwd,
+    const operation = await runs.start({
+      providerId: provider,
+      accountId,
       prompt,
-      status: "running",
-      startedAt: new Date().toISOString(),
-    };
-    cleanupOperations(operations);
-    operations.set(operation.id, operation);
-    activeThreads.add(operation.threadId);
-    broadcast(sseClients, { type: "operation", action: "started", operation: publicOperation(operation) });
-    void settleOperation(operation, begun, operations, activeThreads, sseClients);
+      input: {
+        conversationId: threadId,
+        cwd,
+        prompt: `${prompt}${attachmentInput.promptContext}`,
+        imagePaths: attachmentInput.imagePaths,
+        networkAccess,
+        model,
+        effort,
+        timeoutMs: timeoutSeconds * 1_000,
+      },
+      idempotencyKey: requestId ? `${authenticatedClient.id}:${requestId}` : undefined,
+    });
     sendJson(response, 202, { operation: publicOperation(operation) });
     return;
   }
 
   const operationMatch = url.pathname.match(/^\/api\/runs\/([^/]+)$/);
   if (request.method === "GET" && operationMatch) {
-    const operation = operations.get(decodeURIComponent(operationMatch[1]!));
+    const operation = runs.get(decodeURIComponent(operationMatch[1]!));
     if (!operation) throw new HttpError(404, "Operation not found");
     sendJson(response, 200, { operation: publicOperation(operation) });
     return;
@@ -532,13 +535,15 @@ async function handleApi(
   if (request.method === "POST" && interruptMatch) {
     assertSameOrigin(request);
     await readJson(request, true);
-    const operation = operations.get(decodeURIComponent(interruptMatch[1]!));
+    const operationId = decodeURIComponent(interruptMatch[1]!);
+    const operation = runs.get(operationId);
     if (!operation) throw new HttpError(404, "Operation not found");
     options.paths.assertAllowed(operation.cwd);
-    if (operation.status === "running") {
-      await providers.cancelRun(operation.providerId, operation.threadId, operation.turnId);
-    }
-    sendJson(response, 200, { operation: publicOperation(operation), interruptRequested: true });
+    const cancelled = await runs.cancel(operationId);
+    sendJson(response, 200, {
+      operation: publicOperation(cancelled.operation),
+      interruptRequested: cancelled.interruptRequested,
+    });
     return;
   }
 
@@ -553,38 +558,10 @@ async function handleApi(
   throw new HttpError(404, "API route not found");
 }
 
-async function settleOperation(
-  operation: Operation,
-  begun: ProviderRun,
-  operations: Map<string, Operation>,
-  activeThreads: Set<string>,
-  clients: Set<ServerResponse>,
-): Promise<void> {
-  try {
-    const completed = await begun.completion;
-    operation.status = completed.status;
-    operation.completedAt = new Date().toISOString();
-    operation.result = completed.result;
-    broadcast(clients, { type: "operation", action: "completed", operation: publicOperation(operation) });
-  } catch (error) {
-    operation.status = "failed";
-    operation.completedAt = new Date().toISOString();
-    operation.error = error instanceof Error ? error.message : String(error);
-    broadcast(clients, { type: "operation", action: "failed", operation: publicOperation(operation) });
-  } finally {
-    if (![...operations.values()].some((item) => item.threadId === operation.threadId && item.status === "running")) {
-      activeThreads.delete(operation.threadId);
-    }
-  }
-}
-
-function sanitizeNotification(
-  notification: ProviderEvent,
-  activeThreads: Set<string>,
-): Record<string, unknown> | null {
+function sanitizeNotification(notification: ProviderEvent): Record<string, unknown> | null {
   const params = isRecord(notification.params) ? notification.params : {};
-  const threadId = typeof params.threadId === "string" ? params.threadId : undefined;
-  if (!threadId || !activeThreads.has(threadId)) return null;
+  const threadId = notification.conversationId;
+  if (!threadId) return null;
 
   switch (notification.method) {
     case "item/agentMessage/delta":
@@ -783,7 +760,11 @@ function sendError(response: ServerResponse, error: unknown): void {
   }
   const status = error instanceof HttpError
     ? error.status
-    : error instanceof MediaError || error instanceof ProjectCreationError || error instanceof ProviderError || error instanceof GatewayAuthError
+    : error instanceof MediaError
+      || error instanceof ProjectCreationError
+      || error instanceof ProviderError
+      || error instanceof GatewayAuthError
+      || error instanceof RunCoordinatorError
       ? error.statusCode
       : 500;
   const message = error instanceof Error ? error.message : String(error);
@@ -799,22 +780,13 @@ function broadcast(clients: Set<ServerResponse>, event: Record<string, unknown>)
   for (const client of clients) client.write(frame);
 }
 
-function publicOperation(operation: Operation): Record<string, unknown> {
-  return { ...operation };
-}
-
-function cleanupOperations(operations: Map<string, Operation>): void {
-  const cutoff = Date.now() - 6 * 60 * 60_000;
-  for (const [id, operation] of operations) {
-    if (operation.status !== "running" && Date.parse(operation.completedAt ?? operation.startedAt) < cutoff) {
-      operations.delete(id);
-    }
-  }
-  while (operations.size > 100) {
-    const removable = [...operations.entries()].find(([, item]) => item.status !== "running");
-    if (!removable) break;
-    operations.delete(removable[0]);
-  }
+function publicOperation(operation: RunOperation): Record<string, unknown> {
+  return {
+    ...operation,
+    ...(operation.providerId === "codex"
+      ? { threadId: operation.conversationId, turnId: operation.runId }
+      : {}),
+  };
 }
 
 function requiredString(value: unknown, name: string, max: number): string {

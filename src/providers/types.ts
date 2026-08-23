@@ -28,6 +28,10 @@ export interface ProviderRun {
 
 export interface ProviderEvent {
   providerId: ProviderId;
+  conversationId?: string;
+  runId?: string;
+  eventId?: string;
+  sequence?: number;
   method: string;
   params?: unknown;
 }

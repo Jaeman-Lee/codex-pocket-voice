@@ -132,15 +132,29 @@ export class CodexProviderAdapter implements ModelProviderAdapter, ProviderRunti
   }
 
   subscribe(listener: (event: ProviderEvent) => void): () => void {
-    return this.client.subscribe((event) => listener({
-      providerId: this.id,
-      method: event.method,
-      params: event.params,
-    }));
+    return this.client.subscribe((event) => {
+      const params = isRecord(event.params) ? event.params : {};
+      const turn = isRecord(params.turn) ? params.turn : {};
+      listener({
+        providerId: this.id,
+        conversationId: typeof params.threadId === "string" ? params.threadId : undefined,
+        runId: typeof params.turnId === "string"
+          ? params.turnId
+          : typeof turn.id === "string"
+            ? turn.id
+            : undefined,
+        method: event.method,
+        params: event.params,
+      });
+    });
   }
 }
 
 function providerRunStatus(status: string): ProviderRunStatus {
   if (status === "completed" || status === "interrupted") return status;
   return "failed";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -21,7 +21,7 @@
 
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
-| Phase A | 진행 중 | Provider runtime 계약, Codex adapter와 protocol 2–3 범위 호환 기반 구현 |
+| Phase A | 진행 중 | Provider runtime·RunCoordinator, Tool/Approval 계약, protocol 2–3 호환과 프로젝트별 session scope 구현 |
 | Phase B | 대기 | OpenAI Responses API |
 | Phase C | 대기 | OpenRouter |
 | Phase D | 대기 | 모바일 운영판과 SQLite journal |

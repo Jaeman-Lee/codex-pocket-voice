@@ -139,18 +139,20 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   await reloadedMedia.initialize();
   assert.equal(reloadedMedia.get(uploaded.media.id).name, "screen.png");
 
+  const runRequest = {
+    requestId: "queued-web-1",
+    prompt: "change a file",
+    cwd,
+    provider: "codex",
+    accountId: "cli-default",
+    model: "test-codex",
+    effort: "high",
+    attachments: [uploaded.media.id],
+  };
   const started = await jsonFetch(`${base}/api/runs`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
-    body: JSON.stringify({
-      prompt: "change a file",
-      cwd,
-      provider: "codex",
-      accountId: "cli-default",
-      model: "test-codex",
-      effort: "high",
-      attachments: [uploaded.media.id],
-    }),
+    body: JSON.stringify(runRequest),
   });
   assert.equal(started.operation.status, "running");
   assert.equal(started.operation.providerId, "codex");
@@ -159,6 +161,20 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(fake.lastRun?.model, "test-codex");
   assert.equal(fake.lastRun?.effort, "high");
   assert.equal(fake.lastRun?.imagePaths?.length, 1);
+  const retried = await jsonFetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify(runRequest),
+  });
+  assert.equal(retried.operation.id, started.operation.id);
+  assert.equal(fake.runsStarted, 1);
+  const conflictingRetry = await fetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ ...runRequest, prompt: "different request" }),
+  });
+  assert.equal(conflictingRetry.status, 409);
+  assert.equal(fake.runsStarted, 1);
 
   const nativeHealth = await fetch(`${base}/api/health`, { headers: authorized({ Origin: "http://localhost" }) });
   assert.equal(nativeHealth.status, 200);
@@ -180,6 +196,22 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const availableHandoff = await jsonFetch(`${base}/api/session/handoff`, { headers: authorized() });
   assert.equal(availableHandoff.handoff.id, released.handoff.id);
   assert.equal(availableHandoff.operation.id, operationId);
+  const unrelatedHandoff = await jsonFetch(
+    `${base}/api/session/handoff?workspace=${encodeURIComponent(created.project.path)}`,
+    { headers: authorized() },
+  );
+  assert.equal(unrelatedHandoff.handoff, null);
+  const claimed = await jsonFetch(`${base}/api/session/handoffs/${released.handoff.id}/claim`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: "{}",
+  });
+  assert.equal(claimed.claimed.id, released.handoff.id);
+  const clearedHandoff = await jsonFetch(
+    `${base}/api/session/handoff?workspace=${encodeURIComponent(cwd)}`,
+    { headers: authorized() },
+  );
+  assert.equal(clearedHandoff.handoff, null);
 
   const interrupted = await jsonFetch(`${base}/api/runs/${operationId}/interrupt`, {
     method: "POST",
@@ -199,6 +231,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
 class FakeWebClient implements WebCodexClient {
   lastRun?: RunTurnOptions;
   interrupted?: [string, string];
+  runsStarted = 0;
   private listeners = new Set<(notification: AppServerNotification) => void>();
   private resolveTurn?: (turn: Turn) => void;
 
@@ -245,6 +278,7 @@ class FakeWebClient implements WebCodexClient {
   }
 
   async beginTurn(options: RunTurnOptions) {
+    this.runsStarted += 1;
     this.lastRun = options;
     const completion = new Promise<Turn>((resolve) => {
       this.resolveTurn = resolve;

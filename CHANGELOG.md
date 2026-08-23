@@ -14,6 +14,12 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 - Provider capability를 streaming, 승인, workspace 읽기·쓰기, 명령 실행과 사용량 기록까지 확장했다.
 - Gateway protocol 3을 추가하면서 protocol 2 Companion과 클라이언트가 공존할 수 있는 범위 협상을
   유지했다.
+- `RunCoordinator`가 실행 상태, 취소, Provider event 범위와 재시도 request ID를 한 곳에서 관리해
+  응답 유실 뒤 같은 프롬프트가 중복 실행되지 않게 했다.
+- `ToolBroker`와 `ApprovalBroker`의 로컬 정책 계약을 추가했다. 고위험·외부 효과 승인은 터치 확인만
+  허용하고, 만료되거나 오프라인인 요청을 자동 승인하지 않는다.
+- 세션 인계를 프로젝트·대화별로 격리하고, 다른 프로젝트의 인계 세션이 현재 프로젝트처럼 보이던
+  문제를 수정했다. v1 단일 handoff 상태는 손실 없이 다중 상태로 마이그레이션한다.
 - 이 기준선은 CI·개발용이며 v1.8.1 설치본이나 실행 중인 Companion을 교체하지 않는다.
 
 ## 1.8.1 patch candidate — mobile viewport containment
