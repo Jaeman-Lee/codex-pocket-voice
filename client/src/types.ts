@@ -210,6 +210,7 @@ export interface QueuedPrompt {
 export interface CodexEvent {
   type: string;
   action?: string;
+  handoffId?: string;
   operation?: Operation;
   handoff?: SessionHandoff;
   method?: string;

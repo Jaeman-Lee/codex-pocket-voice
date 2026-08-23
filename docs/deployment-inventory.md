@@ -1,11 +1,17 @@
 # Deployment inventory
 
-Last verified: 2026-08-23 KST
+Last verified: 2026-08-24 KST
 
 이 문서는 공개 가능한 배포 기준선만 기록한다. 사용자명, 파일 절대 경로, 네트워크 주소,
 기기 ID, 인증 토큰, 페어링 코드는 기록하지 않는다.
 
 ## Current candidate and deployed baseline
+
+Session scope hotfix decision: 다른 프로젝트의 인계 세션이 현재 프로젝트의 세션 종료·반납 대상으로
+보이는 버그이므로 `patch`/`1.8.2`, Android `versionCode 10802`로 분류한다. 대상 브랜치는
+`hotfix/1.8.2-session-scope`이다. 1.8.2를 전달하기 전에는 1.8.1 current와 1.7.4 rollback을
+그대로 유지한다. 최초 1.8.2 현장 설치 시 1.8.1을 rollback으로 두고 1.7.4는 복구 가능한
+archive로 이동한다. Companion 재시작은 활성 Codex turn이 없고 사용자가 확인한 뒤에만 수행한다.
 
 Update decision: `1.8.0`은 새 교차 기기 세션 흐름과 Companion API를 추가하므로
 `feature`/minor 변경이다. Draft feature PR에서 유지하고 현장 승인 전에는 `main`에 병합하지

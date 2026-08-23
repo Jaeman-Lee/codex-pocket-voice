@@ -2,6 +2,18 @@
 
 이 문서는 사용자가 설치할 수 있는 배포판과 개발 중 CI 산출물을 구분한다.
 
+## 1.8.2 hotfix candidate — project-scoped session handoff
+
+Update decision: 다른 프로젝트의 인계 세션과 실행이 현재 프로젝트의 세션 종료·반납 대상으로
+보이는 버그 수정이므로 `patch`로 분류하고 `1.8.2`/Android `versionCode 10802`로 올린다.
+대상은 `hotfix/1.8.2-session-scope` 브랜치이다. 1.8.2를 현장 전달하기 전에는 1.8.1을
+current로 유지하고, 전달할 때 1.8.1을 rollback으로 승격하며 1.7.4는 복구 가능한 archive로
+옮긴다. 실행 중인 Companion은 명시적 확인 없이 재시작하지 않는다.
+
+- 세션 인계를 프로젝트·대화별로 분리하고 현재 프로젝트와 일치하는 인계만 화면에 표시한다.
+- 중단·반납 대상 실행이 현재 workspace와 conversation에 속하는지 다시 검사한다.
+- 기존 단일 handoff 상태를 손실 없이 다중 상태로 이전하고, 이어받은 handoff는 서버에서도 정리한다.
+
 ## 1.8.1 patch candidate — mobile viewport containment
 
 Update decision: 스마트폰 화면을 넘는 레이아웃을 고치는 버그 수정이므로
