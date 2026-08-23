@@ -9,7 +9,7 @@ Last verified: 2026-08-23 KST
 
 | Component | Version / revision | State |
 | --- | --- | --- |
-| Runtime code baseline | `61fe113` on `agent/react-capacitor-android` | pushed; local release checks passing |
+| Runtime code baseline | `5c4d0bb` on `agent/react-capacitor-android` | pushed; local checks passing |
 | Pull request | Draft PR #1 into `main` | Linux and Android checks passing; field test pending |
 | Android APK | 1.8.0 signed candidate | CI artifact, checksum and CycloneDX SBOM produced; 1.7.4 remains installed until update |
 | Linux Companion | 1.7.4 | running and protocol 2 health check passing |

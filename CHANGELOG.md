@@ -35,7 +35,7 @@ Candidate build history:
 | 1.7.2 | `2a3348c` | superseded field build | 프로젝트 생성 오류 표시 |
 | 1.7.3 | `c6b0440` | CI only | 연결 센터 모바일 레이아웃 수정 |
 | 1.7.4 | `91f27b4` | superseded field build | 구형 Git 프로젝트 생성 호환 |
-| 1.8.0 | `61fe113` | current candidate | 교차 기기 세션 반납·인계 |
+| 1.8.0 | `5c4d0bb` | current candidate | 교차 기기 세션 인계와 순차 배포 호환 |
 
 ## 1.6.0 — 2026-08-16
 
