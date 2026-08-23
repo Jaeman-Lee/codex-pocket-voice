@@ -7,6 +7,7 @@ import type { ModelListResponse } from "../generated/app-server/v2/ModelListResp
 import type { ThreadReadResponse } from "../generated/app-server/v2/ThreadReadResponse";
 import type { ThreadResumeResponse } from "../generated/app-server/v2/ThreadResumeResponse";
 import type { ThreadStartResponse } from "../generated/app-server/v2/ThreadStartResponse";
+import type { ThreadUnsubscribeResponse } from "../generated/app-server/v2/ThreadUnsubscribeResponse";
 import type { Turn } from "../generated/app-server/v2/Turn";
 import type { TurnStartResponse } from "../generated/app-server/v2/TurnStartResponse";
 import type { UserInput } from "../generated/app-server/v2/UserInput";
@@ -176,6 +177,11 @@ export class CodexAppServerClient {
   async interrupt(threadId: string, turnId: string): Promise<void> {
     await this.start();
     await this.request("turn/interrupt", { threadId, turnId });
+  }
+
+  async unsubscribeThread(threadId: string): Promise<ThreadUnsubscribeResponse> {
+    await this.start();
+    return this.request<ThreadUnsubscribeResponse>("thread/unsubscribe", { threadId });
   }
 
   async close(): Promise<void> {

@@ -11,6 +11,7 @@ const thread = {
   ephemeral: false,
   section: null,
   sectionEnteredAt: null,
+  projectId: null,
   historyMode: "full",
   modelProvider: "openai",
   createdAt: 1,
@@ -96,6 +97,9 @@ rl.on("line", (line) => {
     case "turn/interrupt":
       write({ id: message.id, result: {} });
       break;
+    case "thread/unsubscribe":
+      write({ id: message.id, result: { status: "unsubscribed" } });
+      break;
     default:
       write({ id: message.id, error: { code: -32601, message: `unknown ${message.method}` } });
   }
@@ -107,7 +111,7 @@ function completeTurn() {
     method: "turn/completed",
     params: {
       threadId: thread.id,
-      turn: turn("completed", [{ type: "agentMessage", id: "message-1", text: "done", phase: "final_answer", memoryCitation: null }]),
+      turn: turn("completed", [{ type: "agentMessage", id: "message-1", text: "done", phase: "final_answer", memoryCitation: null, delivery: null }]),
     },
   });
 }

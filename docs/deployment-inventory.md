@@ -7,6 +7,14 @@ Last verified: 2026-08-24 KST
 
 ## Current candidate and deployed baseline
 
+Writer-release hotfix decision: 세션 반납 후에도 Companion app-server가 exact Codex thread의
+writer lock을 유지해 PC의 resume를 막는 연결 장애이므로 `patch`/`1.8.3`, Android
+`versionCode 10803`으로 분류한다. 대상 브랜치는 `hotfix/1.8.3-writer-release`이다.
+CI 검증과 현장 승인이 끝나기 전에는 1.8.2를 current 설치 후보, 사용자 검증 1.8.1을
+rollback으로 함께 보존한다. 1.8.3 설치 후에는 1.8.2를 rollback으로 전환하고 1.8.1은
+복구 가능한 archive로 이동한다. Companion 재시작은 활성 Codex turn이 없고 사용자가
+확인한 뒤에만 수행한다.
+
 Session scope hotfix decision: 다른 프로젝트의 인계 세션이 현재 프로젝트의 세션 종료·반납 대상으로
 보이는 버그이므로 `patch`/`1.8.2`, Android `versionCode 10802`로 분류한다. 대상 브랜치는
 `hotfix/1.8.2-session-scope`이다. 1.8.2를 전달하기 전에는 1.8.1 current와 1.7.4 rollback을
@@ -48,13 +56,13 @@ candidate로 분류한다. 실행 중인 Codex turn을 끊지 않기 위해 Linu
 
 | Component | Version / revision | State |
 | --- | --- | --- |
-| Runtime code baseline | `d76e478` on `hotfix/1.8.2-session-scope` | pushed; PR #4 Linux and Android checks passing |
-| Primary development workspace | Linux PC Git clone; v2 worktree active | 1.8.2 hotfix is isolated on its scoped branch |
+| Runtime code baseline | pending on `hotfix/1.8.3-writer-release` | local release check passed; push and CI pending |
+| Primary development workspace | Linux PC Git clone; v2 worktree active | 1.8.3 hotfix is isolated in a separate PC worktree |
 | Termux workspace | lightweight Git mirror at `f08d9e7` | reproducible dependencies and build output scheduled for removal |
-| Pull request | PR #4 into `main` | Linux Node 20/22 and Android checks passing; field test pending |
-| Android APK | 1.8.2 signed candidate | current installer set restored from Actions run `32648034017`; install pending |
+| Pull request | pending for `hotfix/1.8.3-writer-release` | will be stacked on the 1.8.2 hotfix until its base is merged |
+| Android APK | 1.8.2 signed candidate | preserved current installer; 1.8.3 has not been built or handed off |
 | Android rollback APK | 1.8.1 signed candidate | rollback set prepared from Actions run `32645200906`; already field-tested by the user |
-| Linux Companion | 1.8.1 | active for the user's other project; restart to 1.8.2 deferred until explicit confirmation |
+| Linux Companion | 1.8.1 | active for the user's other project; restart to a verified hotfix deferred until explicit confirmation |
 | Pairing | one Android client | paired; secrets remain outside Git |
 | Previous Companion | 0.2.0 directory snapshot | retained temporarily for rollback |
 | Superseded Companion | 1.7.4 working directory | moved to recoverable trash after the 1.8.0 cutover |
@@ -68,13 +76,14 @@ candidate로 분류한다. 실행 중인 Codex turn을 끊지 않기 위해 Linu
 | Termux Git mirror | lightweight control and recovery | source mirror, tunnel scripts, Git metadata only |
 | Android Downloads | field-test artifacts | one current APK set, one rollback APK set, temporary legacy archive |
 
-PC Codex CLI `0.149.0`은 저장소의 app-server schema 기준 `0.148.1`보다 앞서 있다. 일반
-타입·단위·실제 app-server 통합 검사는 PC에서 통과했고 schema 일치 검사만 예상대로 실패했다.
-모바일 뷰포트 수정과 섞어 자동 갱신하지 않으며, 별도 후속 patch 후보로 분류해 바인딩 재생성, 실제
-app-server 통합 검사와 새 APK 판단을 거친다.
+1.8.3 source candidate는 PC Codex CLI `0.149.0` 기준으로 app-server TypeScript 바인딩을
+재생성했다. 일반 타입·단위 검사와 실제 app-server의 list/unsubscribe 통합 검사를 모두
+release gate에 포함한다. 1.8.2 APK와 Companion에는 이 바인딩이나 writer-release 수정이
+없으므로 1.8.3 APK 설치만으로는 충분하지 않고, 활성 turn이 없을 때 Linux Companion도
+검증된 1.8.3 source로 전환해야 한다.
 
-`1.8.2`는 아직 정식 Release가 아니다. 사용자 현장 테스트가 끝난 뒤 PR을 병합하고 같은
-병합 커밋에 `v1.8.2` 태그와 GitHub Release를 만들어야 한다. Companion을 1.8.2로 재시작하면
+`1.8.3`은 아직 정식 Release가 아니다. 사용자 현장 테스트가 끝난 뒤 선행 hotfix와 PR을
+병합하고 최종 병합 커밋에 `v1.8.3` 태그와 GitHub Release를 만들어야 한다. Companion을 1.8.3으로 재시작하면
 실행 중인 기존 run이 중단될 수 있으므로, 활성 작업이 없을 때만 배포한다.
 
 ## Artifact classes
@@ -90,7 +99,7 @@ app-server 통합 검사와 새 APK 판단을 거친다.
 
 ## Cleanup gates
 
-1. 현장 테스트 중에는 `v1.8.2` 태그를 만들거나 PR을 병합하지 않는다.
+1. 현장 테스트 중에는 `v1.8.3` 태그를 만들거나 PR을 병합하지 않는다.
 2. 프로젝트 생성, AI 연결 센터 스크롤, 재연결, 음성 입력, 기존 대화 복구와 기기 간 세션 인계를 확인한다.
 3. 승인 후 정식 Release를 만들고 APK 체크섬을 Release asset과 다시 대조한다.
 4. 정식 Release 확인 후 PC의 0.2.0 rollback snapshot을 제거한다.
