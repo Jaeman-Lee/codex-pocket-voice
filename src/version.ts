@@ -10,6 +10,7 @@ export const GATEWAY_CAPABILITIES = {
   mediaPersistence: false,
   sessionHandoff: true,
   providerRuntime: true,
+  eventReplay: true,
   approvalBroker: false,
-  usageAccounting: false,
+  usageAccounting: true,
 } as const;

@@ -12,6 +12,7 @@ import { MediaManager } from "../src/media-manager.js";
 import { ProjectManager } from "../src/project-manager.js";
 import { startWebServer, type WebCodexClient } from "../src/web-server.js";
 import { GatewayAuth } from "../src/gateway-auth.js";
+import { EventJournal } from "../src/event-journal.js";
 
 const cwd = process.cwd();
 
@@ -118,6 +119,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   });
   assert.equal(nativePreflight.status, 204);
   assert.equal(nativePreflight.headers.get("access-control-allow-origin"), "http://localhost");
+  assert.match(nativePreflight.headers.get("access-control-allow-headers") ?? "", /Last-Event-ID/);
 
   const streamAbort = new AbortController();
   const stream = await fetch(`${base}/api/events`, { signal: streamAbort.signal, headers: authorized() });
@@ -226,6 +228,110 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
     const operation = await jsonFetch(`${base}/api/runs/${operationId}`, { headers: authorized() });
     return operation.operation.status === "interrupted";
   });
+
+  const invalidCursor = await fetch(`${base}/api/events`, {
+    headers: authorized({ "Last-Event-ID": "not-a-cursor" }),
+  });
+  assert.equal(invalidCursor.status, 400);
+
+  const replayAbort = new AbortController();
+  const replayResponse = await fetch(`${base}/api/events`, {
+    headers: authorized({ "Last-Event-ID": "0" }),
+    signal: replayAbort.signal,
+  });
+  assert.equal(replayResponse.status, 200);
+  const replayText = await readUntil(
+    replayResponse.body!.getReader(),
+    (text) => text.includes(operationId) && text.includes('"status":"interrupted"'),
+  );
+  replayAbort.abort();
+  assert.match(replayText, /id: \d+/);
+  assert.match(replayText, /"action":"started"/);
+  assert.match(replayText, /"action":"completed"/);
+});
+
+test("gateway restart persists unknown-operation acknowledgement and replays it", async (t) => {
+  const paths = await PathPolicy.fromEnvironment(cwd);
+  const mediaDir = await mkdtemp(join(tmpdir(), "codex-pocket-ack-media-"));
+  const projectHome = await mkdtemp(join(tmpdir(), "codex-pocket-ack-projects-"));
+  const authHome = await mkdtemp(join(tmpdir(), "codex-pocket-ack-auth-"));
+  t.after(() => rm(mediaDir, { recursive: true, force: true }));
+  t.after(() => rm(projectHome, { recursive: true, force: true }));
+  t.after(() => rm(authHome, { recursive: true, force: true }));
+  const projects = await ProjectManager.fromEnvironment(paths, projectHome);
+  const auth = await GatewayAuth.create({
+    stateFile: join(authHome, "auth.json"),
+    pairingCode: "87654321",
+    deviceKind: "linux",
+    deviceName: "Restart PC",
+  });
+  let running: Awaited<ReturnType<typeof startWebServer>> | undefined = await startWebServer({
+    client: new FakeWebClient(),
+    paths,
+    staticDir: resolve(cwd, "client/dist"),
+    media: new MediaManager({ rootDir: mediaDir }),
+    projects,
+    auth,
+    port: 0,
+  });
+  let base = `http://127.0.0.1:${running.port}`;
+  const paired = await jsonFetch(`${base}/api/pairing/claim`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: "http://localhost" },
+    body: JSON.stringify({ code: "87654321", label: "Restart test" }),
+  });
+  const headers = (extra: Record<string, string> = {}) => ({
+    Authorization: `Bearer ${paired.token}`,
+    ...extra,
+  });
+  const started = await jsonFetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: headers({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ requestId: "restart-run", prompt: "stay durable", cwd }),
+  });
+  await running.close();
+
+  running = await startWebServer({
+    client: new FakeWebClient(),
+    paths,
+    staticDir: resolve(cwd, "client/dist"),
+    media: new MediaManager({ rootDir: mediaDir }),
+    projects,
+    auth,
+    port: 0,
+  });
+  t.after(() => running?.close().catch(() => undefined));
+  base = `http://127.0.0.1:${running.port}`;
+  const restored = await jsonFetch(`${base}/api/runs/${started.operation.id}`, { headers: headers() });
+  assert.equal(restored.operation.status, "unknown");
+  assert.equal(restored.operation.acknowledgedAt, undefined);
+
+  const acknowledged = await jsonFetch(`${base}/api/runs/${started.operation.id}/acknowledge`, {
+    method: "POST",
+    headers: headers({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: "{}",
+  });
+  assert.equal(acknowledged.operation.status, "unknown");
+  assert.equal(typeof acknowledged.operation.acknowledgedAt, "string");
+
+  const replayAbort = new AbortController();
+  const replay = await fetch(`${base}/api/events`, {
+    headers: headers({ "Last-Event-ID": "0" }),
+    signal: replayAbort.signal,
+  });
+  const replayText = await readUntil(
+    replay.body!.getReader(),
+    (text) => text.includes('"action":"acknowledged"'),
+  );
+  replayAbort.abort();
+  assert.match(replayText, /id: \d+/);
+
+  await running.close();
+  const journal = await EventJournal.create(join(authHome, "event-journal.sqlite3"));
+  const persisted = journal.load().operations.find((operation) => operation.id === started.operation.id);
+  assert.equal(persisted?.acknowledgedAt, acknowledged.operation.acknowledgedAt);
+  journal.close();
+  running = undefined;
 });
 
 class FakeWebClient implements WebCodexClient {
@@ -360,4 +466,23 @@ async function waitFor(check: () => Promise<boolean>, timeoutMs = 1_000): Promis
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error("Condition was not met in time");
+}
+
+async function readUntil(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  complete: (text: string) => boolean,
+): Promise<string> {
+  const decoder = new TextDecoder();
+  let text = "";
+  const deadline = Date.now() + 2_000;
+  while (!complete(text) && Date.now() < deadline) {
+    const next = await Promise.race([
+      reader.read(),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("SSE replay timed out")), 500)),
+    ]);
+    if (next.done) break;
+    text += decoder.decode(next.value, { stream: true });
+  }
+  if (!complete(text)) throw new Error("SSE replay did not include the terminal operation");
+  return text;
 }

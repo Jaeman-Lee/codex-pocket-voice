@@ -2,6 +2,7 @@ import { isNativeApp } from "./native";
 import { assertCompatibleProtocol } from "./protocol";
 import { secureGet, secureRemove, secureSet } from "./secure-storage";
 import type { CodexEvent, DeviceId, DeviceInfo, DeviceTarget } from "./types";
+import { EventStreamState } from "./event-stream-state";
 
 interface ApiOptions {
   method?: string;
@@ -85,7 +86,7 @@ export async function removeDeviceTarget(id: DeviceId): Promise<void> {
   if (!target || target.builtIn) throw new Error("기본 실행 단말은 삭제할 수 없습니다.");
   deviceTargets = deviceTargets.filter((item) => item.id !== id);
   tokens.delete(id);
-  await Promise.all([saveDeviceTargets(), secureRemove(tokenKey(id))]);
+  await Promise.all([saveDeviceTargets(), secureRemove(tokenKey(id)), secureRemove(eventCursorKey(id))]);
   if (activeDevice === id) activeDevice = deviceTargets[0]!.id;
 }
 
@@ -148,8 +149,13 @@ export async function subscribeEvents(
   onEvent: (event: CodexEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {
+  const subscribedDevice = activeDevice;
+  const lastCursor = await loadEventCursor(subscribedDevice);
+  const streamState = new EventStreamState(lastCursor);
+  const headers = authorizedHeaders(false);
+  if (lastCursor !== undefined) headers["Last-Event-ID"] = String(lastCursor);
   const response = await fetch(apiUrl("/api/events"), {
-    headers: authorizedHeaders(false),
+    headers,
     signal,
   });
   if (!response.ok) await throwResponseError(response, true);
@@ -158,27 +164,34 @@ export async function subscribeEvents(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let pending = "";
-  while (!signal.aborted) {
-    const { value, done } = await reader.read();
-    pending += decoder.decode(value, { stream: !done });
-    let boundary = pending.indexOf("\n\n");
-    while (boundary >= 0) {
-      const frame = pending.slice(0, boundary);
-      pending = pending.slice(boundary + 2);
-      const data = frame.split("\n")
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trimStart())
-        .join("\n");
-      if (data) {
-        try {
-          onEvent(JSON.parse(data) as CodexEvent);
-        } catch {
-          // Ignore malformed or forward-compatible event frames.
+  let cursorWrite = Promise.resolve();
+  try {
+    while (!signal.aborted) {
+      const { value, done } = await reader.read();
+      pending += decoder.decode(value, { stream: !done });
+      let boundary = pending.indexOf("\n\n");
+      while (boundary >= 0) {
+        const frame = pending.slice(0, boundary);
+        pending = pending.slice(boundary + 2);
+        const applied = streamState.apply(frame);
+        if (applied.event) onEvent(applied.event);
+        if (applied.cursorAction?.type === "remove") {
+          cursorWrite = cursorWrite
+            .then(() => secureRemove(eventCursorKey(subscribedDevice)))
+            .catch(() => undefined);
+        } else if (applied.cursorAction?.type === "set") {
+          const cursor = applied.cursorAction.cursor;
+          cursorWrite = cursorWrite
+            .then(() => secureSet(eventCursorKey(subscribedDevice), String(cursor)))
+            .catch(() => undefined);
         }
+        boundary = pending.indexOf("\n\n");
       }
-      boundary = pending.indexOf("\n\n");
+      if (done) break;
     }
-    if (done) break;
+  } finally {
+    await cursorWrite;
+    reader.releaseLock();
   }
 }
 
@@ -309,4 +322,15 @@ async function discardInvalidToken(): Promise<void> {
 
 function tokenKey(device: DeviceId): string {
   return `gateway-token:${device}`;
+}
+
+function eventCursorKey(device: DeviceId): string {
+  return `event-cursor:${device}`;
+}
+
+async function loadEventCursor(device: DeviceId): Promise<number | undefined> {
+  const value = await secureGet(eventCursorKey(device)).catch(() => null);
+  if (!value || !/^[0-9]{1,16}$/.test(value)) return undefined;
+  const cursor = Number(value);
+  return Number.isSafeInteger(cursor) ? cursor : undefined;
 }

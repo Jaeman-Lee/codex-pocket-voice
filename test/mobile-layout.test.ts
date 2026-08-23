@@ -20,6 +20,7 @@ test("the app shell cannot grow beyond a narrow mobile viewport", async () => {
   const shellChildren = css.match(/\.app-shell > \* \{([^}]+)\}/)?.[1] ?? "";
   const composer = css.match(/\.composer-wrap \{([^}]+)\}/)?.[1] ?? "";
   const composerBar = css.match(/\.composer-bar \{([^}]+)\}/)?.[1] ?? "";
+  const unknownOperation = css.match(/\.unknown-operation \{([^}]+)\}/)?.[1] ?? "";
 
   assert.match(root, /max-width:\s*100%/);
   assert.match(root, /min-width:\s*0/);
@@ -31,6 +32,8 @@ test("the app shell cannot grow beyond a narrow mobile viewport", async () => {
   assert.match(composer, /max-width:\s*100%/);
   assert.match(composer, /overflow-y:\s*auto/);
   assert.match(composerBar, /flex-wrap:\s*wrap/);
+  assert.match(unknownOperation, /min-width:\s*0/);
+  assert.match(unknownOperation, /display:\s*flex/);
   assert.doesNotMatch(css, /touch-action:\s*pan-y\s*;/);
   assert.match(css, /touch-action:\s*pan-y pinch-zoom/);
 });

@@ -19,6 +19,7 @@ import { SessionHandoffStore } from "./session-handoff-store.js";
 import { InMemoryApprovalBroker } from "./approval-broker.js";
 import { createReadOnlyWorkspaceTools } from "./read-only-tools.js";
 import { LocalToolBroker } from "./tool-broker.js";
+import { EventJournal, type JournalReplayEvent } from "./event-journal.js";
 import {
   RunCoordinator,
   RunCoordinatorError,
@@ -54,6 +55,7 @@ export interface WebServerOptions {
   auth?: GatewayAuth;
   handoffs?: SessionHandoffStore;
   providers?: ProviderRegistry;
+  journal?: EventJournal;
 }
 
 export interface RunningWebServer {
@@ -105,6 +107,10 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   const handoffs = options.handoffs ?? await SessionHandoffStore.create(
     process.env.CODEX_POCKET_HANDOFF_STATE ?? join(dirname(auth.stateFile), "session-handoff.json"),
   );
+  const journal = options.journal ?? await EventJournal.create(
+    process.env.CODEX_POCKET_EVENT_JOURNAL ?? join(dirname(auth.stateFile), "event-journal.sqlite3"),
+    { keyFile: process.env.CODEX_POCKET_EVENT_JOURNAL_KEY_FILE },
+  );
   const approvals = options.providers ? undefined : new InMemoryApprovalBroker();
   const toolBroker = approvals
     ? new LocalToolBroker(createReadOnlyWorkspaceTools(options.paths), approvals, options.paths)
@@ -113,22 +119,24 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   const providerLogins = new ProviderLoginManager(providers);
   const runs = new RunCoordinator(providers, {
     assertWorkspace: (cwd) => options.paths.assertAllowed(cwd),
+    stateStore: journal,
   });
   const unsubscribe = runs.subscribe((event) => {
     if (event.type === "operation") {
-      broadcast(sseClients, {
+      const publicEvent = {
         type: "operation",
         action: event.action,
         operation: publicOperation(event.operation),
-      });
+      };
+      appendAndBroadcast(journal, sseClients, event.operation.id, event.operation.cwd, publicEvent);
       return;
     }
     const forwarded = sanitizeNotification(event.event);
-    if (forwarded) broadcast(sseClients, forwarded);
+    if (forwarded) appendAndBroadcast(journal, sseClients, event.operationId, event.cwd, forwarded);
   });
 
   const server = createServer((request, response) => {
-    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, sseClients).catch(
+    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, journal, sseClients).catch(
       (error) => sendError(response, error),
     );
   });
@@ -166,9 +174,14 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
       runs.close();
       for (const response of sseClients) response.end();
       sseClients.clear();
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      });
+      server.closeIdleConnections();
+      try {
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        });
+      } finally {
+        journal.close();
+      }
     },
   };
 }
@@ -184,6 +197,7 @@ async function handleRequest(
   providers: ProviderRegistry,
   providerLogins: ProviderLoginManager,
   runs: RunCoordinator,
+  journal: EventJournal,
   sseClients: Set<ServerResponse>,
 ): Promise<void> {
   setSecurityHeaders(response);
@@ -199,7 +213,7 @@ async function handleRequest(
       response.end();
       return;
     }
-    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, runs, sseClients);
+    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, runs, journal, sseClients);
     return;
   }
   await serveStatic(request, response, url.pathname, options.staticDir);
@@ -217,6 +231,7 @@ async function handleApi(
   providers: ProviderRegistry,
   providerLogins: ProviderLoginManager,
   runs: RunCoordinator,
+  journal: EventJournal,
   sseClients: Set<ServerResponse>,
 ): Promise<void> {
   if (request.method === "GET" && url.pathname === "/api/status") {
@@ -427,13 +442,30 @@ async function handleApi(
   }
 
   if (request.method === "GET" && url.pathname === "/api/events") {
+    const requestedCursor = eventCursor(request.headers["last-event-id"]);
+    const cursor = requestedCursor ?? journal.latestCursor();
+    const replay = journal.replayAfter(cursor);
     response.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-store",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
     });
-    response.write(`data: ${JSON.stringify({ type: "connected", at: new Date().toISOString() })}\n\n`);
+    response.write(`data: ${JSON.stringify({
+      type: "connected",
+      at: new Date().toISOString(),
+      journalCursor: replay.latestCursor,
+      replayed: replay.events.length,
+    })}\n\n`);
+    if (replay.gapBefore || replay.journalReset) {
+      response.write(`data: ${JSON.stringify({
+        type: "journal",
+        action: "reset",
+        reason: replay.journalReset ? "database_reset" : "retention_gap",
+        latestCursor: replay.latestCursor,
+      })}\n\n`);
+    }
+    for (const event of replay.events) response.write(journalFrame(event));
     sseClients.add(response);
     request.once("close", () => sseClients.delete(response));
     return;
@@ -562,6 +594,18 @@ async function handleApi(
       operation: publicOperation(cancelled.operation),
       interruptRequested: cancelled.interruptRequested,
     });
+    return;
+  }
+
+  const acknowledgeMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/acknowledge$/);
+  if (request.method === "POST" && acknowledgeMatch) {
+    assertSameOrigin(request);
+    await readJson(request, true);
+    const operationId = decodeURIComponent(acknowledgeMatch[1]!);
+    const operation = runs.get(operationId);
+    if (!operation) throw new HttpError(404, "Operation not found");
+    options.paths.assertAllowed(operation.cwd);
+    sendJson(response, 200, { operation: publicOperation(runs.acknowledge(operationId)) });
     return;
   }
 
@@ -787,7 +831,7 @@ function applyApiCors(request: IncomingMessage, response: ServerResponse): void 
   if (!allowedOrigin) return;
   response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
   response.setHeader("Access-Control-Allow-Methods", "DELETE, GET, POST, OPTIONS");
-  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID");
   response.setHeader("Vary", "Origin");
 }
 
@@ -843,6 +887,42 @@ function sendError(response: ServerResponse, error: unknown): void {
 function broadcast(clients: Set<ServerResponse>, event: Record<string, unknown>): void {
   const frame = `data: ${JSON.stringify(event)}\n\n`;
   for (const client of clients) client.write(frame);
+}
+
+function appendAndBroadcast(
+  journal: EventJournal,
+  clients: Set<ServerResponse>,
+  operationId: string,
+  cwd: string,
+  event: Record<string, unknown>,
+): void {
+  try {
+    const persisted = journal.appendEvent(operationId, cwd, event);
+    const frame = journalFrame(persisted);
+    for (const client of clients) client.write(frame);
+  } catch (error) {
+    process.stderr.write(`[codex-event-journal] Event persistence failed: ${safeInternalError(error)}\n`);
+    broadcast(clients, event);
+  }
+}
+
+function journalFrame(event: JournalReplayEvent): string {
+  return `id: ${event.cursor}\ndata: ${JSON.stringify(event.event)}\n\n`;
+}
+
+function eventCursor(value: string | string[] | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const normalized = Array.isArray(value) ? value[0] : value;
+  if (!normalized || !/^[0-9]{1,16}$/.test(normalized)) throw new HttpError(400, "Invalid Last-Event-ID");
+  const cursor = Number(normalized);
+  if (!Number.isSafeInteger(cursor)) throw new HttpError(400, "Invalid Last-Event-ID");
+  return cursor;
+}
+
+function safeInternalError(error: unknown): string {
+  return error instanceof Error && error.message
+    ? error.message.replace(/[\r\n]/g, " ").slice(0, 500)
+    : "unknown journal error";
 }
 
 function publicOperation(operation: RunOperation): Record<string, unknown> {

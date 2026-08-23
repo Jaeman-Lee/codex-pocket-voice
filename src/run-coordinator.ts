@@ -6,10 +6,10 @@ import type {
   ProviderRunStatus,
 } from "./providers/types.js";
 
-const DEFAULT_RETENTION_MS = 6 * 60 * 60_000;
-const DEFAULT_MAX_OPERATIONS = 100;
+const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60_000;
+const DEFAULT_MAX_OPERATIONS = 500;
 
-export type RunOperationStatus = "running" | ProviderRunStatus;
+export type RunOperationStatus = "running" | "unknown" | ProviderRunStatus;
 
 export interface RunOperation {
   id: string;
@@ -21,6 +21,7 @@ export interface RunOperation {
   status: RunOperationStatus;
   startedAt: string;
   completedAt?: string;
+  acknowledgedAt?: string;
   result?: Record<string, unknown>;
   error?: string;
 }
@@ -38,14 +39,33 @@ export interface RunListFilter {
   workspace?: string;
 }
 
+export interface RunIdempotencyRecord {
+  key: string;
+  fingerprint: string;
+  operationId: string;
+}
+
+export interface RestoredRunState {
+  operations: readonly RunOperation[];
+  idempotency: readonly RunIdempotencyRecord[];
+}
+
+export interface RunStateStore {
+  load(): RestoredRunState;
+  saveOperation(operation: RunOperation, idempotency?: RunIdempotencyRecord): void;
+  deleteOperation(operationId: string): void;
+}
+
 export type RunCoordinatorEvent =
   | {
       type: "operation";
-      action: "started" | "completed" | "failed";
+      action: "started" | "completed" | "failed" | "acknowledged";
       operation: RunOperation;
     }
   | {
       type: "provider";
+      operationId: string;
+      cwd: string;
       event: ProviderEvent;
     };
 
@@ -61,6 +81,7 @@ export interface RunCoordinatorOptions {
   retentionMs?: number;
   maxOperations?: number;
   assertWorkspace?: (cwd: string) => void;
+  stateStore?: RunStateStore;
 }
 
 interface IdempotencyEntry {
@@ -80,13 +101,16 @@ export class RunCoordinator {
   private readonly activeByConversation = new Map<string, string>();
   private readonly pendingConversations = new Set<string>();
   private readonly idempotency = new Map<string, IdempotencyEntry>();
+  private readonly idempotencyByOperation = new Map<string, RunIdempotencyRecord>();
   private readonly listeners = new Set<(event: RunCoordinatorEvent) => void>();
   private readonly now: () => number;
   private readonly createId: () => string;
   private readonly retentionMs: number;
   private readonly maxOperations: number;
   private readonly assertWorkspace: (cwd: string) => void;
+  private readonly stateStore?: RunStateStore;
   private readonly unsubscribeProvider: () => void;
+  private closed = false;
 
   constructor(
     private readonly providers: RunProviderRegistry,
@@ -97,6 +121,22 @@ export class RunCoordinator {
     this.retentionMs = options.retentionMs ?? DEFAULT_RETENTION_MS;
     this.maxOperations = options.maxOperations ?? DEFAULT_MAX_OPERATIONS;
     this.assertWorkspace = options.assertWorkspace ?? (() => undefined);
+    this.stateStore = options.stateStore;
+    const restored = this.stateStore?.load();
+    for (const operation of restored?.operations ?? []) {
+      this.assertWorkspace(operation.cwd);
+      this.operations.set(operation.id, cloneOperation(operation));
+    }
+    for (const entry of restored?.idempotency ?? []) {
+      if (this.operations.has(entry.operationId)) {
+        this.idempotencyByOperation.set(entry.operationId, { ...entry });
+        this.idempotency.set(entry.key, {
+          fingerprint: entry.fingerprint,
+          operationId: entry.operationId,
+        });
+      }
+    }
+    this.cleanup();
     this.unsubscribeProvider = providers.subscribe((event) => this.forwardProviderEvent(event));
   }
 
@@ -125,7 +165,7 @@ export class RunCoordinator {
       }
     }
 
-    const pending = this.startNew(command);
+    const pending = this.startNew(command, { key, fingerprint, operationId: "" });
     const entry: IdempotencyEntry = { fingerprint, pending };
     this.idempotency.set(key, entry);
     try {
@@ -164,12 +204,34 @@ export class RunCoordinator {
     return { operation: cloneOperation(operation), interruptRequested };
   }
 
+  acknowledge(operationId: string): RunOperation {
+    const operation = this.operations.get(operationId);
+    if (!operation) throw new RunCoordinatorError(404, "Operation not found");
+    if (operation.status !== "unknown") {
+      throw new RunCoordinatorError(409, "최종 상태를 확인할 수 없는 작업만 확인 처리할 수 있습니다.");
+    }
+    if (operation.acknowledgedAt) return cloneOperation(operation);
+    operation.acknowledgedAt = new Date(this.now()).toISOString();
+    try {
+      this.stateStore?.saveOperation(operation, this.idempotencyForOperation(operation.id));
+    } catch (error) {
+      delete operation.acknowledgedAt;
+      throw error;
+    }
+    this.emit({ type: "operation", action: "acknowledged", operation: cloneOperation(operation) });
+    return cloneOperation(operation);
+  }
+
   close(): void {
+    this.closed = true;
     this.unsubscribeProvider();
     this.listeners.clear();
   }
 
-  private async startNew(command: StartRunCommand): Promise<RunOperation> {
+  private async startNew(
+    command: StartRunCommand,
+    idempotency?: RunIdempotencyRecord,
+  ): Promise<RunOperation> {
     const requestedConversation = command.input.conversationId
       ? conversationKey(command.providerId, command.input.conversationId)
       : undefined;
@@ -202,6 +264,16 @@ export class RunCoordinator {
       };
       this.operations.set(operation.id, operation);
       this.activeByConversation.set(actualConversation, operation.id);
+      const operationIdempotency = idempotency ? { ...idempotency, operationId: operation.id } : undefined;
+      if (operationIdempotency) this.idempotencyByOperation.set(operation.id, operationIdempotency);
+      try {
+        this.stateStore?.saveOperation(operation, operationIdempotency);
+      } catch (error) {
+        this.operations.delete(operation.id);
+        this.activeByConversation.delete(actualConversation);
+        this.idempotencyByOperation.delete(operation.id);
+        throw error;
+      }
       this.emit({ type: "operation", action: "started", operation: cloneOperation(operation) });
       void this.settle(operation, begun);
       return operation;
@@ -223,18 +295,26 @@ export class RunCoordinator {
   private async settle(operation: RunOperation, begun: ProviderRun): Promise<void> {
     try {
       const completed = await begun.completion;
+      if (this.closed) return;
       operation.status = completed.status;
       operation.completedAt = new Date(this.now()).toISOString();
       operation.result = completed.result;
+      this.stateStore?.saveOperation(operation, this.idempotencyForOperation(operation.id));
       this.emit({
         type: "operation",
         action: completed.status === "failed" ? "failed" : "completed",
         operation: cloneOperation(operation),
       });
     } catch (error) {
+      if (this.closed) return;
       operation.status = "failed";
       operation.completedAt = new Date(this.now()).toISOString();
       operation.error = error instanceof Error ? error.message : String(error);
+      try {
+        this.stateStore?.saveOperation(operation, this.idempotencyForOperation(operation.id));
+      } catch (journalError) {
+        operation.error = `작업 상태와 event journal을 저장하지 못했습니다: ${safeError(journalError)}`;
+      }
       this.emit({ type: "operation", action: "failed", operation: cloneOperation(operation) });
     } finally {
       const key = conversationKey(operation.providerId, operation.conversationId);
@@ -245,8 +325,10 @@ export class RunCoordinator {
   private forwardProviderEvent(event: ProviderEvent): void {
     if (!event.conversationId) return;
     const key = conversationKey(event.providerId, event.conversationId);
-    if (!this.activeByConversation.has(key)) return;
-    this.emit({ type: "provider", event });
+    const operationId = this.activeByConversation.get(key);
+    const operation = operationId ? this.operations.get(operationId) : undefined;
+    if (!operationId || !operation) return;
+    this.emit({ type: "provider", operationId, cwd: operation.cwd, event });
   }
 
   private emit(event: RunCoordinatorEvent): void {
@@ -275,9 +357,16 @@ export class RunCoordinator {
 
   private removeOperation(operationId: string): void {
     this.operations.delete(operationId);
+    this.idempotencyByOperation.delete(operationId);
+    this.stateStore?.deleteOperation(operationId);
     for (const [key, entry] of this.idempotency) {
       if (entry.operationId === operationId) this.idempotency.delete(key);
     }
+  }
+
+  private idempotencyForOperation(operationId: string): RunIdempotencyRecord | undefined {
+    const entry = this.idempotencyByOperation.get(operationId);
+    return entry ? { ...entry } : undefined;
   }
 }
 
@@ -298,4 +387,10 @@ function fingerprintCommand(command: StartRunCommand): string {
 
 function cloneOperation(operation: RunOperation): RunOperation {
   return structuredClone(operation);
+}
+
+function safeError(error: unknown): string {
+  return error instanceof Error && error.message
+    ? error.message.slice(0, 500)
+    : "알 수 없는 저장 오류";
 }

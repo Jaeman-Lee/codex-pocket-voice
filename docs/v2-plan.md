@@ -22,9 +22,9 @@
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환 구현; UI 상태 모듈 분리 잔여 |
-| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key와 read-only 함수 도구 구현; write/command·durable journal 잔여 |
+| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key와 read-only 함수 도구 구현; write/command·durable multi-turn 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, read-only broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
-| Phase D | 진행 중 | encrypted snapshot용 Android SQLite와 rollback mirror 구현; event row·cursor replay·retention/export/delete 잔여 |
+| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay와 unknown 복구 구현; dashboard·approval inbox·export/delete 잔여 |
 | Phase E | 대기 | PocketLink와 출시 강화 |
 
 ## 2. 제품 정의
@@ -234,6 +234,13 @@ SSE 부분 전달, Provider stream 중단과 폰 프로세스 회수 뒤에도 `
 `waiting_for_approval`, `completed`, `failed`, `unknown`을 구분한다. `unknown` 상태를 임의로 성공 또는
 실패로 바꾸지 않는다.
 
+현재 Companion checkpoint는 operation, idempotency record와 UI에 전달 가능한 공통 event payload를
+AES-256-GCM으로 암호화한 SQLite에 기록한다. workspace 원문 대신 keyed HMAC index를 쓰고 별도 0600
+key 파일을 둔다. SSE는 `Last-Event-ID` 이후 event를 재전송하며 단말은 적용한 cursor를 보안 저장소에
+기록하고 중복 cursor를 버린다. retention gap이나 DB 재생성은 snapshot 재조회 신호를 보내며,
+Companion 재시작 전에 `running`이던 operation은 `unknown`으로 전환하고 사용자 확인 전 queue를 멈춘다.
+확인 결과는 operation에 암호화해 저장하고 `acknowledged` event로 다른 기기에도 전파한다.
+
 ## 10. 모바일 운영 경험
 
 ### 작업 대시보드
@@ -315,8 +322,10 @@ routing 선택지는 남아 있다.
 queue snapshot만 저장한다. 원래 key/device 대신 domain-separated SHA-256 index를 바인딩하고 payload
 크기를 제한한다. 기존
 IndexedDB/localStorage 기록은 읽기 migration 뒤에도 삭제하지 않으며, v2 field acceptance 전에는
-새 snapshot을 기존 저장소에도 mirror해 1.8.1 rollback에서 기록을 계속 읽을 수 있게 한다. 세부 run
-event row, `lastEventId` replay, retention/export/delete와 다중 프로젝트 대시보드는 다음 단계다.
+새 snapshot을 기존 저장소에도 mirror해 1.8.1 rollback에서 기록을 계속 읽을 수 있게 한다. Companion
+쪽에는 암호화 run event row, `Last-Event-ID` replay, 7일/500 operation/2,000 event 기본 retention과
+`unknown` 복구·확인 동기화를 구현했다. 사용자 retention 설정, export/delete와 다중 프로젝트
+대시보드는 다음 단계다.
 
 완료 조건: 여러 프로젝트 run을 동시에 추적하고 앱 종료·네트워크 전환 후 정확한 상태로 복구한다.
 

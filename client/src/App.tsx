@@ -278,7 +278,7 @@ export function App() {
       || promptQueueRef.current[0]?.requiresConfirmation) return;
     const timer = window.setTimeout(() => startNextQueuedPrompt(""), 250);
     return () => window.clearTimeout(timer);
-  }, [connection, promptQueue.length]);
+  }, [connection, operation?.id, operation?.status, promptQueue.length]);
 
   const showToast = useCallback((text: string) => {
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
@@ -356,7 +356,7 @@ export function App() {
         api<WorkspaceResponse>("/api/workspaces"),
         api<ProviderResponse>("/api/providers"),
         api<ModelResponse>("/api/models?provider=codex"),
-        api<{ operations: Operation[] }>("/api/runs?status=running")
+        api<{ operations: Operation[] }>("/api/runs")
           .catch(() => ({ operations: [] })),
       ]);
       setConnectionText(`${health.device.name} · ${health.userAgent}`);
@@ -429,10 +429,38 @@ export function App() {
           // The local work journal effect restores the last saved copy.
         }
       }
-      const activeOperation = runData.operations.find((item) => (item.providerId ?? "codex") === selectedProviderId
-        && item.cwd === selected
-        && (selectedProviderId !== "codex" || item.threadId === threadRef.current));
-      if (activeOperation) handleOperationEvent("started", activeOperation);
+      const currentOperation = operationRef.current;
+      const currentSnapshot = currentOperation
+        ? runData.operations.find((item) => item.id === currentOperation.id)
+        : undefined;
+      if (currentSnapshot) {
+        if (currentSnapshot.status === "unknown" && currentSnapshot.acknowledgedAt) {
+          operationRef.current = null;
+          setOperation(null);
+          stopRunning();
+        } else if (currentSnapshot.status === "unknown" && currentOperation?.status === "unknown") {
+          operationRef.current = currentSnapshot;
+          setOperation(currentSnapshot);
+          stopRunning();
+        } else {
+          handleOperationEvent(operationAction(currentSnapshot), currentSnapshot);
+        }
+      } else if (!currentOperation) {
+        const candidates = runData.operations.filter((item) => (item.status === "running"
+          || (item.status === "unknown" && !item.acknowledgedAt))
+          && (item.providerId ?? "codex") === selectedProviderId
+          && item.cwd === selected
+          && (selectedProviderId !== "codex" || !threadRef.current || item.threadId === threadRef.current));
+        const activeOperation = threadRef.current ? candidates[0] : candidates.length === 1 ? candidates[0] : undefined;
+        if (activeOperation) {
+          if (selectedProviderId === "codex" && !threadRef.current && activeOperation.threadId) {
+            setThreadId(activeOperation.threadId);
+            threadRef.current = activeOperation.threadId;
+            localStorage.setItem(storageKey("thread", deviceRef.current), activeOperation.threadId);
+          }
+          handleOperationEvent(operationAction(activeOperation), activeOperation);
+        }
+      }
       initializedRef.current = true;
       if (!onboardingShownRef.current && localStorage.getItem("codex-pocket-onboarding-complete") !== "true") {
         onboardingShownRef.current = true;
@@ -478,18 +506,35 @@ export function App() {
       await initialize();
     })();
     const abort = new AbortController();
-    void subscribeEvents(() => {
-      setConnection("online");
-      setConnectionText((current) => current.includes("복구") || current.includes("실패")
-        ? `${deviceLabel(device)}와 안전하게 연결됨`
-        : current);
-      if (!initializedRef.current) void initializeRef.current();
-    }, (event) => handleEventRef.current(event), abort.signal).catch((error) => {
-      if (abort.signal.aborted) return;
-      if (error instanceof PairingRequiredError) void requestPairing();
-      setConnection("pending");
-      setConnectionText(error instanceof PairingRequiredError ? "페어링 필요" : "연결을 복구하는 중…");
-    });
+    void (async () => {
+      let retry = 0;
+      while (!abort.signal.aborted) {
+        try {
+          await subscribeEvents(() => {
+            retry = 0;
+            setConnection("online");
+            setConnectionText((current) => current.includes("복구") || current.includes("실패")
+              ? `${deviceLabel(device)}와 안전하게 연결됨`
+              : current);
+            if (!initializedRef.current) void initializeRef.current();
+          }, (event) => handleEventRef.current(event), abort.signal);
+          if (abort.signal.aborted) return;
+          throw new Error("실시간 연결이 종료되었습니다.");
+        } catch (error) {
+          if (abort.signal.aborted) return;
+          if (error instanceof PairingRequiredError) {
+            void requestPairing();
+            setConnection("pending");
+            setConnectionText("페어링 필요");
+            return;
+          }
+          setConnection("pending");
+          setConnectionText("연결을 복구하는 중…");
+          retry += 1;
+          await abortableDelay(Math.min(15_000, 500 * (2 ** Math.min(retry, 5))), abort.signal);
+        }
+      }
+    })();
     return () => abort.abort();
   }, [authRevision, device, initialize, requestPairing, showToast]);
 
@@ -710,7 +755,10 @@ export function App() {
         scheduleOperationPoll(operationId);
         return;
       }
-      handleOperationEvent(data.operation.status === "failed" ? "failed" : "completed", data.operation);
+      handleOperationEvent(
+        data.operation.status === "unknown" ? "recovered" : data.operation.status === "failed" ? "failed" : "completed",
+        data.operation,
+      );
     } catch {
       scheduleOperationPoll(operationId);
     }
@@ -718,20 +766,41 @@ export function App() {
 
   function handleOperationEvent(action: string, nextOperation: Operation) {
     const operationProvider = nextOperation.providerId ?? "codex";
-    if (action === "started" && !operationRef.current) {
+    if (action === "acknowledged") {
+      if (operationRef.current?.id !== nextOperation.id) return;
+      operationRef.current = null;
+      setOperation(null);
+      stopRunning();
+      startNextQueuedPrompt(threadRef.current);
+      return;
+    }
+    if ((action === "started" || action === "recovered") && !operationRef.current) {
       if (nextOperation.cwd !== workspaceRef.current || operationProvider !== providerRef.current) return;
       if (operationProvider === "codex" && nextOperation.threadId !== threadRef.current) return;
       operationRef.current = nextOperation;
       setOperation(nextOperation);
       ensureLiveMessage();
-      setRunning("Codex가 프로젝트를 살펴보고 있습니다…");
-      scheduleOperationPoll(nextOperation.id);
     }
     if (!operationRef.current || nextOperation.id !== operationRef.current.id) return;
     operationRef.current = nextOperation;
     setOperation(nextOperation);
 
-    if (action === "completed") {
+    if (nextOperation.status === "running") {
+      setRunning(operationProvider === "codex"
+        ? "Codex가 프로젝트를 살펴보고 있습니다…"
+        : "AI가 프로젝트를 살펴보고 있습니다…");
+      scheduleOperationPoll(nextOperation.id);
+    } else if (action === "recovered" || nextOperation.status === "unknown") {
+      replaceMessage(ensureLiveMessage(), {
+        text: nextOperation.error || "Companion 재시작 전 작업의 최종 상태를 확인할 수 없습니다.",
+        pending: false,
+        error: true,
+      });
+      liveMessageIdRef.current = null;
+      liveTextRef.current = "";
+      latestDiffRef.current = "";
+      stopRunning();
+    } else if (action === "completed") {
       const result = nextOperation.result ?? {};
       finishLiveMessage(result.finalResponse || statusMessage(nextOperation.status), false, result);
       stopRunning();
@@ -752,6 +821,21 @@ export function App() {
 
   function handleEvent(event: CodexEvent) {
     if (event.type === "connected") return;
+    if (event.type === "journal" && event.action === "reset") {
+      const current = operationRef.current;
+      if (event.reason === "database_reset" && current?.status === "running") {
+        handleOperationEvent("recovered", {
+          ...current,
+          status: "unknown",
+          completedAt: new Date().toISOString(),
+          error: "Companion event journal이 교체되어 이전 실행의 최종 상태를 확인할 수 없습니다.",
+        });
+      }
+      initializedRef.current = false;
+      void initializeRef.current();
+      showToast("저널 보존 구간이 바뀌어 PC의 현재 작업 상태를 다시 확인합니다.");
+      return;
+    }
     if (event.type === "media" && event.media) {
       setAttachments((current) => current.map((item) => item.id === event.media!.id
         ? { ...item, ...event.media, previewUrl: item.previewUrl }
@@ -945,11 +1029,13 @@ export function App() {
     };
     setPrompt("");
     setAttachments([]);
-    if (connection !== "online" || operationRef.current?.status === "running") {
+    if (connection !== "online" || operationRef.current !== null) {
       const nextQueue = [...promptQueueRef.current, queued];
       updatePromptQueue(nextQueue);
       showToast(connection === "online"
-        ? `요청을 대기열 ${nextQueue.length}번째에 추가했습니다.`
+        ? operationRef.current?.status === "unknown"
+          ? `이전 작업 상태를 확인할 때까지 요청을 대기열 ${nextQueue.length}번째에 보관합니다.`
+          : `요청을 대기열 ${nextQueue.length}번째에 추가했습니다.`
         : `오프라인 대기열에 저장했습니다. ${deviceLabel(deviceRef.current)} 연결 후 자동 실행됩니다.`);
       return;
     }
@@ -995,10 +1081,21 @@ export function App() {
       });
       operationRef.current = data.operation;
       setOperation(data.operation);
+      if (queued.provider === "codex" && data.operation.threadId && !threadRef.current) {
+        setThreadId(data.operation.threadId);
+        threadRef.current = data.operation.threadId;
+        localStorage.setItem(storageKey("thread", deviceRef.current), data.operation.threadId);
+      }
       queueDispatchingRef.current = false;
       for (const item of queued.attachments) if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
-      scheduleOperationPoll(data.operation.id);
-      setRunning("Codex가 프로젝트를 살펴보고 있습니다…");
+      if (data.operation.status === "running") {
+        scheduleOperationPoll(data.operation.id);
+        setRunning(queued.provider === "codex"
+          ? "Codex가 프로젝트를 살펴보고 있습니다…"
+          : "AI가 프로젝트를 살펴보고 있습니다…");
+      } else {
+        handleOperationEvent(operationAction(data.operation), data.operation);
+      }
     } catch (error) {
       queueDispatchingRef.current = false;
       const message = errorMessage(error);
@@ -1084,6 +1181,24 @@ export function App() {
     try {
       await api(`/api/runs/${encodeURIComponent(current.id)}/interrupt`, { method: "POST", body: {} });
       setRunning("중단을 요청했습니다…");
+    } catch (error) {
+      showToast(errorMessage(error));
+    }
+  }
+
+  async function acknowledgeUnknownOperation() {
+    const current = operationRef.current;
+    if (current?.status !== "unknown") return;
+    const hadQueuedPrompts = promptQueueRef.current.length > 0;
+    try {
+      const data = await api<{ operation: Operation }>(`/api/runs/${encodeURIComponent(current.id)}/acknowledge`, {
+        method: "POST",
+        body: {},
+      });
+      if (operationRef.current?.id === current.id) handleOperationEvent("acknowledged", data.operation);
+      showToast(hadQueuedPrompts
+        ? "상태 확인을 마쳤습니다. 보관한 대기열을 다시 시작합니다."
+        : "상태 확인을 마쳤습니다. 새 작업을 시작할 수 있습니다.");
     } catch (error) {
       showToast(errorMessage(error));
     }
@@ -1188,6 +1303,7 @@ export function App() {
         const active = await api<{ operation: Operation }>(`/api/runs/${encodeURIComponent(pending.operationId)}`)
           .catch(() => null);
         if (active?.operation.status === "running") handleOperationEvent("started", active.operation);
+        else if (active?.operation.status === "unknown") handleOperationEvent("recovered", active.operation);
         else if (active?.operation.status === "failed") handleOperationEvent("failed", active.operation);
       }
       let claimWarning = "";
@@ -1229,6 +1345,12 @@ export function App() {
     setEffort("");
     setMessages([]);
     messagesRef.current = [];
+    operationRef.current = null;
+    setOperation(null);
+    stopRunning();
+    liveMessageIdRef.current = null;
+    liveTextRef.current = "";
+    latestDiffRef.current = "";
     promptQueueRef.current = [];
     setPromptQueue([]);
     journalQueueReadyRef.current = null;
@@ -1250,6 +1372,10 @@ export function App() {
   }
 
   async function selectProvider(nextProvider: ProviderId) {
+    if (operationRef.current) {
+      showToast("현재 작업 상태를 확인한 뒤 AI 제공자를 바꿔 주세요.");
+      return;
+    }
     const info = providers.find((item) => item.id === nextProvider);
     if (!info?.available) {
       showToast(info?.detail ?? "이 AI 연결은 현재 사용할 수 없습니다.");
@@ -1404,6 +1530,10 @@ export function App() {
   }
 
   async function selectWorkspace(path: string) {
+    if (operationRef.current) {
+      showToast("현재 작업 상태를 확인한 뒤 프로젝트를 바꿔 주세요.");
+      return;
+    }
     setWorkspace(path);
     workspaceRef.current = path;
     localStorage.setItem(storageKey("workspace", deviceRef.current), path);
@@ -1418,6 +1548,10 @@ export function App() {
   }
 
   async function selectThread(id: string) {
+    if (operationRef.current) {
+      showToast("현재 작업 상태를 확인한 뒤 대화를 바꿔 주세요.");
+      return;
+    }
     setThreadId(id);
     threadRef.current = id;
     if (id) localStorage.setItem(storageKey("thread", deviceRef.current), id);
@@ -1684,7 +1818,7 @@ export function App() {
           <span>{tr("target")}</span>
           <select
             value={device}
-            disabled={activity.running || controlsCollapsed}
+            disabled={operation !== null || controlsCollapsed}
             aria-label="Codex 실행 단말 선택"
             onChange={(event) => selectDevice(event.target.value as DeviceId)}
           >
@@ -1695,7 +1829,7 @@ export function App() {
           <span>{tr("provider")}</span>
           <select
             value={provider}
-            disabled={activity.running || controlsCollapsed}
+            disabled={operation !== null || controlsCollapsed}
             aria-label="AI 제공자 선택"
             title={activeProvider(providers, provider)?.detail}
             onChange={(event) => void selectProvider(event.target.value as ProviderId)}
@@ -1711,14 +1845,14 @@ export function App() {
         <label>
           <span>{tr("project")}</span>
           <div className="select-row">
-            <select value={workspace} disabled={activity.running || controlsCollapsed} aria-label="프로젝트 선택" onChange={(event) => void selectWorkspace(event.target.value)}>
+            <select value={workspace} disabled={operation !== null || controlsCollapsed} aria-label="프로젝트 선택" onChange={(event) => void selectWorkspace(event.target.value)}>
               {workspaces.length === 0 && <option value="">{tr("noProject")}</option>}
               {workspaces.map((item) => <option key={item.path} value={item.path}>{item.name}</option>)}
             </select>
             <button
               className="icon-button"
               type="button"
-              disabled={activity.running || controlsCollapsed}
+              disabled={operation !== null || controlsCollapsed}
               aria-label={`${deviceLabel(device)}에 새 프로젝트 만들기`}
               onClick={() => {
                 setProjectCreatorError(creationLocations.length === 0
@@ -1732,13 +1866,13 @@ export function App() {
         <label>
           <span>{tr("conversation")}</span>
           <div className="select-row">
-            <select value={threadId} disabled={activity.running || controlsCollapsed} aria-label="Codex 대화 선택" onChange={(event) => void selectThread(event.target.value)}>
+            <select value={threadId} disabled={operation !== null || controlsCollapsed} aria-label="Codex 대화 선택" onChange={(event) => void selectThread(event.target.value)}>
               <option value="">{tr("newConversation")}</option>
               {threads.map((thread) => (
                 <option key={thread.id} value={thread.id}>{short(thread.name || thread.preview || tr("unnamed"), 42)}</option>
               ))}
             </select>
-            <button className="icon-button" type="button" disabled={controlsCollapsed} aria-label="대화 새로고침" onClick={() => void loadThreads(workspaceRef.current, true)}>↻</button>
+            <button className="icon-button" type="button" disabled={operation !== null || controlsCollapsed} aria-label="대화 새로고침" onClick={() => void loadThreads(workspaceRef.current, true)}>↻</button>
           </div>
         </label>
       </section>
@@ -1992,6 +2126,16 @@ export function App() {
             <button className="stop-button" type="button" onClick={() => void stopOperation()}>중단</button>
           </div>
           {activity.detail && <pre>{activity.detail}</pre>}
+        </section>
+      )}
+
+      {operationBelongsToSession(operation, workspace, threadId) && operation?.status === "unknown" && (
+        <section className="unknown-operation" role="status">
+          <div>
+            <strong>이전 작업 상태 확인 필요</strong>
+            <span>Companion 재시작 전 실행은 성공이나 실패로 단정하지 않았습니다. PC 결과와 Git 상태를 확인하세요.</span>
+          </div>
+          <button type="button" onClick={() => void acknowledgeUnknownOperation()}>확인하고 계속</button>
         </section>
       )}
 
@@ -2253,9 +2397,18 @@ function workspaceName(path: string): string {
 }
 
 function statusMessage(status: Operation["status"]): string {
+  if (status === "unknown") return "작업의 최종 상태를 확인할 수 없습니다.";
   if (status === "interrupted") return "작업이 중단되었습니다.";
   if (status === "failed") return "작업이 실패했습니다.";
   return "작업이 완료되었습니다.";
+}
+
+function operationAction(operation: Operation): "started" | "recovered" | "completed" | "failed" | "acknowledged" {
+  if (operation.acknowledgedAt) return "acknowledged";
+  if (operation.status === "running") return "started";
+  if (operation.status === "unknown") return "recovered";
+  if (operation.status === "failed") return "failed";
+  return "completed";
 }
 
 function mediaStatusText(item: PendingAttachment, device: DeviceId): string {
@@ -2267,6 +2420,27 @@ function mediaStatusText(item: PendingAttachment, device: DeviceId): string {
     return `분석 완료 · ${item.frameCount}개 대표 장면`;
   }
   return `${Math.max(1, Math.round(item.size / 1024))}KB · 전송 완료`;
+}
+
+function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    let settled = false;
+    let timer = 0;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    signal.addEventListener("abort", finish, { once: true });
+    timer = window.setTimeout(finish, milliseconds);
+    if (signal.aborted) finish();
+  });
 }
 
 function providerAliasKey(device: DeviceId, provider: ProviderId): string {

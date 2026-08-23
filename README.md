@@ -22,6 +22,7 @@
 - 각 PC가 제공하는 Codex 모델과 지원 추론 성능을 실시간 조회·선택
 - 실행 중에도 다음 프롬프트와 첨부를 대기열에 추가해 순차 실행
 - 단말·프로젝트·대화별 로컬 작업 저널과 오프라인 프롬프트 대기열
+- 암호화 Companion event journal과 SSE cursor 기반 네트워크·프로세스 재연결 복구
 - Codex·Claude Code 등을 독립 어댑터로 확장할 수 있는 AI 제공자 모듈
 - 설치 확인·브라우저 로그인·비용 없는 연결 테스트를 모은 AI 연결 센터
 - 이미지 첨부와 영상 업로드, 로컬 Qwen3-VL 4B 대표 장면 분석
@@ -34,6 +35,8 @@
 - 선택적으로 사용할 수 있는 안전 범위 MCP 서버
 - 만료되는 코드와 Android Keystore를 사용하는 장치 페어링
 - 여러 Linux Companion 등록과 앱 내 Linux 도구 진단
+
+v2 저널의 저장 범위, 암호화 키와 재연결 동작은 [Event journal](docs/event-journal.md)에 정리했습니다.
 
 ## 구조
 

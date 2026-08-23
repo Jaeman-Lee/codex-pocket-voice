@@ -9,6 +9,8 @@ The app stores the following locally:
 - paired device identifiers and encrypted gateway tokens;
 - selected projects, models, language preferences, and device labels;
 - encrypted conversation summaries and queued prompts;
+- encrypted run operations and replayable common events on the selected Linux
+  Companion for the configured retention period;
 - uploaded media and generated frames on the target device for the configured
   retention period;
 - CLI-owned session and authentication data managed by Codex or Claude Code on

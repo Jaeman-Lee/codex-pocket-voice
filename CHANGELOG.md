@@ -40,6 +40,15 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   식별자 대신 domain-separated SHA-256 index를 바인딩하며 payload 크기를 제한한다.
 - 기존 IndexedDB/localStorage 기록은 읽을 때 SQLite로 복사하되 삭제하지 않고, v2 검증 중 새 저장은
   기존 저장소에도 함께 기록해 v1.8.1 rollback의 로컬 기록 호환을 유지한다.
+- Linux Companion의 operation과 공통 run event를 별도 0600 key로 AES-256-GCM 암호화하는 SQLite
+  journal을 추가했다. workspace는 keyed HMAC index로만 남기고 prompt, 결과, idempotency key와 SSE
+  payload는 평문 DB에 기록하지 않는다.
+- SSE `Last-Event-ID` replay, 단말별 cursor 보존·중복 제거와 지수 backoff 재연결을 추가했다.
+  Companion 재시작 당시 `running`이던 작업은 성공/실패로 추정하지 않고 `unknown`으로 복구하며,
+  사용자가 결과를 확인하기 전에는 해당 프로젝트 대기열을 실행하지 않는다. 확인 결과는 Companion에
+  암호화해 보존하고 모든 연결 기기에 동기화해 앱 재시작 뒤 같은 확인을 반복하지 않는다.
+- journal DB·키는 같은 사용자 소유의 private directory와 일반 단일-link 파일만 허용하며, 평문으로
+  필요한 status·timestamp·workspace index도 ciphertext의 AES-GCM AAD에 묶어 변조를 감지한다.
 - 이 기준선은 CI·개발용이며 v1.8.1 설치본이나 실행 중인 Companion을 교체하지 않는다.
 
 ## 1.8.2 hotfix candidate — project-scoped session handoff

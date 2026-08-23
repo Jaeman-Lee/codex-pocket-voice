@@ -16,7 +16,7 @@ export interface DeviceInfo {
   kind: "linux" | "android";
   name: string;
 }
-export type OperationStatus = "running" | "completed" | "interrupted" | "failed";
+export type OperationStatus = "running" | "unknown" | "completed" | "interrupted" | "failed";
 
 export interface Workspace {
   path: string;
@@ -160,6 +160,9 @@ export interface Operation {
   cwd: string;
   prompt: string;
   status: OperationStatus;
+  startedAt?: string;
+  completedAt?: string;
+  acknowledgedAt?: string;
   error?: string;
   result?: RunResult;
 }
@@ -229,6 +232,7 @@ export interface CodexEvent {
   type: string;
   providerId?: ProviderId;
   action?: string;
+  reason?: "database_reset" | "retention_gap" | "persistence_failure";
   handoffId?: string;
   operation?: Operation;
   handoff?: SessionHandoff;
