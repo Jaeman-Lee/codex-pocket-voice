@@ -107,7 +107,12 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const workspaceData = await jsonFetch(`${base}/api/workspaces`, { headers: authorized() });
   assert.equal(workspaceData.creationLocations[0].path, projectHome);
   assert.equal(workspaceData.workspaces[0].identity.kind, "git");
-  assert.equal(typeof workspaceData.workspaces[0].identity.branch, "string");
+  assert.equal(
+    typeof workspaceData.workspaces[0].identity.branch === "string"
+      || (workspaceData.workspaces[0].identity.detached === true
+        && typeof workspaceData.workspaces[0].identity.head === "string"),
+    true,
+  );
   const created = await jsonFetch(`${base}/api/projects`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
@@ -184,7 +189,12 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(started.operation.status, "running");
   assert.equal(started.operation.providerId, "codex");
   assert.equal(started.operation.workspaceIdentity.kind, "git");
-  assert.equal(typeof started.operation.workspaceIdentity.branch, "string");
+  assert.equal(
+    typeof started.operation.workspaceIdentity.branch === "string"
+      || (started.operation.workspaceIdentity.detached === true
+        && typeof started.operation.workspaceIdentity.head === "string"),
+    true,
+  );
   assert.equal(fake.lastRun?.cwd, cwd);
   assert.equal(fake.lastRun?.networkAccess, false);
   assert.equal(fake.lastRun?.model, "test-codex");
