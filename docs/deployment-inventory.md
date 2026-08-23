@@ -19,6 +19,8 @@ Workspace migration decision: Linux PC의 Git clone을 유일한 주 개발 작�
 | Component | Version / revision | State |
 | --- | --- | --- |
 | Runtime code baseline | `5c4d0bb` on `agent/react-capacitor-android` | pushed; local checks passing |
+| Primary development workspace | Linux PC Git clone at `f08d9e7` | build, 16 tests, 3 real integrations and push dry-run passing |
+| Termux workspace | lightweight Git mirror at `f08d9e7` | reproducible dependencies and build output scheduled for removal |
 | Pull request | Draft PR #1 into `main` | Linux and Android checks passing; field test pending |
 | Android APK | 1.8.0 signed candidate | CI artifact, checksum and CycloneDX SBOM produced; 1.7.4 remains installed until update |
 | Linux Companion | 1.7.4 | running and protocol 2 health check passing |
@@ -34,9 +36,10 @@ Workspace migration decision: Linux PC의 Git clone을 유일한 주 개발 작�
 | Termux Git mirror | lightweight control and recovery | source mirror, tunnel scripts, Git metadata only |
 | Android Downloads | field-test artifacts | one current APK set, one rollback APK set, temporary legacy archive |
 
-PC Codex CLI의 버전이 저장소의 app-server schema 기준보다 앞서면 이관과 섞어 자동 갱신하지
-않는다. 별도 patch로 분류하고 바인딩 재생성, 실제 app-server 통합 검사와 APK 버전 판단을
-거친다.
+PC Codex CLI `0.149.0`은 저장소의 app-server schema 기준 `0.148.1`보다 앞서 있다. 일반
+타입·단위·실제 app-server 통합 검사는 PC에서 통과했고 schema 일치 검사만 예상대로 실패했다.
+이관과 섞어 자동 갱신하지 않으며, 별도 `1.8.1 patch` 후보로 분류해 바인딩 재생성, 실제
+app-server 통합 검사와 새 APK 판단을 거친다.
 
 `1.8.0`는 아직 정식 Release가 아니다. 사용자 현장 테스트가 끝난 뒤 PR을 병합하고 같은
 병합 커밋에 `v1.8.0` 태그와 GitHub Release를 만들어야 한다. Companion을 1.8.0로 재시작하면
