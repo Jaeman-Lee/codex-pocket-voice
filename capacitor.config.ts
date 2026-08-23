@@ -9,7 +9,8 @@ const config: CapacitorConfig = {
     cleartext: true,
   },
   android: {
-      allowMixedContent: false,
+    allowMixedContent: false,
+    zoomEnabled: true,
   },
 };
 

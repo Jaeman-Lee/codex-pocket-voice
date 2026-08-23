@@ -2,6 +2,14 @@
 
 이 문서는 사용자가 설치할 수 있는 배포판과 개발 중 CI 산출물을 구분한다.
 
+## 1.8.1 patch candidate — mobile viewport containment
+
+Update decision: 스마트폰 화면을 넘는 레이아웃을 고치는 버그 수정이므로
+`patch`로 분류하고 `1.8.1`/Android `versionCode 10801`로 올린다. 현재 Draft PR의
+`agent/react-capacitor-android` 브랜치에서 검증한다. `1.8.1`을 새 current APK
+candidate로 두고, 검증된 `1.7.4`를 rollback 세트로 유지하며, `1.8.0` candidate는
+설치 혼동이 없도록 superseded 보관 대상으로 전환한다.
+
 ## 1.8.0 candidate — validation
 
 GitHub Release나 Git tag로 확정하지 않은 현재 시험 기준선이다.
