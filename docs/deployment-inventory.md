@@ -52,7 +52,8 @@ Fleet는 exact registered device와 token으로 최대 8대의 server-authored `
 않는다. prompt·workspace·승인 상세·복구 error는 Fleet 응답 경계를 통과하지 않고 실행/승인/unknown/실패/복구/보존
 count만 보여 주며 모든 승인·정책·파일 변경은
 사용자가 해당 PC를 연 뒤에만 가능하다. offline, pairing, identity review와 API 미지원을 구분하며 다른
-PC로 자동 우회하지 않는다. 합성 multi-origin Companion·모바일 fixture만 검사하고 APK 전달·설치, 실제
+PC로 자동 우회하지 않는다. PWA CSP/CORS는 loopback 동적 port의 authenticated GET만 허용하고 cross-port
+write는 계속 차단한다. 합성 multi-origin Companion·모바일 fixture만 검사하고 APK 전달·설치, 실제
 Provider 호출과 Companion 재시작은 하지 않았다. current v1 후보 1.8.2, staged v1.8.4와 검증된 rollback
 1.8.1은 변경·삭제하지 않는다.
 

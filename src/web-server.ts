@@ -63,6 +63,14 @@ const MAX_EVENT_TEXT = 80_000;
 const MAX_NOTIFICATION_REPLAY_EVENTS = 16;
 const THREAD_WRITER_RELEASE_RETRY_DELAYS_MS = [0, 50, 250] as const;
 const NATIVE_APP_ORIGINS = new Set(["http://localhost", "https://localhost", "capacitor://localhost"]);
+const LOOPBACK_CONNECT_SOURCES = [
+  "http://127.0.0.1:*",
+  "https://127.0.0.1:*",
+  "http://localhost:*",
+  "https://localhost:*",
+  "http://[::1]:*",
+  "https://[::1]:*",
+].join(" ");
 const STATIC_FILES = new Map([
   ["/", "index.html"],
   ["/index.html", "index.html"],
@@ -1584,7 +1592,7 @@ async function serveFile(
 function setSecurityHeaders(response: ServerResponse): void {
   response.setHeader(
     "Content-Security-Policy",
-    "default-src 'self'; connect-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+    `default-src 'self'; connect-src 'self' ${LOOPBACK_CONNECT_SOURCES}; img-src 'self' data:; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
   );
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("X-Frame-Options", "DENY");
@@ -1617,16 +1625,27 @@ function assertWriteOrigin(request: IncomingMessage): void {
 function applyApiCors(request: IncomingMessage, response: ServerResponse): void {
   const origin = request.headers.origin;
   if (!origin) return;
-  let allowedOrigin = NATIVE_APP_ORIGINS.has(origin) ? origin : "";
+  let nativeOrigin = NATIVE_APP_ORIGINS.has(origin);
+  let allowedOrigin = nativeOrigin ? origin : "";
   try {
-    const parsedOrigin = new URL(origin).origin;
-    if (!allowedOrigin && NATIVE_APP_ORIGINS.has(parsedOrigin)) allowedOrigin = parsedOrigin;
+    const parsed = new URL(origin);
+    if (!allowedOrigin && NATIVE_APP_ORIGINS.has(parsed.origin)) {
+      allowedOrigin = parsed.origin;
+      nativeOrigin = true;
+    }
+    if (!allowedOrigin && (parsed.protocol === "http:" || parsed.protocol === "https:")
+        && isLoopbackName(parsed.hostname)) {
+      allowedOrigin = parsed.origin;
+    }
   } catch {
     return;
   }
   if (!allowedOrigin) return;
   response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
-  response.setHeader("Access-Control-Allow-Methods", "DELETE, GET, PATCH, POST, PUT, OPTIONS");
+  response.setHeader(
+    "Access-Control-Allow-Methods",
+    nativeOrigin ? "DELETE, GET, PATCH, POST, PUT, OPTIONS" : "GET, OPTIONS",
+  );
   response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID");
   response.setHeader("Vary", "Origin");
 }

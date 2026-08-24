@@ -224,6 +224,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(page.status, 200);
   assert.match(await page.text(), /Codex Pocket/);
   assert.match(page.headers.get("content-security-policy") ?? "", /default-src 'self'/);
+  assert.match(page.headers.get("content-security-policy") ?? "", /connect-src 'self' http:\/\/127\.0\.0\.1:\*/);
   assert.match(page.headers.get("permissions-policy") ?? "", /microphone=\(self\)/);
 
   const unauthenticated = await fetch(`${base}/api/health`);
@@ -419,6 +420,14 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.match(nativePreflight.headers.get("access-control-allow-headers") ?? "", /Last-Event-ID/);
   assert.match(nativePreflight.headers.get("access-control-allow-methods") ?? "", /PATCH/);
   assert.match(nativePreflight.headers.get("access-control-allow-methods") ?? "", /PUT/);
+  const fleetOrigin = "http://127.0.0.1:43210";
+  const fleetPreflight = await fetch(`${base}/api/fleet-summary`, {
+    method: "OPTIONS",
+    headers: { Origin: fleetOrigin, "Access-Control-Request-Method": "GET" },
+  });
+  assert.equal(fleetPreflight.status, 204);
+  assert.equal(fleetPreflight.headers.get("access-control-allow-origin"), fleetOrigin);
+  assert.equal(fleetPreflight.headers.get("access-control-allow-methods"), "GET, OPTIONS");
 
   const streamAbort = new AbortController();
   const stream = await fetch(`${base}/api/events`, { signal: streamAbort.signal, headers: authorized() });
@@ -510,6 +519,17 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   });
   assert.doesNotMatch(JSON.stringify(fleetSummary), /change a file|thread-web|tool-call-web|workspace/);
   assert.equal((await fetch(`${base}/api/fleet-summary`)).status, 401);
+  const crossLoopbackFleet = await fetch(`${base}/api/fleet-summary`, {
+    headers: authorized({ Origin: fleetOrigin }),
+  });
+  assert.equal(crossLoopbackFleet.status, 200);
+  assert.equal(crossLoopbackFleet.headers.get("access-control-allow-origin"), fleetOrigin);
+  const crossLoopbackWrite = await fetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: fleetOrigin }),
+    body: JSON.stringify({ prompt: "must remain blocked", cwd }),
+  });
+  assert.equal(crossLoopbackWrite.status, 403);
   const crossOriginApproval = await fetch(`${base}/api/approvals/approval-web/decision`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "https://evil.example" }),

@@ -20,6 +20,8 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   활성 PC를 전환하지 않는다. 잘못된 device ID는 첫 PC로 fallback하지 않고 거절하고, 한 PC의 401은
   그 PC token만 제거한다. PC별 카드에는 실행·승인·확인·실패·복구 필요·보존 건수만 남기고 prompt,
   workspace 경로, 승인 상세와 복구 오류는 Fleet 응답 경계를 통과시키거나 state에 저장하지 않는다.
+  PWA 보안 정책은 loopback host의 동적 포트 연결과 인증된 GET만 허용하고 다른 loopback port의 쓰기는
+  CORS preflight와 server origin 검사에서 계속 차단한다.
 - Fleet는 읽기 전용이다. 다른 PC의 승인·정책·파일 변경은 카드에서 수행하지 않으며 `이 PC 작업 열기`로
   명시적으로 전환하고 해당 Companion 초기화가 끝난 뒤 기존 상세 대시보드에서만 실행한다. offline,
   pairing, PocketLink identity review와 구형 Companion의 API 미지원 상태를 서로 구분하고 자동 우회하지 않는다.
