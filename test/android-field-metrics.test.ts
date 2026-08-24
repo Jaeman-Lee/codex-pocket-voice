@@ -19,9 +19,20 @@ import {
   type AdbExecutor,
   type AndroidFieldReport,
 } from "../src/android-field-metrics.js";
+import type { FunctionalCandidateIdentity } from "../src/functional-field-acceptance.js";
 
 const packageName = "io.github.jaemanlee.codexpocketvoice.stable";
 const privateSerial = "device-secret-serial";
+const candidate: FunctionalCandidateIdentity = {
+  applicationId: packageName,
+  version: "2.0.0",
+  versionCode: 20_000,
+  channel: "stable",
+  commit: "a".repeat(40),
+  manifestSha256: "b".repeat(64),
+  apkSha256: "c".repeat(64),
+  signingCertificateSha256: "d".repeat(64),
+};
 
 test("Android field parsers accept bounded API 30 diagnostics and exact app processes", () => {
   assert.deepEqual(parsePackageIdentity(`
@@ -114,18 +125,26 @@ test("field measurement uses only read-only dumpsys queries and emits aggregate 
   const executor = new FixtureAdbExecutor();
   let monotonic = 0;
   const report = await measureAndroidFieldAcceptance({
-    packageName,
-    expectedVersionName: "2.0.0",
-    expectedVersionCode: 20_000,
+    candidate,
+    transport: "direct_lan",
     durationSeconds: 60,
     intervalSeconds: 20,
     mode: "observation",
   }, {
     executor,
     monotonicMs: () => monotonic,
+    wallClockMs: () => Date.parse("2026-08-25T00:00:00.000Z") + monotonic,
     sleep: async (milliseconds) => { monotonic += milliseconds; },
   });
 
+  assert.equal(report.schemaVersion, 2);
+  assert.equal(report.evidenceKind, "adb_aggregate_measurement");
+  assert.deepEqual(report.candidate, candidate);
+  assert.equal(report.transport, "direct_lan");
+  assert.deepEqual(report.testWindow, {
+    startedAt: "2026-08-25T00:00:00.000Z",
+    completedAt: "2026-08-25T00:01:00.000Z",
+  });
   assert.equal(report.measurement.actualDurationSeconds, 60);
   assert.equal(report.measurement.scheduledSamples, 4);
   assert.equal(report.measurement.processPresencePercent, 100);
@@ -196,6 +215,34 @@ test("release verdict enforces every documented low-load threshold and fails una
   );
 });
 
+test("field measurement rejects an unbound candidate or unknown transport before ADB", async () => {
+  const executor: AdbExecutor = {
+    async execute() {
+      throw new Error("ADB must not run for invalid field identity");
+    },
+  };
+  await assert.rejects(
+    measureAndroidFieldAcceptance({
+      candidate: { ...candidate, apkSha256: "invalid" },
+      transport: "direct_lan",
+      durationSeconds: 60,
+      intervalSeconds: 20,
+      mode: "observation",
+    }, { executor }),
+    /candidate identity is invalid/,
+  );
+  await assert.rejects(
+    measureAndroidFieldAcceptance({
+      candidate,
+      transport: "ssh" as never,
+      durationSeconds: 60,
+      intervalSeconds: 20,
+      mode: "observation",
+    }, { executor }),
+    /transport is invalid/,
+  );
+});
+
 test("field report is owner-only, create-once, bounded, and contains no raw fixture values", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "codex-pocket-android-field-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -218,9 +265,8 @@ test("ADB failures are redacted before they cross the measurement boundary", asy
   };
   await assert.rejects(
     measureAndroidFieldAcceptance({
-      packageName,
-      expectedVersionName: "2.0.0",
-      expectedVersionCode: 20_000,
+      candidate,
+      transport: "p2p",
       durationSeconds: 60,
       intervalSeconds: 20,
       mode: "observation",
@@ -269,8 +315,15 @@ class FixtureAdbExecutor implements AdbExecutor {
 
 function passingReport(): AndroidFieldReport {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "android_field_acceptance",
+    evidenceKind: "adb_aggregate_measurement",
+    candidate,
+    transport: "outbound_relay",
+    testWindow: {
+      startedAt: "2026-08-25T00:00:00.000Z",
+      completedAt: "2026-08-25T01:00:01.000Z",
+    },
     app: { packageName, versionName: "2.0.0", versionCode: 20_000 },
     measurement: {
       requestedDurationSeconds: 3_600,

@@ -10,6 +10,17 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Candidate-bound Android low-load evidence fix는 기존 60분 ADB report가 SemVer만 기록해 같은
+  `2.0.0`의 다른 APK build와 direct LAN/P2P/outbound relay를 구분하지 못한 release evidence 결함을
+  고치는 internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/
+  Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
+  APK 전달·설치, 실제 측정·Provider 호출과 Companion 재시작은 하지 않으며 current v1 후보 1.8.2,
+  staged v1.8.4, 검증된 1.8.1 rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- pre-handoff 저부하 report schema를 2로 교체해 canonical signed manifest의 전체 candidate identity,
+  clean source commit, APK digest, exact `direct_lan`/`p2p`/`outbound_relay`와 측정 시작·종료 시각을
+  기록한다. manifest·transport 누락, source/설치 package/versionCode drift는 ADB 측정 전에 실패한다.
+  `release:check`의 단위 검사 297개와 실제 app-server 통합 3개, production build·schema 일치·SBOM이
+  통과했다.
 - Functional field acceptance harness는 기존 v2 physical/provider release checklist를 exact candidate에
   묶어 반복 가능하게 검증하는 developer validation이므로 internal compatibility `patch`다. 아직 전달하지
   않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,

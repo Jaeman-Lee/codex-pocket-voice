@@ -41,7 +41,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Spoken settings review | one exact project/provider/model command | dedicated one-shot capture, ambiguity rejection, inert current→target review, touch-only apply and stale owner/catalog revalidation implemented; Chromium CI and physical voice acceptance pending |
 | Mobile browser acceptance | Playwright Chromium on Node 22 | production build plus real pairing/Gateway/SSE/run/approval path covers 320/360/412px, 150% text, keyboard resize, rotation, long diff and touch decline line-feedback payload; synthetic only, device acceptance still pending |
 | Android work notifications | opt-in connectedDevice service | maximum 8 encrypted loopback subscriptions, notification-only authenticated SSE, durable cursor/replay freshness, default-network-triggered bounded reconnect and generic retained-operation navigation implemented; API 30 token/bounds/consume/extra-scrub plus system-tray tap automated, physical locked-screen/process-kill/network-switch acceptance pending |
-| Android low-load gate | schema 1 aggregate ADB report | read-only 60-minute CPU/PSS/battery/background-wake collector and fixed fail-closed thresholds implemented with privacy fixtures; no physical result recorded yet |
+| Android low-load gate | schema 2 candidate/transport-bound aggregate ADB report | read-only 60-minute CPU/PSS/battery/background-wake collector and fixed fail-closed thresholds bind the canonical signed manifest, clean commit, APK digest and exact direct LAN/P2P/relay path; no physical result recorded yet |
 | Functional field gate | schema 1 operator-attested aggregate | signed manifest/version/commit/APK-bound inert template and fixed 20-scenario fail-closed verdict implemented; no physical/provider result recorded yet |
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Run artifact boundary | maximum 8 / 256 MiB per operation | redacted verifier/Codex logs plus allowlisted run-reported test/image/APK regular-file snapshots; authenticated opaque download, symlink/sensitive/path escape rejection and history-delete cleanup implemented; physical Android download acceptance pending |
@@ -62,6 +62,17 @@ note는 schema에 없다. 현재는 fixture만 실행하며 실제 단말·Provi
 않는다. APK 전달·설치, 실제 Provider 호출과 Companion 재시작은 하지 않고 current v1 후보 1.8.2,
 staged v1.8.4, 검증된 rollback 1.8.1과 배포 중인 v1.8.3 Companion을 그대로 보존한다. `release:check`의
 단위 검사 296개와 실제 app-server 통합 3개, production build·schema 일치·SBOM이 통과했다.
+
+Candidate-bound Android low-load evidence checkpoint decision: 기존 60분 ADB 측정 report가 SemVer만
+기록해 같은 `2.0.0`의 서로 다른 APK build와 direct LAN/P2P/outbound relay 경로를 구분하지 못한 release
+evidence 결함을 고치는 internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서
+SemVer `2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only
+candidate를 대체한다. pre-handoff report schema를 2로 교체해 별도 암호 검증한 canonical signed manifest의
+전체 candidate identity, clean source commit, APK digest, exact transport와 측정 시각을 기록한다. manifest·
+transport 누락, source/설치 identity drift는 ADB 측정 전에 실패한다. 실제 측정·APK 전달·설치·Provider
+호출·Companion 재시작은 하지 않고 current v1 후보 1.8.2, staged v1.8.4, 검증된 rollback 1.8.1과 배포
+중인 v1.8.3 Companion을 그대로 보존한다. `release:check`의 단위 검사 297개와 실제 app-server 통합
+3개, production build·schema 일치·SBOM이 통과했다.
 
 Durable Gateway authorization checkpoint decision: 동시 pairing·revoke·TLS key rotation의 atomic rename이
 역순 완료되면 재시작 뒤 해제한 token 또는 이전 key가 되살아나거나 새 client가 사라질 수 있던 기존 v2

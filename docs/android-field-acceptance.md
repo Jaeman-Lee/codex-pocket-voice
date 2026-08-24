@@ -33,14 +33,19 @@ package 변경 명령은 실행하지 않는다.
 
 ## 실행 절차
 
-1. Linux PC에서 검증할 v2 source와 설치 APK가 같은 SemVer/versionCode인지 확인한다.
-2. 앱에서 검증할 PocketLink 경로와 background 알림 연결을 사용자가 직접 켜고, 앱을 background로 보낸다.
+1. Linux PC에서 update artifact ZIP을 기존 오프라인 검증기로 검증하고, 그 canonical signed
+   `update-manifest.json`과 정확히 같은 clean Git commit을 checkout한다. 이 측정 도구 자체는 manifest
+   서명이나 APK signer를 암호학적으로 다시 검증하지 않는다.
+2. 앱에서 측정할 PocketLink 경로 하나(direct LAN, 실제 P2P 또는 outbound relay)와 background 알림 연결을
+   사용자가 직접 켜고, 앱을 background로 보낸다. `--transport`는 실제 선택한 경로와 같아야 한다.
 3. 단말을 전원에서 분리하고 `adb devices`에서 정확히 한 대가 `device` 상태인지 확인한다. 여러 대라면
    아래 명령에 `--serial`을 추가한다.
 4. 저장소 밖의 private directory에 새 report 경로를 정하고 실행한다.
 
 ```sh
 npm run android:field-acceptance -- \
+  --manifest /private/update-bundle/update-manifest.json \
+  --transport direct-lan \
   --duration-minutes 60 \
   --interval-seconds 15 \
   --release-gate \
@@ -49,8 +54,11 @@ npm run android:field-acceptance -- \
 
 짧은 배선·파서 점검은 `--release-gate` 없이 최소 1분 동안 실행할 수 있지만 결과는
 `observation_only`이며 release 증거가 아니다. report 경로는 기존 파일을 덮어쓰지 않고 mode `0600`으로
-새로 만든다. report에는 다음 aggregate만 포함한다.
+새로 만든다. `--transport`는 `direct-lan`, `p2p`, `outbound-relay` 중 하나이며 생략하거나 임의 값을
+사용하면 ADB 조회 전에 실패한다. report schema 2에는 다음 aggregate만 포함한다.
 
+- canonical manifest의 application/version/versionCode/channel, commit·manifest/APK/signer SHA-256과
+  실제 사용 transport, 측정 시작·종료 시각
 - 설치 앱 package/version, 요청·실제 측정 시간과 표본 수
 - process/CPU/PSS 표본 coverage와 CPU·PSS/RSS mean/p95/max
 - 배터리 감소율, background wake delta/비율, 고정 기준별 pass/fail
@@ -63,5 +71,6 @@ report는 공개 저장소나 support bundle에 올리지 않는다. 필요한 �
 ## 출시 증거 범위
 
 한 번의 통과는 해당 APK·단말·transport 조건만 증명한다. 출시 후보에서는 최소 direct LAN, 실제 P2P와
-outbound relay의 지원 경로별로 별도 측정하고, 잠금화면·process kill·절전·네트워크 전환 복구 결과와 함께
-검토한다. 이 저장소의 fixture 테스트와 CI 통과는 물리 단말의 배터리 또는 wake 결과를 대신하지 않는다.
+outbound relay의 지원 경로별로 별도 측정하고, 세 report의 commit·manifest/APK digest가 기능 field
+report와 모두 같은지 확인한 뒤 잠금화면·process kill·절전·네트워크 전환 복구 결과와 함께 검토한다.
+이 저장소의 fixture 테스트와 CI 통과는 물리 단말의 배터리 또는 wake 결과를 대신하지 않는다.

@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { lstat, writeFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
+import type { FunctionalCandidateIdentity } from "./functional-field-acceptance.js";
 
 const MAX_ADB_OUTPUT_BYTES = 1024 * 1024;
 const MAX_REPORT_BYTES = 64 * 1024;
@@ -25,12 +26,18 @@ export const ANDROID_RELEASE_THRESHOLDS = {
   maximumBackgroundWakePercent: 10,
 } as const;
 
+export const ANDROID_FIELD_TRANSPORTS = [
+  "direct_lan",
+  "p2p",
+  "outbound_relay",
+] as const;
+
 export type AndroidFieldMode = "observation" | "release_gate";
+export type AndroidFieldTransport = typeof ANDROID_FIELD_TRANSPORTS[number];
 
 export interface AndroidFieldConfig {
-  packageName: string;
-  expectedVersionName: string;
-  expectedVersionCode: number;
+  candidate: FunctionalCandidateIdentity;
+  transport: AndroidFieldTransport;
   durationSeconds: number;
   intervalSeconds: number;
   mode: AndroidFieldMode;
@@ -44,6 +51,7 @@ export interface AdbExecutor {
 export interface AndroidFieldDependencies {
   executor: AdbExecutor;
   monotonicMs?: () => number;
+  wallClockMs?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
 }
 
@@ -82,8 +90,15 @@ interface GateCheck {
 }
 
 export interface AndroidFieldReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   kind: "android_field_acceptance";
+  evidenceKind: "adb_aggregate_measurement";
+  candidate: FunctionalCandidateIdentity;
+  transport: AndroidFieldTransport;
+  testWindow: {
+    startedAt: string;
+    completedAt: string;
+  };
   app: {
     packageName: string;
     versionName: string;
@@ -158,32 +173,40 @@ export async function measureAndroidFieldAcceptance(
   config: AndroidFieldConfig,
   dependencies: AndroidFieldDependencies,
 ): Promise<AndroidFieldReport> {
-  validateConfig(config);
+  const checkedConfig: AndroidFieldConfig = {
+    ...config,
+    candidate: { ...config.candidate },
+  };
+  validateConfig(checkedConfig);
   const monotonicMs = dependencies.monotonicMs ?? (() => performance.now());
+  const wallClockMs = dependencies.wallClockMs ?? (() => Date.now());
   const sleep = dependencies.sleep ?? ((milliseconds) => new Promise<void>((resolve) => {
     setTimeout(resolve, milliseconds);
   }));
   const devices = await safeAdb(dependencies.executor, ["devices"]);
-  const serial = selectAdbDevice(devices, config.serial);
+  const serial = selectAdbDevice(devices, checkedConfig.serial);
   const shell = (...args: string[]) => safeAdb(
     dependencies.executor,
     ["-s", serial, "shell", ...args],
   );
-  const packageIdentity = parsePackageIdentity(await shell("dumpsys", "package", config.packageName));
-  if (packageIdentity.versionName !== config.expectedVersionName
-    || packageIdentity.versionCode !== config.expectedVersionCode) {
-    throw new AndroidFieldError("Installed app version does not match this source tree");
+  const packageName = checkedConfig.candidate.applicationId;
+  const packageIdentity = parsePackageIdentity(await shell("dumpsys", "package", packageName));
+  if (packageIdentity.versionName !== checkedConfig.candidate.version
+    || packageIdentity.versionCode !== checkedConfig.candidate.versionCode) {
+    throw new AndroidFieldError("Installed app version does not match the signed candidate");
   }
 
+  const startedWallClockMs = wallClockMs();
+  if (!Number.isFinite(startedWallClockMs)) throw new AndroidFieldError("Measurement clock is invalid");
   const startedAt = monotonicMs();
   const [startingBattery, startingWake] = await Promise.all([
     optionalQuery(() => shell("dumpsys", "battery"), parseBatterySnapshot),
     optionalQuery(
-      () => shell("dumpsys", "batterystats", "-c", "--charged", config.packageName),
-      (output) => parseWakeSnapshot(output, packageIdentity.userId, config.packageName),
+      () => shell("dumpsys", "batterystats", "-c", "--charged", packageName),
+      (output) => parseWakeSnapshot(output, packageIdentity.userId, packageName),
     ),
   ]);
-  const scheduledSamples = config.durationSeconds / config.intervalSeconds + 1;
+  const scheduledSamples = checkedConfig.durationSeconds / checkedConfig.intervalSeconds + 1;
   const samples: Array<{
     processPresent: boolean | null;
     cpuPercent: number | null;
@@ -192,7 +215,7 @@ export async function measureAndroidFieldAcceptance(
 
   for (let index = 0; index < scheduledSamples; index += 1) {
     if (index > 0) {
-      const target = startedAt + index * config.intervalSeconds * 1_000;
+      const target = startedAt + index * checkedConfig.intervalSeconds * 1_000;
       let remaining = target - monotonicMs();
       while (remaining > 0) {
         await sleep(remaining);
@@ -201,7 +224,7 @@ export async function measureAndroidFieldAcceptance(
     }
     const [cpuOutput, memoryOutput] = await Promise.all([
       optionalRawQuery(() => shell("dumpsys", "cpuinfo")),
-      optionalRawQuery(() => shell("dumpsys", "meminfo", config.packageName)),
+      optionalRawQuery(() => shell("dumpsys", "meminfo", packageName)),
     ]);
     let memory: MemorySample | null = null;
     let processPresent: boolean | null = null;
@@ -216,7 +239,7 @@ export async function measureAndroidFieldAcceptance(
     let cpuPercent: number | null = null;
     if (cpuOutput !== null) {
       try {
-        cpuPercent = parseCpuInfo(cpuOutput, config.packageName);
+        cpuPercent = parseCpuInfo(cpuOutput, packageName);
       } catch {
         cpuPercent = null;
       }
@@ -226,8 +249,8 @@ export async function measureAndroidFieldAcceptance(
 
   const [endingWake, endingBattery] = await Promise.all([
     optionalQuery(
-      () => shell("dumpsys", "batterystats", "-c", "--charged", config.packageName),
-      (output) => parseWakeSnapshot(output, packageIdentity.userId, config.packageName),
+      () => shell("dumpsys", "batterystats", "-c", "--charged", packageName),
+      (output) => parseWakeSnapshot(output, packageIdentity.userId, packageName),
     ),
     optionalQuery(() => shell("dumpsys", "battery"), parseBatterySnapshot),
   ]);
@@ -241,18 +264,29 @@ export async function measureAndroidFieldAcceptance(
   const rssValues = samples.flatMap((sample) => sample.memory?.rssKib == null ? [] : [sample.memory.rssKib / 1_024]);
   const battery = batteryResult(startingBattery, endingBattery, actualDurationSeconds);
   const backgroundWake = wakeResult(startingWake, endingWake, actualDurationSeconds);
+  const completedWallClockMs = wallClockMs();
+  if (!Number.isFinite(completedWallClockMs) || completedWallClockMs < startedWallClockMs) {
+    throw new AndroidFieldError("Measurement clock is invalid");
+  }
   const report: AndroidFieldReport = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "android_field_acceptance",
+    evidenceKind: "adb_aggregate_measurement",
+    candidate: checkedConfig.candidate,
+    transport: checkedConfig.transport,
+    testWindow: {
+      startedAt: wallTimestamp(startedWallClockMs),
+      completedAt: wallTimestamp(completedWallClockMs),
+    },
     app: {
-      packageName: config.packageName,
+      packageName,
       versionName: packageIdentity.versionName,
       versionCode: packageIdentity.versionCode,
     },
     measurement: {
-      requestedDurationSeconds: config.durationSeconds,
+      requestedDurationSeconds: checkedConfig.durationSeconds,
       actualDurationSeconds: rounded(actualDurationSeconds),
-      intervalSeconds: config.intervalSeconds,
+      intervalSeconds: checkedConfig.intervalSeconds,
       scheduledSamples,
       processPresencePercent,
       cpuCoveragePercent: percentage(cpuValues.length, scheduledSamples),
@@ -278,7 +312,7 @@ export async function measureAndroidFieldAcceptance(
       containsNetworkValues: false,
     },
   };
-  report.gate = evaluateAndroidReleaseGate(report, config.mode);
+  report.gate = evaluateAndroidReleaseGate(report, checkedConfig.mode);
   return report;
 }
 
@@ -483,11 +517,9 @@ export async function writeAndroidFieldReport(path: string, report: AndroidField
 }
 
 function validateConfig(config: AndroidFieldConfig): void {
-  validatePackageName(config.packageName);
-  if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(config.expectedVersionName)
-    || config.expectedVersionName.length > 64
-    || !Number.isSafeInteger(config.expectedVersionCode) || config.expectedVersionCode <= 0) {
-    throw new AndroidFieldError("Expected app version is invalid");
+  validateCandidate(config.candidate);
+  if (!(ANDROID_FIELD_TRANSPORTS as readonly string[]).includes(config.transport)) {
+    throw new AndroidFieldError("Measurement transport is invalid");
   }
   if (!Number.isSafeInteger(config.durationSeconds)
     || config.durationSeconds < ANDROID_FIELD_LIMITS.minimumDurationSeconds
@@ -512,9 +544,35 @@ function validateConfig(config: AndroidFieldConfig): void {
   }
 }
 
+function validateCandidate(candidate: FunctionalCandidateIdentity): void {
+  validatePackageName(candidate.applicationId);
+  if (!/^\d+\.\d+\.\d+$/.test(candidate.version)
+      || !Number.isSafeInteger(candidate.versionCode) || candidate.versionCode <= 0
+      || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(candidate.channel)
+      || !/^[a-f0-9]{40}$/.test(candidate.commit)
+      || !/^[a-f0-9]{64}$/.test(candidate.manifestSha256)
+      || !/^[a-f0-9]{64}$/.test(candidate.apkSha256)
+      || !/^[a-f0-9]{64}$/.test(candidate.signingCertificateSha256)) {
+    throw new AndroidFieldError("Signed candidate identity is invalid");
+  }
+  const [major, minor, patch] = candidate.version.split(".").map(Number);
+  if (minor! > 99 || patch! > 99
+      || candidate.versionCode !== major! * 10_000 + minor! * 100 + patch!) {
+    throw new AndroidFieldError("Signed candidate version code is invalid");
+  }
+}
+
 function validatePackageName(packageName: string): void {
   if (!PACKAGE_PATTERN.test(packageName) || packageName.length > 200) {
     throw new AndroidFieldError("Android package name is invalid");
+  }
+}
+
+function wallTimestamp(value: number): string {
+  try {
+    return new Date(value).toISOString();
+  } catch {
+    throw new AndroidFieldError("Measurement clock is invalid");
   }
 }
 
