@@ -31,7 +31,7 @@ public class PocketLinkConfigStoreTest {
 
         assertEquals("direct", config.route());
         assertNull(config.relay);
-        assertEquals(3, config.toJson().getInt("version"));
+        assertEquals(4, config.toJson().getInt("version"));
         assertEquals("direct", config.toJson().getString("route"));
         assertEquals(false, config.toJson().has("relay"));
     }
@@ -57,12 +57,12 @@ public class PocketLinkConfigStoreTest {
         assertEquals("relay.example.test", restored.relay.serverName);
         assertEquals(SLOT, restored.relay.slot);
         assertEquals(SECRET, restored.relay.secret);
-        assertEquals(3, restored.toJson().getInt("version"));
+        assertEquals(4, restored.toJson().getInt("version"));
         assertEquals("relay", restored.toJson().getString("route"));
     }
 
     @Test
-    public void schemaThreeAutoRoundTripRequiresEncryptedRelayFallback() throws Exception {
+    public void schemaThreeAutoMigratesWithEncryptedRelayFallback() throws Exception {
         PocketLinkConfigStore.RelayConfig relay = new PocketLinkConfigStore.RelayConfig(
                 "192.0.2.8",
                 9443,
@@ -71,21 +71,11 @@ public class PocketLinkConfigStoreTest {
                 SLOT,
                 SECRET
         );
-        PocketLinkConfigStore.Config original = new PocketLinkConfigStore.Config(
-                "Linux PC",
-                8790,
-                "companion.example.test",
-                8789,
-                PIN,
-                "",
-                false,
-                PocketLinkIdentityStore.SLOT_A,
-                "",
-                PocketLinkRoutePolicy.AUTO,
-                relay
-        );
+        JSONObject legacy = baseConfig(3);
+        legacy.put("route", PocketLinkRoutePolicy.AUTO);
+        legacy.put("relay", relay.toJson());
 
-        PocketLinkConfigStore.Config restored = PocketLinkConfigStore.Config.fromJson(original.toJson());
+        PocketLinkConfigStore.Config restored = PocketLinkConfigStore.Config.fromJson(legacy);
 
         assertEquals("auto", restored.route());
         assertEquals("companion.example.test", restored.host);
@@ -95,17 +85,47 @@ public class PocketLinkConfigStoreTest {
     }
 
     @Test
+    public void schemaFourP2pAndAutoKeepPeerAddressNativeOnly() throws Exception {
+        PocketLinkConfigStore.P2pConfig p2p = new PocketLinkConfigStore.P2pConfig("02:11:22:33:44:55");
+        PocketLinkConfigStore.RelayConfig relay = new PocketLinkConfigStore.RelayConfig(
+                "192.0.2.8", 9443, "relay.example.test", PIN, SLOT, SECRET
+        );
+        PocketLinkConfigStore.Config fixed = new PocketLinkConfigStore.Config(
+                "Linux PC", 8790, "companion.example.test", 8789, PIN, "", false,
+                PocketLinkIdentityStore.SLOT_A, "", PocketLinkRoutePolicy.P2P, p2p, null
+        );
+        PocketLinkConfigStore.Config automatic = new PocketLinkConfigStore.Config(
+                "Linux PC", 8790, "companion.example.test", 8789, PIN, "", false,
+                PocketLinkIdentityStore.SLOT_A, "", PocketLinkRoutePolicy.AUTO, p2p, relay
+        );
+
+        PocketLinkConfigStore.Config fixedRestored = PocketLinkConfigStore.Config.fromJson(fixed.toJson());
+        PocketLinkConfigStore.Config autoRestored = PocketLinkConfigStore.Config.fromJson(automatic.toJson());
+
+        assertEquals("p2p", fixedRestored.route());
+        assertEquals("02:11:22:33:44:55", fixedRestored.p2p.deviceAddress);
+        assertNull(fixedRestored.relay);
+        assertEquals("auto", autoRestored.route());
+        assertEquals("02:11:22:33:44:55", autoRestored.p2p.deviceAddress);
+        assertEquals(SECRET, autoRestored.relay.secret);
+    }
+
+    @Test
     public void routeModeRejectsMissingOrUnexpectedRelayCredentials() throws Exception {
         PocketLinkConfigStore.RelayConfig relay = new PocketLinkConfigStore.RelayConfig(
                 "192.0.2.8", 9443, "relay.example.test", PIN, SLOT, SECRET
         );
         assertThrows(IllegalArgumentException.class, () -> new PocketLinkConfigStore.Config(
                 "Linux PC", 8790, "companion.example.test", 8789, PIN, "", false,
-                PocketLinkIdentityStore.SLOT_A, "", PocketLinkRoutePolicy.DIRECT, relay
+                PocketLinkIdentityStore.SLOT_A, "", PocketLinkRoutePolicy.DIRECT, null, relay
         ));
         assertThrows(IllegalArgumentException.class, () -> new PocketLinkConfigStore.Config(
                 "Linux PC", 8790, "companion.example.test", 8789, PIN, "", false,
-                PocketLinkIdentityStore.SLOT_A, "", PocketLinkRoutePolicy.AUTO, null
+                PocketLinkIdentityStore.SLOT_A, "", PocketLinkRoutePolicy.AUTO, null, null
+        ));
+        assertThrows(IllegalArgumentException.class, () -> new PocketLinkConfigStore.Config(
+                "Linux PC", 8790, "companion.example.test", 8789, PIN, "", false,
+                PocketLinkIdentityStore.SLOT_A, "", PocketLinkRoutePolicy.P2P, null, relay
         ));
 
         JSONObject malformed = baseConfig(3);

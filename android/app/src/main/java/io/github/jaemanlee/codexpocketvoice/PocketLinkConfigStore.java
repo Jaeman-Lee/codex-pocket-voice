@@ -128,12 +128,13 @@ final class PocketLinkConfigStore {
         final String identitySlot;
         final String pendingIdentitySlot;
         final String route;
+        final P2pConfig p2p;
         final RelayConfig relay;
 
         Config(String label, int localPort, String host, int remotePort, String primaryPin, String backupPin, boolean active) {
             this(
                     label, localPort, host, remotePort, primaryPin, backupPin, active,
-                    PocketLinkIdentityStore.SLOT_A, "", PocketLinkRoutePolicy.DIRECT, null
+                    PocketLinkIdentityStore.SLOT_A, "", PocketLinkRoutePolicy.DIRECT, null, null
             );
         }
 
@@ -150,7 +151,7 @@ final class PocketLinkConfigStore {
         ) {
             this(
                     label, localPort, host, remotePort, primaryPin, backupPin, active,
-                    identitySlot, pendingIdentitySlot, PocketLinkRoutePolicy.DIRECT, null
+                    identitySlot, pendingIdentitySlot, PocketLinkRoutePolicy.DIRECT, null, null
             );
         }
 
@@ -170,6 +171,7 @@ final class PocketLinkConfigStore {
                     label, localPort, host, remotePort, primaryPin, backupPin, active,
                     identitySlot, pendingIdentitySlot,
                     relay == null ? PocketLinkRoutePolicy.DIRECT : PocketLinkRoutePolicy.RELAY,
+                    null,
                     relay
             );
         }
@@ -187,6 +189,26 @@ final class PocketLinkConfigStore {
                 String route,
                 RelayConfig relay
         ) {
+            this(
+                    label, localPort, host, remotePort, primaryPin, backupPin, active,
+                    identitySlot, pendingIdentitySlot, route, null, relay
+            );
+        }
+
+        Config(
+                String label,
+                int localPort,
+                String host,
+                int remotePort,
+                String primaryPin,
+                String backupPin,
+                boolean active,
+                String identitySlot,
+                String pendingIdentitySlot,
+                String route,
+                P2pConfig p2p,
+                RelayConfig relay
+        ) {
             if (!PocketLinkIdentityStore.SLOT_A.equals(identitySlot)
                     && !PocketLinkIdentityStore.SLOT_B.equals(identitySlot)) {
                 throw new IllegalArgumentException("invalid identity slot");
@@ -198,7 +220,7 @@ final class PocketLinkConfigStore {
                     || pendingIdentitySlot.equals(identitySlot))) {
                 throw new IllegalArgumentException("invalid pending identity slot");
             }
-            PocketLinkRoutePolicy.validateConfiguration(route, relay != null);
+            PocketLinkRoutePolicy.validateConfiguration(route, p2p != null, relay != null);
             this.label = label;
             this.localPort = localPort;
             this.host = host;
@@ -209,27 +231,28 @@ final class PocketLinkConfigStore {
             this.identitySlot = identitySlot;
             this.pendingIdentitySlot = pendingIdentitySlot;
             this.route = route;
+            this.p2p = p2p;
             this.relay = relay;
         }
 
         Config withActive(boolean nextActive) {
             return new Config(
                     label, localPort, host, remotePort, primaryPin, backupPin, nextActive,
-                    identitySlot, pendingIdentitySlot, route, relay
+                    identitySlot, pendingIdentitySlot, route, p2p, relay
             );
         }
 
         Config withServerPins(String nextPrimaryPin, String nextBackupPin) {
             return new Config(
                     label, localPort, host, remotePort, nextPrimaryPin, nextBackupPin, active,
-                    identitySlot, pendingIdentitySlot, route, relay
+                    identitySlot, pendingIdentitySlot, route, p2p, relay
             );
         }
 
         Config withPendingIdentitySlot(String nextPendingIdentitySlot) {
             return new Config(
                     label, localPort, host, remotePort, primaryPin, backupPin, active,
-                    identitySlot, nextPendingIdentitySlot, route, relay
+                    identitySlot, nextPendingIdentitySlot, route, p2p, relay
             );
         }
 
@@ -237,7 +260,7 @@ final class PocketLinkConfigStore {
             if (pendingIdentitySlot.isEmpty()) throw new IllegalStateException("identity rotation is not pending");
             return new Config(
                     label, localPort, host, remotePort, primaryPin, backupPin, active,
-                    pendingIdentitySlot, "", route, relay
+                    pendingIdentitySlot, "", route, p2p, relay
             );
         }
 
@@ -251,7 +274,7 @@ final class PocketLinkConfigStore {
 
         JSONObject toJson() throws Exception {
             JSONObject value = new JSONObject();
-            value.put("version", 3);
+            value.put("version", 4);
             value.put("label", label);
             value.put("localPort", localPort);
             value.put("host", host);
@@ -262,19 +285,23 @@ final class PocketLinkConfigStore {
             value.put("identitySlot", identitySlot);
             value.put("pendingIdentitySlot", pendingIdentitySlot);
             value.put("route", route);
+            if (p2p != null) value.put("p2p", p2p.toJson());
             if (relay != null) value.put("relay", relay.toJson());
             return value;
         }
 
         static Config fromJson(JSONObject value) throws Exception {
             int version = value.getInt("version");
-            if (version != 1 && version != 2 && version != 3) {
+            if (version != 1 && version != 2 && version != 3 && version != 4) {
                 throw new IllegalArgumentException("unsupported config version");
             }
+            P2pConfig p2p = version == 4 && value.has("p2p")
+                    ? P2pConfig.fromJson(value.getJSONObject("p2p"))
+                    : null;
             RelayConfig relay = version >= 2 && value.has("relay")
                     ? RelayConfig.fromJson(value.getJSONObject("relay"))
                     : null;
-            String route = version == 3
+            String route = version >= 3
                     ? value.getString("route")
                     : relay == null ? PocketLinkRoutePolicy.DIRECT : PocketLinkRoutePolicy.RELAY;
             return new Config(
@@ -288,8 +315,34 @@ final class PocketLinkConfigStore {
                     value.optString("identitySlot", PocketLinkIdentityStore.SLOT_A),
                     value.optString("pendingIdentitySlot", ""),
                     route,
+                    p2p,
                     relay
             );
+        }
+    }
+
+    static final class P2pConfig {
+        final String deviceAddress;
+
+        P2pConfig(String deviceAddress) {
+            if (!PocketLinkP2pPolicy.validDeviceAddress(deviceAddress)) {
+                throw new IllegalArgumentException("invalid PocketLink P2P device address");
+            }
+            this.deviceAddress = deviceAddress.toLowerCase();
+        }
+
+        JSONObject toJson() throws Exception {
+            JSONObject value = new JSONObject();
+            value.put("version", 1);
+            value.put("deviceAddress", deviceAddress);
+            return value;
+        }
+
+        static P2pConfig fromJson(JSONObject value) throws Exception {
+            if (value.length() != 2 || value.getInt("version") != 1) {
+                throw new IllegalArgumentException("unsupported PocketLink P2P config version");
+            }
+            return new P2pConfig(value.getString("deviceAddress"));
         }
     }
 

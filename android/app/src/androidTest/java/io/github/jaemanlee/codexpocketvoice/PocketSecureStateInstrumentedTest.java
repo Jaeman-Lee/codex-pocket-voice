@@ -62,6 +62,8 @@ public final class PocketSecureStateInstrumentedTest {
         String relayServerName = "relay.example.test";
         String relaySlot = repeat('s', 22);
         String relaySecret = repeat('k', 43);
+        String p2pDeviceAddress = "02:11:22:33:44:55";
+        PocketLinkConfigStore.P2pConfig p2p = new PocketLinkConfigStore.P2pConfig(p2pDeviceAddress);
         PocketLinkConfigStore.RelayConfig relay = new PocketLinkConfigStore.RelayConfig(
                 relayHost,
                 8_443,
@@ -81,6 +83,7 @@ public final class PocketSecureStateInstrumentedTest {
                 PocketLinkIdentityStore.SLOT_A,
                 PocketLinkIdentityStore.SLOT_B,
                 PocketLinkRoutePolicy.AUTO,
+                p2p,
                 relay
         );
 
@@ -95,6 +98,7 @@ public final class PocketSecureStateInstrumentedTest {
         assertFalse(stored.contains(relayServerName));
         assertFalse(stored.contains(relaySlot));
         assertFalse(stored.contains(relaySecret));
+        assertFalse(stored.contains(p2pDeviceAddress));
 
         PocketLinkConfigStore.Config actual = configStore.load(CONFIG_PORT);
         assertNotNull(actual);
@@ -105,6 +109,8 @@ public final class PocketSecureStateInstrumentedTest {
         assertEquals(PocketLinkIdentityStore.SLOT_A, actual.identitySlot);
         assertEquals(PocketLinkIdentityStore.SLOT_B, actual.pendingIdentitySlot);
         assertEquals("auto", actual.route());
+        assertNotNull(actual.p2p);
+        assertEquals(p2pDeviceAddress, actual.p2p.deviceAddress);
         assertNotNull(actual.relay);
         assertEquals(relayHost, actual.relay.host);
         assertEquals(relayServerName, actual.relay.serverName);

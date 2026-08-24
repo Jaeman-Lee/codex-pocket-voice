@@ -17,7 +17,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | V2 development component | Version / revision | State |
 | --- | --- | --- |
 | Source version | `2.0.0` / Android `versionCode 20000` | development only; not field installed |
-| Target branch | `feature/v2-control-plane` | common Provider contract/failure suite, user-approved strict-ZDR OpenRouter routing, approved crash-recoverable text change tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, process-death notifications, connection/run/journal/voice/media state machines, live branch/worktree identity, staged PocketLink rotations, reviewed same-LAN discovery, Android/Companion outbound relay and fail-closed LAN→relay auto policy implemented; P2P, mobile field acceptance and model eval next |
+| Target branch | `feature/v2-control-plane` | common Provider contract/failure suite, user-approved strict-ZDR OpenRouter routing, approved crash-recoverable text change tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, process-death notifications, connection/run/journal/voice/media state machines, live branch/worktree identity, staged PocketLink rotations, reviewed same-LAN/P2P discovery, Android outbound Wi-Fi Direct and fail-closed LAN→P2P→relay policy implemented; Linux P2P group-owner automation, mobile field acceptance and model eval next |
 | Gateway protocol | maximum 3, minimum 2 | v1 rollout compatibility retained |
 | Codex app-server schema | `codex-cli 0.149.0` | generated bindings and no-model real integration verified |
 | Current v1 APK | 1.8.2 candidate | signed APK/checksum/SBOM prepared from hotfix PR #4; install not performed |
@@ -34,9 +34,20 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Android work notifications | opt-in connectedDevice service | maximum 8 encrypted loopback subscriptions, notification-only authenticated SSE, durable cursor/replay freshness and generic retained-operation navigation implemented; field process-kill/deep-link acceptance pending |
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
-| PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD address discovery, observed backup-pin server certificate promotion and recoverable Keystore A/B client identity rotation implemented; P2P and field validation pending |
-| PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/relay plus LAN-first auto mode, Keystore-encrypted endpoint/slot/secret, public-CA+hostname+SPKI outer TLS and existing end-to-end PocketLink mTLS implemented; P2P insertion and public-service/device acceptance pending |
+| PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; Linux P2P group-owner automation and field validation pending |
+| PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+PocketLink Android P2P checkpoint decision: 사용자 동작 기반 Wi-Fi Direct 검색·등록과 native transport는 새
+user-visible v2 workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서
+SemVer `2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only
+candidate를 대체한다. config schema 4가 native-only peer address를 기존 AES-GCM envelope에 보관하고,
+Android 13+에서는 `NEARBY_WIFI_DEVICES`를 위치 용도 없이 요청하며 구형 Android에서는 maxSdk 32 location
+권한을 사용한다. UI에는 최대 16개 이름과 2분 opaque ID만 보인다. fixed P2P와 auto의 LAN→P2P→relay
+순서를 제공하되 Android group-owner 결과를 제거하고, transport 실패만 다음 경로로 넘기며 TLS·SPKI·mTLS
+실패는 fail closed다. Linux group-owner advertise/accept 자동화와 실제 하드웨어 연결은 남은 field gate다.
+APK 전달·설치와 Companion 재시작은 하지 않고 current v1 후보 1.8.2, 별도 staged v1.8.3과 검증된
+rollback 1.8.1을 그대로 보존한다.
 
 PocketLink automatic route checkpoint decision: LAN 우선·relay fallback을 선택하는 새 user-visible v2 transport
 workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 SemVer
@@ -46,7 +57,7 @@ workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 i
 SPKI·mTLS 실패는 fail closed이며 30초 monotonic cooldown으로 반복 LAN timeout을 제한한다. status에는
 configured mode와 마지막 verified direct/relay만 포함하고 endpoint·slot·secret은 내보내지 않는다. APK
 전달·설치와 실행 중 Companion 재시작은 하지 않고 current v1 후보 1.8.2, 별도 staged v1.8.3과 검증된
-rollback 1.8.1을 그대로 보존한다. Wi-Fi Direct P2P는 이 LAN→relay 정책 사이에 넣는 다음 단계다.
+rollback 1.8.1을 그대로 보존한다. 이 기록은 이후 Android P2P checkpoint에서 확장됐다.
 
 Android managed-device checkpoint decision: 기존 v2 native 보안 경로의 실제 AndroidKeyStore 자동 회귀가
 비어 있던 문제를 수정하는 internal compatibility `patch`다. 아직 현장 전달하지 않은 incompatible v2

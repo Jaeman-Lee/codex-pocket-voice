@@ -10,6 +10,19 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- PocketLink Android Wi-Fi Direct 경로는 새 user-visible v2 transport workflow이므로 `feature`로 분류한다.
+  아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,
+  `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. v2 APK 전달·설치와 실행 중
+  Companion 재시작은 하지 않으며 v1.8.2 current 후보, 별도 staged v1.8.3과 검증된 v1.8.1 rollback을
+  그대로 보존한다.
+- 사용자가 누를 때만 12초 Wi-Fi Direct 검색과 Android 13+ `NEARBY_WIFI_DEVICES` 권한을 시작한다.
+  최대 16개 후보의 이름과 2분 opaque ID만 WebView에 보여 주고 MAC 주소는 native 암호화 설정 밖으로
+  내보내지 않는다. Android는 group client만 허용하고 Android가 group owner가 되면 group을 제거한다.
+- fixed `p2p`와 `LAN → P2P → relay` auto 경로를 추가했다. LAN/P2P transport 실패만 각각 30초/60초
+  cooldown 뒤 다음 경로를 허용하며, 어느 경로에서든 Companion TLS hostname·SPKI·mTLS 실패는 fallback
+  없이 차단한다. Keystore config schema 4는 schema 1–3을 보존해 읽는다.
+- Linux Companion을 Wi-Fi Direct group owner로 광고·수락하는 자동화와 실제 두 기기 group formation은
+  아직 남은 Phase E field gate다. 따라서 Android source 완료를 end-to-end P2P 출시 완료로 간주하지 않는다.
 - PocketLink LAN 우선·relay fallback은 새 user-visible v2 transport workflow이므로 `feature`로 분류한다.
   아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,
   `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. APK 전달·설치와 실행 중
@@ -20,8 +33,7 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   client-certificate 실패는 relay로 우회하지 않는다. 반복 LAN 불통은 30초 monotonic cooldown으로
   제한하고 마지막 verified direct/relay만 credential 없는 status로 표시한다.
 - Keystore-encrypted PocketLink config schema 3은 schema 1 direct와 schema 2 direct/relay를 원래 고정
-  경로로 migration한다. auto 설정에만 완전한 relay credential을 요구하며 P2P는 LAN과 relay 사이에
-  삽입할 다음 Phase E 단계로 남긴다.
+  경로로 migration한다. 이 기록은 이후 schema 4 P2P checkpoint로 대체됐다.
 - Android managed-device 검증 강화는 기존 v2 native 보안 경로의 자동 회귀 누락을 고치는 internal
   compatibility `patch`다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
   `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. APK

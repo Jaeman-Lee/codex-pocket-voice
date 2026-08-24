@@ -21,9 +21,13 @@ export function pocketLinkSecurityStatus(
   if (!status) return "PocketLink TLS · 상태 확인 중";
   const label = status.route === "relay"
     ? "PocketLink relay"
+    : status.route === "p2p"
+      ? "PocketLink Wi-Fi Direct"
     : status.route === "auto"
       ? status.lastVerifiedRoute === "relay"
         ? "PocketLink 자동→relay"
+        : status.lastVerifiedRoute === "p2p"
+          ? "PocketLink 자동→P2P"
         : status.lastVerifiedRoute === "direct"
           ? "PocketLink 자동→LAN"
           : "PocketLink 자동"

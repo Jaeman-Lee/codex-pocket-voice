@@ -64,6 +64,7 @@ public class PocketLinkService extends Service {
     private ExecutorService controlExecutor;
     private ExecutorService connectionExecutor;
     private PocketLinkConfigStore configStore;
+    private PocketLinkP2pController p2pController;
 
     static boolean isRunning(int localPort) {
         Forwarder forwarder = RUNNING.get(localPort);
@@ -114,6 +115,7 @@ public class PocketLinkService extends Service {
     public void onCreate() {
         super.onCreate();
         configStore = new PocketLinkConfigStore(this);
+        p2pController = PocketLinkP2pController.get(this);
         controlExecutor = Executors.newSingleThreadExecutor();
         connectionExecutor = Executors.newFixedThreadPool(16);
         createNotificationChannel();
@@ -195,7 +197,7 @@ public class PocketLinkService extends Service {
                     config.localPort,
                     config.effectiveIdentitySlot()
             );
-            forwarder = new Forwarder(config, identity, connectionExecutor);
+            forwarder = new Forwarder(config, identity, p2pController, connectionExecutor);
             forwarder.start();
             RUNNING.put(config.localPort, forwarder);
             ACTIVE_IDENTITY_SLOTS.put(config.localPort, config.effectiveIdentitySlot());
@@ -276,6 +278,7 @@ public class PocketLinkService extends Service {
 
     private static String safeError(Exception error) {
         if (error instanceof java.net.BindException) return "로컬 포트를 이미 사용 중입니다.";
+        if (error instanceof P2pConnectionException) return "PocketLink P2P 연결을 사용할 수 없습니다.";
         if (error instanceof RelayConnectionException) return "PocketLink 릴레이를 사용할 수 없습니다.";
         if (error instanceof CertificateException) return "Companion 인증서 검증에 실패했습니다.";
         return "암호화 연결을 만들 수 없습니다.";
@@ -284,6 +287,7 @@ public class PocketLinkService extends Service {
     private static final class Forwarder {
         private final PocketLinkConfigStore.Config config;
         private final PocketLinkIdentityStore.Identity identity;
+        private final PocketLinkP2pController p2pController;
         private final ExecutorService connectionExecutor;
         private final PocketLinkRoutePolicy routePolicy;
         private final Semaphore capacity = new Semaphore(MAX_CONNECTIONS_PER_LINK);
@@ -295,12 +299,18 @@ public class PocketLinkService extends Service {
         Forwarder(
                 PocketLinkConfigStore.Config config,
                 PocketLinkIdentityStore.Identity identity,
+                PocketLinkP2pController p2pController,
                 ExecutorService connectionExecutor
         ) {
             this.config = config;
             this.identity = identity;
+            this.p2pController = p2pController;
             this.connectionExecutor = connectionExecutor;
-            this.routePolicy = new PocketLinkRoutePolicy(config.route(), config.relay != null);
+            this.routePolicy = new PocketLinkRoutePolicy(
+                    config.route(),
+                    config.p2p != null,
+                    config.relay != null
+            );
         }
 
         void start() throws Exception {
@@ -362,7 +372,7 @@ public class PocketLinkService extends Service {
             capacity.release();
         }
 
-        private static RouteSocket tlsSocket(
+        private RouteSocket tlsSocket(
                 PocketLinkConfigStore.Config config,
                 PocketLinkIdentityStore.Identity identity,
                 PocketLinkRoutePolicy routePolicy
@@ -373,7 +383,9 @@ public class PocketLinkService extends Service {
                 try {
                     transport = PocketLinkRoutePolicy.DIRECT.equals(route)
                             ? directTransport(config.host, config.remotePort)
-                            : relayTransport(config.relay);
+                            : PocketLinkRoutePolicy.P2P.equals(route)
+                                    ? p2pTransport(p2pController, config.p2p, config.remotePort)
+                                    : relayTransport(config.relay);
                 } catch (Exception error) {
                     routePolicy.recordTransportFailure(route, SystemClock.elapsedRealtime());
                     lastTransportFailure = error;
@@ -400,6 +412,19 @@ public class PocketLinkService extends Service {
             } catch (Exception error) {
                 closeQuietly(transport);
                 throw error;
+            }
+        }
+
+        private static Socket p2pTransport(
+                PocketLinkP2pController controller,
+                PocketLinkConfigStore.P2pConfig p2p,
+                int port
+        ) throws Exception {
+            try {
+                String groupOwnerHost = controller.connectBlocking(p2p);
+                return directTransport(groupOwnerHost, port);
+            } catch (Exception error) {
+                throw new P2pConnectionException(error);
             }
         }
 
@@ -655,6 +680,12 @@ public class PocketLinkService extends Service {
     private static final class RelayConnectionException extends IOException {
         RelayConnectionException(Exception cause) {
             super("Pocket relay connection failed", cause);
+        }
+    }
+
+    private static final class P2pConnectionException extends IOException {
+        P2pConnectionException(Exception cause) {
+            super("PocketLink P2P connection failed", cause);
         }
     }
 

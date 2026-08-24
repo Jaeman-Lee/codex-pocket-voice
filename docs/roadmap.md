@@ -107,11 +107,12 @@ slots for recovery. User-triggered same-LAN DNS-SD address discovery is implemen
 candidates and separate manual SPKI-pin review. A bounded TLS relay broker and Linux Companion outbound connector
 now carry an inner end-to-end PocketLink mTLS stream without exposing Gateway plaintext. Android relay enrollment
 stores the endpoint, slot and secret in Keystore-encrypted config and the native connector verifies public CA,
-hostname and relay SPKI before starting the existing Companion mTLS inside it. Wi-Fi Direct-style P2P, public relay
-transport is still open. Android now also supports a fail-closed LAN-first automatic mode: only a failed LAN TCP
-connect can move to relay, repeated LAN failures use a bounded cooldown, and TLS/SPKI/mTLS failures never trigger a
-fallback. Inserting P2P between LAN and relay, public relay operations hardening and field battery/background
-measurements remain open.
+hostname and relay SPKI before starting the existing Companion mTLS inside it. Android Wi-Fi Direct now has
+user-triggered bounded discovery, opaque reviewed candidate IDs, encrypted peer configuration, group-client-only
+connection enforcement and a fail-closed LAN→P2P→relay automatic mode. Only transport reachability failures advance
+to the next route; LAN/P2P retries use bounded cooldowns, while TLS/SPKI/mTLS failures never trigger a fallback.
+Automating Linux Companion group-owner advertisement/acceptance, public relay operations hardening and real-device
+P2P/battery/background measurements remain open.
 
 ## Final definition of done
 

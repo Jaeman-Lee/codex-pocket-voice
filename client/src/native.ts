@@ -32,14 +32,15 @@ export interface NativeTunnelResult {
   localPort?: number;
 }
 
-export type PocketLinkRoute = "direct" | "relay" | "auto";
+export type PocketLinkRoute = "direct" | "p2p" | "relay" | "auto";
 
 export interface PocketLinkStatus {
   configured: boolean;
   running: boolean;
   transport: "termux" | "pocketlink";
   route?: PocketLinkRoute;
-  lastVerifiedRoute?: "direct" | "relay";
+  lastVerifiedRoute?: "direct" | "p2p" | "relay";
+  p2pConfigured?: boolean;
   error?: string;
   backupPinConfigured?: boolean;
   identityRotationPending?: boolean;
@@ -52,6 +53,7 @@ export interface PocketLinkStatus {
 interface NativeTunnelPlugin {
   scanPocketLinkQr(): Promise<{ cancelled: boolean; value?: string }>;
   discoverPocketLinks(): Promise<{ candidates: unknown; windowMs: unknown }>;
+  discoverPocketLinkPeers(): Promise<{ candidates: unknown; windowMs: unknown }>;
   start(options?: { localPort?: number }): Promise<NativeTunnelResult>;
   configurePocketLink(options: {
     label: string;
@@ -61,6 +63,7 @@ interface NativeTunnelPlugin {
     primaryPin: string;
     backupPin?: string;
     route: PocketLinkRoute;
+    p2pCandidateId?: string;
     relayHost?: string;
     relayPort?: number;
     relayServerName?: string;

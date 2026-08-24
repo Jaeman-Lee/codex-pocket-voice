@@ -227,7 +227,7 @@ select {
 .device-create-card > select, .device-create-card input, .pocket-link-fields select { min-width: 0; height: 2.25rem; padding: 0 0.55rem; border: 1px solid var(--line); border-radius: 0.55rem; color: var(--text); background: var(--surface); outline: none; font-size: 0.68rem; }
 .device-create-card > small { color: var(--muted); font-size: 0.59rem; line-height: 1.45; overflow-wrap: anywhere; }
 .pocket-link-bootstrap-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.4rem; min-width: 0; }
-.device-create-card .pocket-link-qr-scan, .device-create-card .pocket-link-lan-discovery { width: 100%; min-width: 0; border-color: rgba(62, 213, 165, 0.3); background: rgba(62, 213, 165, 0.07); white-space: normal; }
+.device-create-card .pocket-link-qr-scan, .device-create-card .pocket-link-lan-discovery, .device-create-card .pocket-link-p2p-discovery { width: 100%; min-width: 0; border-color: rgba(62, 213, 165, 0.3); background: rgba(62, 213, 165, 0.07); white-space: normal; }
 .device-create-row { display: grid; grid-template-columns: minmax(0, 1fr) 5.5rem auto; gap: 0.4rem; margin-top: 0.6rem; }
 .pocket-link-fields { display: grid; grid-template-columns: minmax(0, 1fr) 5.5rem; gap: 0.4rem; min-width: 0; }
 .pocket-link-fields .pin, .pocket-link-fields > button, .pocket-link-qr-review, .pocket-link-discovery-list, .pocket-link-discovery-review { grid-column: 1 / -1; }

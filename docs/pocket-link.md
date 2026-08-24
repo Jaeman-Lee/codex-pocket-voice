@@ -159,15 +159,18 @@ Android에서 mDNS 수신을 위해 `CHANGE_WIFI_MULTICAST_STATE`와 검색 시�
 
 ## 현재 제한과 다음 단계
 
-이 checkpoint는 검토형 같은-LAN 주소 discovery와 Android outbound relay client까지 포함하지만
+이 checkpoint는 검토형 같은-LAN 주소 discovery, Android Wi-Fi Direct client와 outbound relay client까지 포함하지만
 PocketLink의 최종 완료판이 아니다.
 
 - DNS-SD 주소 discovery와 protocol 1 TLS relay broker·Linux Companion/Android connector는 구현됐다.
-  Android는 direct/relay 고정 경로 또는 LAN 우선 `auto`를 선택하고 relay 설정을 Keystore encryption으로
+  Android는 direct/P2P/relay 고정 경로 또는 LAN→P2P→relay `auto`를 선택하고 peer·relay 설정을 Keystore encryption으로
   보관하며, public CA+hostname+relay SPKI outer TLS 안에서 기존 Companion mTLS를 다시 수행한다. `auto`는
-  LAN TCP 도달 실패만 relay 전환 조건으로 인정하고 인증 실패를 우회하지 않으며 30초 cooldown으로
-  반복 실패를 제한한다. Wi-Fi Direct P2P 경로와 이를 사이에 넣는 전체 우선순위는 미구현
-- 서버 인증서 staged pin 교체와 Android client identity A/B 교체는 구현됐지만 실기기·실제 LAN 전환
+  LAN/P2P transport 도달 실패만 다음 경로 조건으로 인정하고 인증 실패를 우회하지 않으며 각각 30초/60초
+  cooldown으로 반복 실패를 제한한다.
+- Wi-Fi Direct 검색은 사용자가 누를 때만 12초 동안 실행하고 최대 16개 기기 이름과 2분 opaque ID만
+  WebView에 전달한다. MAC 주소는 native 암호화 설정에만 남고 Android group-owner 결과는 제거한다.
+  Linux Companion group-owner advertise/accept 자동화와 실제 하드웨어 group formation은 미구현이다.
+- 서버 인증서 staged pin 교체와 Android client identity A/B 교체는 구현됐지만 실기기·실제 LAN/P2P 전환
   acceptance 미검증
 - 부팅 후 자동 복구, Android 계측 기반 CPU·메모리·배터리 release gate 미검증
 - opt-in notification-only SSE와 Keystore cursor를 이용한 process-death 완료·승인·오류 native 알림은

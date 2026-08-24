@@ -87,6 +87,11 @@ import {
   type PocketLinkDiscoveryCandidate,
 } from "./pocket-link-discovery";
 import {
+  isCurrentPocketLinkP2pCandidate,
+  parsePocketLinkP2pResult,
+  type PocketLinkP2pCandidate,
+} from "./pocket-link-p2p";
+import {
   initialPocketLinkBootstrapState,
   reducePocketLinkBootstrap,
 } from "./pocket-link-bootstrap-state";
@@ -260,8 +265,11 @@ export function App() {
   );
   const scanningPocketLinkQr = pocketLinkBootstrap.phase === "scanning_qr";
   const discoveringPocketLinks = pocketLinkBootstrap.phase === "discovering_lan";
+  const discoveringPocketLinkPeers = pocketLinkBootstrap.phase === "discovering_p2p";
   const pocketLinkDiscoveryCandidates = pocketLinkBootstrap.discoveryCandidates;
   const selectedPocketLinkDiscovery = pocketLinkBootstrap.selectedDiscovery;
+  const pocketLinkP2pCandidates = pocketLinkBootstrap.p2pCandidates;
+  const selectedPocketLinkP2p = pocketLinkBootstrap.selectedP2p;
   const pendingPocketLinkBootstrap = pocketLinkBootstrap.pendingQr;
   const [pocketLinkStatuses, setPocketLinkStatuses] = useState<Partial<Record<DeviceId, PocketLinkStatus>>>({});
   const [pocketLinkStatusRevision, setPocketLinkStatusRevision] = useState(0);
@@ -3011,6 +3019,24 @@ export function App() {
     }
   }
 
+  async function discoverPocketLinkPeers() {
+    if (!isNativeApp() || pocketLinkBootstrap.phase !== "idle") return;
+    dispatchPocketLinkBootstrap({ type: "start_p2p" });
+    try {
+      const result = await NativeTunnel.discoverPocketLinkPeers();
+      const candidates = parsePocketLinkP2pResult(result);
+      setNewDeviceTransport("pocketlink");
+      dispatchPocketLinkBootstrap({ type: "review_p2p", candidates });
+      showToast(candidates.length > 0
+        ? `${candidates.length}개의 Wi-Fi Direct 기기를 찾았습니다. Companion pin은 별도로 확인해야 합니다.`
+        : "Wi-Fi Direct에서 Linux Companion을 찾지 못했습니다.");
+    } catch (error) {
+      showToast(errorMessage(error));
+    } finally {
+      dispatchPocketLinkBootstrap({ type: "finish_p2p" });
+    }
+  }
+
   function reviewPocketLinkDiscovery(candidate: PocketLinkDiscoveryCandidate) {
     const now = Date.now();
     if (now >= candidate.expiresAt) {
@@ -3027,6 +3053,18 @@ export function App() {
     showToast("LAN 주소만 선택했습니다. Companion 화면의 SPKI pin을 직접 대조·입력하세요.");
   }
 
+  function reviewPocketLinkP2p(candidate: PocketLinkP2pCandidate) {
+    const now = Date.now();
+    if (!isCurrentPocketLinkP2pCandidate(candidate, now)) {
+      showToast("Wi-Fi Direct 검색 결과가 만료되었습니다. 다시 검색해 주세요.");
+      return;
+    }
+    setNewDeviceTransport("pocketlink");
+    if (!newDeviceName.trim()) setNewDeviceName(candidate.name);
+    dispatchPocketLinkBootstrap({ type: "select_p2p", candidate, now });
+    showToast("Wi-Fi Direct 기기만 선택했습니다. Companion 화면의 SPKI pin을 별도로 대조하세요.");
+  }
+
   async function createLinuxDevice() {
     let target: DeviceTarget | null = null;
     let configuredPocketLinkPort: number | null = null;
@@ -3040,6 +3078,10 @@ export function App() {
       )) {
         throw new Error("LAN 검색 결과가 만료되었거나 변경되었습니다. 다시 검색하거나 주소를 직접 입력해 주세요.");
       }
+      if ((newPocketLinkRoute === "p2p" || selectedPocketLinkP2p)
+          && !isCurrentPocketLinkP2pCandidate(selectedPocketLinkP2p)) {
+        throw new Error("Wi-Fi Direct 검색 결과가 만료되었습니다. 다시 검색해 주세요.");
+      }
       target = await addLinuxDevice(newDeviceName, localPort, newDeviceTransport);
       if (newDeviceTransport === "pocketlink") {
         if (!isNativeApp()) throw new Error("PocketLink 등록은 Android 앱에서만 할 수 있습니다.");
@@ -3051,12 +3093,15 @@ export function App() {
           primaryPin: newPocketLinkPin,
           backupPin: newPocketLinkBackupPin || undefined,
           route: newPocketLinkRoute,
-          relayHost: newPocketLinkRoute !== "direct" ? newPocketRelayHost : undefined,
-          relayPort: newPocketLinkRoute !== "direct" ? Number(newPocketRelayPort) : undefined,
-          relayServerName: newPocketLinkRoute !== "direct" ? newPocketRelayServerName : undefined,
-          relayServerPublicKeyPin: newPocketLinkRoute !== "direct" ? newPocketRelayPin : undefined,
-          relaySlot: newPocketLinkRoute !== "direct" ? newPocketRelaySlot : undefined,
-          relaySecret: newPocketLinkRoute !== "direct" ? newPocketRelaySecret : undefined,
+          p2pCandidateId: newPocketLinkRoute === "p2p" || newPocketLinkRoute === "auto"
+            ? selectedPocketLinkP2p?.id
+            : undefined,
+          relayHost: newPocketLinkRoute === "relay" || newPocketLinkRoute === "auto" ? newPocketRelayHost : undefined,
+          relayPort: newPocketLinkRoute === "relay" || newPocketLinkRoute === "auto" ? Number(newPocketRelayPort) : undefined,
+          relayServerName: newPocketLinkRoute === "relay" || newPocketLinkRoute === "auto" ? newPocketRelayServerName : undefined,
+          relayServerPublicKeyPin: newPocketLinkRoute === "relay" || newPocketLinkRoute === "auto" ? newPocketRelayPin : undefined,
+          relaySlot: newPocketLinkRoute === "relay" || newPocketLinkRoute === "auto" ? newPocketRelaySlot : undefined,
+          relaySecret: newPocketLinkRoute === "relay" || newPocketLinkRoute === "auto" ? newPocketRelaySecret : undefined,
         });
         configuredPocketLinkPort = localPort;
       }
@@ -3790,22 +3835,35 @@ export function App() {
                       onChange={(event) => {
                         const route = event.target.value as PocketLinkRoute;
                         setNewPocketLinkRoute(route);
-                        if (route === "relay") dispatchPocketLinkBootstrap({ type: "invalidate_discovery" });
+                        if (route === "relay") {
+                          dispatchPocketLinkBootstrap({ type: "invalidate_discovery" });
+                          dispatchPocketLinkBootstrap({ type: "invalidate_p2p" });
+                        } else if (route === "p2p") {
+                          dispatchPocketLinkBootstrap({ type: "invalidate_discovery" });
+                        } else if (route === "direct") {
+                          dispatchPocketLinkBootstrap({ type: "invalidate_p2p" });
+                        }
                       }}
                     >
                       <option value="direct">직접 LAN · Companion으로 바로 연결</option>
-                      <option value="auto">자동 · LAN 우선, 도달 불가 시 릴레이</option>
+                      <option value="p2p">Wi-Fi Direct · Linux PC에 직접 연결</option>
+                      <option value="auto">자동 · LAN, P2P, 릴레이 순서</option>
                       <option value="relay">아웃바운드 릴레이 · 이중 TLS</option>
                     </select>
                   )}
                   {isNativeApp() && newDeviceTransport === "pocketlink" && (
                     <div className="pocket-link-bootstrap-actions">
-                      <button type="button" className="pocket-link-qr-scan" disabled={scanningPocketLinkQr || discoveringPocketLinks} onClick={() => void scanPocketLinkQr()}>
+                      <button type="button" className="pocket-link-qr-scan" disabled={scanningPocketLinkQr || discoveringPocketLinks || discoveringPocketLinkPeers} onClick={() => void scanPocketLinkQr()}>
                         {scanningPocketLinkQr ? "QR 카메라 여는 중…" : "PocketLink QR 스캔"}
                       </button>
-                      {newPocketLinkRoute !== "relay" && (
-                        <button type="button" className="pocket-link-lan-discovery" disabled={scanningPocketLinkQr || discoveringPocketLinks} onClick={() => void discoverPocketLinks()}>
+                      {(newPocketLinkRoute === "direct" || newPocketLinkRoute === "auto") && (
+                        <button type="button" className="pocket-link-lan-discovery" disabled={scanningPocketLinkQr || discoveringPocketLinks || discoveringPocketLinkPeers} onClick={() => void discoverPocketLinks()}>
                           {discoveringPocketLinks ? "LAN 검색 중 · 8초…" : "같은 LAN에서 찾기"}
+                        </button>
+                      )}
+                      {(newPocketLinkRoute === "p2p" || newPocketLinkRoute === "auto") && (
+                        <button type="button" className="pocket-link-p2p-discovery" disabled={scanningPocketLinkQr || discoveringPocketLinks || discoveringPocketLinkPeers} onClick={() => void discoverPocketLinkPeers()}>
+                          {discoveringPocketLinkPeers ? "P2P 검색 중 · 12초…" : "Wi-Fi Direct에서 찾기"}
                         </button>
                       )}
                     </div>
@@ -3817,7 +3875,7 @@ export function App() {
                   </div>
                   {newDeviceTransport === "pocketlink" && (
                     <div className="pocket-link-fields">
-                      {newPocketLinkRoute !== "relay" && pocketLinkDiscoveryCandidates.length > 0 && !selectedPocketLinkDiscovery && (
+                      {(newPocketLinkRoute === "direct" || newPocketLinkRoute === "auto") && pocketLinkDiscoveryCandidates.length > 0 && !selectedPocketLinkDiscovery && (
                         <div className="pocket-link-discovery-list" aria-label="발견한 PocketLink Companion">
                           <strong>발견한 주소 · 아직 신뢰되지 않음</strong>
                           <small>PC를 고른 뒤에도 Companion 터미널의 SPKI pin을 직접 입력해야 합니다.</small>
@@ -3833,10 +3891,28 @@ export function App() {
                           ))}
                         </div>
                       )}
-                      {newPocketLinkRoute !== "relay" && selectedPocketLinkDiscovery && (
+                      {(newPocketLinkRoute === "direct" || newPocketLinkRoute === "auto") && selectedPocketLinkDiscovery && (
                         <div className="pocket-link-discovery-review">
                           <strong>LAN 주소만 선택됨 · pin은 미확인</strong>
                           <small>{selectedPocketLinkDiscovery.host}:{selectedPocketLinkDiscovery.port} · Companion 화면과 SPKI pin을 별도 대조하세요.</small>
+                        </div>
+                      )}
+                      {(newPocketLinkRoute === "p2p" || newPocketLinkRoute === "auto") && pocketLinkP2pCandidates.length > 0 && !selectedPocketLinkP2p && (
+                        <div className="pocket-link-discovery-list" aria-label="발견한 Wi-Fi Direct 기기">
+                          <strong>발견한 P2P 기기 · 아직 신뢰되지 않음</strong>
+                          <small>기기 검색은 인증 수단이 아닙니다. Linux Companion의 이름을 고른 뒤 SPKI pin을 별도로 확인하세요.</small>
+                          {pocketLinkP2pCandidates.map((candidate) => (
+                            <button type="button" key={candidate.id} onClick={() => reviewPocketLinkP2p(candidate)}>
+                              <span>{candidate.name}</span>
+                              <small>Wi-Fi Direct 후보 · 주소 비공개</small>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {(newPocketLinkRoute === "p2p" || newPocketLinkRoute === "auto") && selectedPocketLinkP2p && (
+                        <div className="pocket-link-discovery-review">
+                          <strong>Wi-Fi Direct 기기만 선택됨 · pin은 미확인</strong>
+                          <small>{selectedPocketLinkP2p.name} · Android는 client, Linux는 group owner여야 합니다.</small>
                         </div>
                       )}
                       {pendingPocketLinkBootstrap && (
@@ -3845,15 +3921,15 @@ export function App() {
                           <small>장치 {pendingPocketLinkBootstrap.deviceId.slice(0, 8)} · {new Date(pendingPocketLinkBootstrap.expiresAt).toLocaleTimeString()} 만료</small>
                         </div>
                       )}
-                      <input value={newPocketLinkHost} maxLength={253} autoCapitalize="none" spellCheck={false} placeholder="Companion LAN 호스트" aria-label="PocketLink Companion 호스트" onChange={(event) => { setNewPocketLinkHost(event.target.value); dispatchPocketLinkBootstrap({ type: "invalidate_discovery" }); }} />
+                      <input value={newPocketLinkHost} maxLength={253} autoCapitalize="none" spellCheck={false} placeholder="Companion TLS 이름 또는 주소" aria-label="PocketLink Companion TLS 이름 또는 주소" onChange={(event) => { setNewPocketLinkHost(event.target.value); dispatchPocketLinkBootstrap({ type: "invalidate_discovery" }); }} />
                       <input value={newPocketLinkPort} inputMode="numeric" maxLength={5} placeholder="8789" aria-label="PocketLink TLS 포트" onChange={(event) => { setNewPocketLinkPort(event.target.value.replace(/\D/g, "")); dispatchPocketLinkBootstrap({ type: "invalidate_discovery" }); }} />
                       <input className="pin" value={newPocketLinkPin} maxLength={51} autoCapitalize="none" spellCheck={false} placeholder="sha256/… 기본 SPKI pin" aria-label="PocketLink 기본 SPKI pin" onChange={(event) => setNewPocketLinkPin(event.target.value.trim())} />
                       <input className="pin" value={newPocketLinkBackupPin} maxLength={51} autoCapitalize="none" spellCheck={false} placeholder="sha256/… 교체용 pin · 선택" aria-label="PocketLink 교체용 SPKI pin" onChange={(event) => setNewPocketLinkBackupPin(event.target.value.trim())} />
-                      {newPocketLinkRoute !== "direct" && (
+                      {(newPocketLinkRoute === "relay" || newPocketLinkRoute === "auto") && (
                         <div className="pocket-link-relay-fields">
                           <strong>바깥 릴레이 TLS · Companion mTLS와 별도 확인</strong>
                           <small>{newPocketLinkRoute === "auto"
-                            ? "LAN TCP가 도달 불가일 때만 릴레이를 사용합니다. TLS·pin·mTLS 실패는 우회하지 않으며 SSH로 전환하지 않습니다."
+                            ? "LAN TCP 후 P2P 연결이 도달 불가일 때만 릴레이를 사용합니다. TLS·pin·mTLS 실패는 우회하지 않으며 SSH로 전환하지 않습니다."
                             : "릴레이 운영자는 접속 metadata를 볼 수 있습니다. 공인 CA hostname과 SPKI pin을 모두 검증하며 직접 LAN이나 SSH로 자동 전환하지 않습니다."}</small>
                           <input value={newPocketRelayHost} maxLength={253} autoCapitalize="none" spellCheck={false} placeholder="릴레이 접속 호스트" aria-label="PocketLink 릴레이 접속 호스트" onChange={(event) => setNewPocketRelayHost(event.target.value.trim())} />
                           <input value={newPocketRelayPort} inputMode="numeric" maxLength={5} placeholder="9443" aria-label="PocketLink 릴레이 포트" onChange={(event) => setNewPocketRelayPort(event.target.value.replace(/\D/g, ""))} />
@@ -3867,16 +3943,20 @@ export function App() {
                         {newPocketLinkRoute === "relay"
                           ? "두 TLS pin 확인 후 릴레이 등록"
                           : newPocketLinkRoute === "auto"
-                            ? "LAN·릴레이 pin 확인 후 자동 연결 등록"
-                            : "pin 확인 후 직접 연결 등록"}
+                            ? "LAN·P2P·릴레이 확인 후 자동 연결 등록"
+                            : newPocketLinkRoute === "p2p"
+                              ? "P2P 기기·pin 확인 후 등록"
+                              : "pin 확인 후 직접 연결 등록"}
                       </button>
                     </div>
                   )}
                   <small>{newDeviceTransport === "pocketlink"
                     ? newPocketLinkRoute === "direct"
                       ? "QR을 스캔하거나 같은 LAN에서 주소만 찾을 수 있습니다. LAN 광고는 인증 수단이 아니므로 PC 화면의 SPKI pin을 별도로 대조합니다. 설정은 Keystore로 보호되고 SSH로 자동 우회하지 않습니다."
+                      : newPocketLinkRoute === "p2p"
+                        ? "Wi-Fi Direct 검색은 사용자 동작으로만 시작합니다. Linux가 group owner인 연결만 허용하며, 실제 신뢰는 동일한 Companion mTLS와 고정 SPKI pin으로 검증합니다."
                       : newPocketLinkRoute === "auto"
-                        ? "Companion mTLS는 LAN과 릴레이에서 동일하게 검증합니다. LAN TCP 연결 자체가 실패할 때만 이중 TLS 릴레이를 사용하고 이후 30초 동안 반복 LAN timeout을 생략하며, 인증 오류는 fallback 조건이 아닙니다."
+                        ? "Companion mTLS는 LAN·P2P·릴레이에서 동일하게 검증합니다. 전송 연결 자체가 실패할 때만 다음 경로로 이동하며 LAN은 30초, P2P는 60초 cooldown을 사용하고 인증 오류는 fallback 조건이 아닙니다."
                         : "Companion 정보는 내부 mTLS에, 릴레이 정보·slot·secret은 외부 TLS에 사용합니다. 둘은 Android Keystore 암호화 설정에만 저장되고 화면 상태·로그로 다시 내보내지 않습니다."
                     : "현재 검증된 Termux/SSH 연결을 rollback 호환 경로로 유지합니다."}</small>
                 </div>

@@ -76,14 +76,18 @@ key를 유지하고 SSH로 자동 우회하지 않는다.
 같은 LAN 주소 discovery는 사용자가 누를 때만 Android `NsdManager`로 8초 동안 실행한다. native policy가
 service type과 TXT version을 exact-match하고 후보를 16개, private IPv4/IPv6 ULA로 제한한 뒤 2분짜리
 검토 hint만 WebView에 보낸다. 선택해도 pin은 비워 두므로 Companion 터미널의 SPKI pin을 수동으로
-대조해야 하며 자동 페어링·연결·SSH fallback은 없다. 연결 센터에서 direct LAN, outbound relay 또는
-LAN 우선 자동 경로를 선택할 수 있다. relay endpoint·certificate hostname·SPKI pin·slot·secret은 같은 Keystore
+대조해야 하며 자동 페어링·연결·SSH fallback은 없다. Wi-Fi Direct 검색도 사용자가 누를 때만 12초 동안
+실행하고 최대 16개 기기 이름과 2분 opaque 후보 ID만 WebView에 보낸다. Android 13+는 위치 용도가 아닌
+`NEARBY_WIFI_DEVICES`, Android 12 이하는 location 권한을 사용하며 MAC 주소는 native 암호화 설정 밖으로
+내보내지 않는다. 연결 센터에서 direct LAN, Wi-Fi Direct, outbound relay 또는 LAN→P2P→relay 자동 경로를
+선택할 수 있다. relay endpoint·certificate hostname·SPKI pin·slot·secret은 같은 Keystore
 AES-GCM 설정에만 저장한다. native forwarder는 platform CA+hostname+relay pin으로 outer TLS 1.2/1.3을
 확인하고 bounded protocol 1 attach 뒤, 그 socket 위에서 Companion pin과 Android client certificate를
 다시 검증하는 inner PocketLink mTLS를 연다. status와 로그에는 relay endpoint·slot·secret을 내보내지
-않는다. 자동 경로도 LAN TCP 도달 실패만 relay fallback으로 인정하고 TLS hostname·SPKI·mTLS 실패는
-우회하지 않으며, 반복 LAN 실패는 30초 monotonic cooldown으로 제한한다. Wi-Fi Direct 같은 P2P와
-실기기 relay acceptance는 아직 구현·검증하지 않았다.
+않는다. 자동 경로는 LAN/P2P transport 도달 실패만 다음 경로 조건으로 인정하고 TLS hostname·SPKI·mTLS
+실패는 우회하지 않으며, 반복 LAN/P2P 실패는 각각 30초/60초 monotonic cooldown으로 제한한다. Android는
+Wi-Fi Direct group client만 허용한다. Linux group-owner 자동화와 P2P/relay 실기기 acceptance는 아직
+구현·검증하지 않았다.
 사용자가 연결 센터에서 명시적으로 켜고 Android runtime 권한을 허용하면 `connectedDevice` foreground
 service가 최대 8개의 paired loopback Companion에서 notification-only SSE를 구독한다. Companion은 완료·
 실패·새 승인에 대해 schema/kind/operation ID/시각과 승인 만료시각만 보내며 프롬프트·경로·응답·도구

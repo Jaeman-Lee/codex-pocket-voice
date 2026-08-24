@@ -143,8 +143,9 @@ raw stream으로 연결하고 tunnel이 끝난 뒤 새 대기 socket을 만든�
 
 ## Android enrollment와 nested TLS
 
-Android 연결 센터에서 PocketLink를 고른 뒤 연결 경로를 `직접 LAN`, `아웃바운드 릴레이` 또는
-`자동 · LAN 우선`으로 선택한다. relay 또는 auto 경로에는 다음 두 identity를 별도로 입력·검토한다.
+Android 연결 센터에서 PocketLink를 고른 뒤 연결 경로를 `직접 LAN`, `Wi-Fi Direct`, `아웃바운드 릴레이`
+또는 `자동 · LAN, P2P, 릴레이 순서`로 선택한다. relay 또는 auto 경로에는 다음 두 identity를 별도로
+입력·검토한다.
 
 - 내부 Companion: certificate hostname용 host, TLS port, 기본/교체용 Companion SPKI pin
 - 외부 relay: 접속 host/port, certificate hostname, relay SPKI pin, opaque slot, 256-bit shared secret
@@ -154,8 +155,8 @@ bounded hostname/IP로 검증한다. Android 첫 구현은 platform trust store�
 허용하고 hostname과 reviewed relay SPKI pin도 함께 요구한다. Node Companion의 선택형 private CA file을
 Android UI로 복사하지 않는다.
 
-등록 정보는 기존 AndroidKeyStore AES-GCM key가 보호하는 PocketLink config schema 3에 저장한다. schema
-1 direct와 schema 2 direct/relay 설정은 기존 고정 경로를 유지한 채 schema 3으로 자연스럽게 갱신된다.
+등록 정보는 기존 AndroidKeyStore AES-GCM key가 보호하는 PocketLink config schema 4에 저장한다. schema
+1 direct, schema 2 direct/relay와 schema 3 auto 설정은 기존 의미를 유지한 채 schema 4로 읽힌다.
 slot과 secret은 native configuration
 call에서만 일시적으로 지나가며 WebView storage, device-target record, status 응답, notification과 로그로
 다시 내보내지 않는다. 사용자가 target을 삭제하면 암호문 설정과 해당 P-256 device-key A/B alias를
@@ -172,12 +173,12 @@ call에서만 일시적으로 지나가며 WebView storage, device-target record
 4. 두 handshake가 모두 성공한 뒤에만 loopback browser bytes를 내부 mTLS로 전달한다. 고정 relay
    경로는 어느 단계든 실패하면 socket을 닫고 direct LAN, SSH 또는 다른 Provider로 전환하지 않는다.
 
-`auto`는 LAN TCP connect가 성립하지 않은 경우에만 위 relay 순서를 시도한다. LAN TCP가 성립한 뒤
-Companion TLS hostname·SPKI·client certificate 검증이 실패하면 relay로 우회하지 않고 즉시 실패한다.
-LAN 불통 뒤 30초 동안은 새 browser connection이 같은 10초 connect timeout을 반복하지 않고 relay를
-사용하며, cooldown 뒤 LAN을 다시 우선 확인한다.
+`auto`는 LAN TCP connect가 성립하지 않으면 검토된 P2P peer를, P2P transport도 성립하지 않으면 위 relay
+순서를 시도한다. 어느 transport에서든 Companion TLS hostname·SPKI·client certificate 검증이 시작된 뒤
+실패하면 다음 경로로 우회하지 않고 즉시 실패한다. LAN/P2P 불통은 각각 30초/60초 cooldown 뒤 다시
+우선 확인한다. Android는 P2P group client만 허용하며 Linux group-owner 자동화는 후속 단계다.
 
-Android route status는 configured `direct`/`relay`/`auto`와 마지막으로 mTLS까지 검증된 실제 경로만
+Android route status는 configured `direct`/`p2p`/`relay`/`auto`와 마지막으로 mTLS까지 검증된 실제 경로만
 반환하고 endpoint·pin·slot·secret은 반환하지 않는다. 서버 pin
 승격과 Android client-key A/B rotation은 내부 Companion mTLS 관찰을 기준으로 하므로 relay 경로에서도
 기존 복구 순서를 그대로 사용한다.
@@ -197,7 +198,7 @@ Node 통합 검사는 서로 다른 relay/Companion/Android test certificate를 
 - Android source contract에서 public CA+hostname+relay SPKI, inner Companion pin+client identity의 분리,
   Keystore encrypted schema migration과 status credential 비노출
 
-아직 남은 Phase E 범위는 Wi-Fi Direct 같은 P2P와 이를 현재 LAN→relay 정책 사이에 넣는 전체 우선순위, 공용 relay의
-외부 edge DDoS·용량·metadata 보존 정책과 실제 부하 검증, Android nested socket의 실기기 네트워크
+아직 남은 Phase E 범위는 Linux Wi-Fi Direct group-owner advertise/accept 자동화와 실제 두 기기 group
+formation, 공용 relay의 외부 edge DDoS·용량·metadata 보존 정책과 실제 부하 검증, Android nested socket의 실기기 네트워크
 전환·절전·배터리 acceptance다. 이 항목 전에는 relay를 출시 transport로 간주하지 않고 기존 LAN
 PocketLink와 Termux/SSH rollback 경로를 유지한다.

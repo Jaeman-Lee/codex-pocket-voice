@@ -1,7 +1,9 @@
 package io.github.jaemanlee.codexpocketvoice;
 
+import android.Manifest;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.os.Build;
 import androidx.activity.result.ActivityResult;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.JSObject;
@@ -21,7 +23,11 @@ import org.json.JSONArray;
 
 @CapacitorPlugin(
     name = "PocketTunnel",
-    permissions = { @Permission(alias = "runCommand", strings = { "com.termux.permission.RUN_COMMAND" }) }
+    permissions = {
+        @Permission(alias = "runCommand", strings = { "com.termux.permission.RUN_COMMAND" }),
+        @Permission(alias = "nearbyWifi", strings = { Manifest.permission.NEARBY_WIFI_DEVICES }),
+        @Permission(alias = "wifiLocation", strings = { Manifest.permission.ACCESS_FINE_LOCATION })
+    }
 )
 public class PocketTunnelPlugin extends Plugin {
     private static final String TERMUX_PACKAGE = "com.termux";
@@ -29,12 +35,14 @@ public class PocketTunnelPlugin extends Plugin {
     private static final long PIN_PROMOTION_MAX_AGE_MS = 120_000L;
     private static final long DISCOVERY_REVIEW_MAX_AGE_MS = 120_000L;
     private PocketLinkNsdDiscovery activeDiscovery;
+    private PocketLinkP2pController p2pController;
 
     @Override
     protected synchronized void handleOnDestroy() {
         PocketLinkNsdDiscovery discovery = activeDiscovery;
         activeDiscovery = null;
         if (discovery != null) discovery.cancel();
+        if (p2pController != null) p2pController.cancelDiscovery();
         super.handleOnDestroy();
     }
 
@@ -122,6 +130,55 @@ public class PocketTunnelPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void discoverPocketLinkPeers(PluginCall call) {
+        String permission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                ? "nearbyWifi"
+                : "wifiLocation";
+        if (getPermissionState(permission) != PermissionState.GRANTED) {
+            requestPermissionForAlias(permission, call, "p2pPermissionResult");
+            return;
+        }
+        discoverPocketLinkPeersGranted(call);
+    }
+
+    @PermissionCallback
+    private void p2pPermissionResult(PluginCall call) {
+        String permission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                ? "nearbyWifi"
+                : "wifiLocation";
+        if (getPermissionState(permission) != PermissionState.GRANTED) {
+            call.reject("Wi-Fi Direct 검색을 위해 근처 기기 권한을 허용해 주세요.");
+            return;
+        }
+        discoverPocketLinkPeersGranted(call);
+    }
+
+    private void discoverPocketLinkPeersGranted(PluginCall call) {
+        p2pController().discover(new PocketLinkP2pController.DiscoveryCallback() {
+            @Override
+            public void onComplete(List<PocketLinkP2pController.Candidate> candidates) {
+                JSONArray values = new JSONArray();
+                for (PocketLinkP2pController.Candidate candidate : candidates) {
+                    JSObject value = new JSObject();
+                    value.put("id", candidate.id);
+                    value.put("name", candidate.name);
+                    value.put("expiresAt", candidate.expiresAt);
+                    values.put(value);
+                }
+                JSObject response = new JSObject();
+                response.put("candidates", values);
+                response.put("windowMs", PocketLinkP2pPolicy.DISCOVERY_WINDOW_MS);
+                call.resolve(response);
+            }
+
+            @Override
+            public void onError(String message) {
+                call.reject(message);
+            }
+        });
+    }
+
+    @PluginMethod
     public void start(PluginCall call) {
         int localPort = optionalPort(call, "localPort", 8788);
         if (localPort < 0) {
@@ -178,6 +235,24 @@ public class PocketTunnelPlugin extends Plugin {
             call.reject("교체용 SPKI pin은 기본 pin과 달라야 합니다.");
             return;
         }
+        PocketLinkConfigStore.P2pConfig p2p = null;
+        String p2pCandidateId = call.getString("p2pCandidateId");
+        if (PocketLinkRoutePolicy.P2P.equals(route) || PocketLinkRoutePolicy.AUTO.equals(route)) {
+            if (p2pCandidateId != null && !p2pCandidateId.isEmpty()) {
+                p2p = p2pController().reviewedConfig(p2pCandidateId, System.currentTimeMillis());
+                if (p2p == null) {
+                    call.reject("Wi-Fi Direct 검색 결과가 만료되었습니다. 다시 검색해 주세요.");
+                    return;
+                }
+            } else if (PocketLinkRoutePolicy.P2P.equals(route)) {
+                call.reject("Wi-Fi Direct로 연결할 Linux PC를 먼저 검색해 선택해 주세요.");
+                return;
+            }
+        } else if (p2pCandidateId != null && !p2pCandidateId.isEmpty()) {
+            call.reject("현재 PocketLink 경로에서는 Wi-Fi Direct 후보를 사용할 수 없습니다.");
+            return;
+        }
+
         PocketLinkConfigStore.RelayConfig relay = null;
         if (PocketLinkRoutePolicy.RELAY.equals(route) || PocketLinkRoutePolicy.AUTO.equals(route)) {
             String relayHost = normalizedHost(call.getString("relayHost"));
@@ -194,7 +269,7 @@ public class PocketTunnelPlugin extends Plugin {
             relay = new PocketLinkConfigStore.RelayConfig(
                     relayHost, relayPort, relayServerName, relayPin, relaySlot, relaySecret
             );
-        } else if (!PocketLinkRoutePolicy.DIRECT.equals(route)) {
+        } else if (!PocketLinkRoutePolicy.DIRECT.equals(route) && !PocketLinkRoutePolicy.P2P.equals(route)) {
             call.reject("PocketLink 연결 경로가 올바르지 않습니다.");
             return;
         }
@@ -210,7 +285,7 @@ public class PocketTunnelPlugin extends Plugin {
             createdIdentity = !hadIdentity;
             PocketLinkConfigStore.Config config = new PocketLinkConfigStore.Config(
                     label, localPort, host, remotePort, primaryPin, backupPin, false,
-                    PocketLinkIdentityStore.SLOT_A, "", route, relay
+                    PocketLinkIdentityStore.SLOT_A, "", route, p2p, relay
             );
             configStore.save(config);
             saved = true;
@@ -243,11 +318,16 @@ public class PocketTunnelPlugin extends Plugin {
             return;
         }
         try {
+            PocketLinkConfigStore configStore = new PocketLinkConfigStore(getContext());
+            PocketLinkConfigStore.Config config = configStore.load(localPort);
             Intent stop = new Intent(getContext(), PocketLinkService.class);
             stop.setAction(PocketLinkService.ACTION_STOP);
             stop.putExtra(PocketLinkService.EXTRA_LOCAL_PORT, localPort);
             ContextCompat.startForegroundService(getContext(), stop);
-            new PocketLinkConfigStore(getContext()).remove(localPort);
+            if (config != null && config.p2p != null) {
+                p2pController().disconnect(config.p2p);
+            }
+            configStore.remove(localPort);
             new PocketLinkIdentityStore().remove(localPort);
             call.resolve();
         } catch (Exception error) {
@@ -467,6 +547,7 @@ public class PocketTunnelPlugin extends Plugin {
             result.put("transport", configured ? "pocketlink" : "termux");
             if (configured) {
                 result.put("route", config.route());
+                result.put("p2pConfigured", config.p2p != null);
                 String lastVerifiedRoute = PocketLinkService.lastVerifiedRoute(localPort);
                 if (lastVerifiedRoute != null) result.put("lastVerifiedRoute", lastVerifiedRoute);
                 result.put("backupPinConfigured", config.backupPin != null && !config.backupPin.isEmpty());
@@ -550,6 +631,11 @@ public class PocketTunnelPlugin extends Plugin {
         intent.setAction(PocketLinkService.ACTION_START);
         intent.putExtra(PocketLinkService.EXTRA_LOCAL_PORT, localPort);
         ContextCompat.startForegroundService(getContext(), intent);
+    }
+
+    private synchronized PocketLinkP2pController p2pController() {
+        if (p2pController == null) p2pController = PocketLinkP2pController.get(getContext());
+        return p2pController;
     }
 
     private int optionalPort(PluginCall call, String name, int fallback) {
