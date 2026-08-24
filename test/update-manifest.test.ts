@@ -124,6 +124,30 @@ test("update manifests bind the APK, signing identity, and monotonic version", {
     assert.notEqual(wrongApkIdentity.status, 0);
     assert.match(wrongApkIdentity.stderr, /APK signing certificate does not match/);
 
+    const replacementApk = join(root, "replacement.apk");
+    const swappingApkSigner = join(root, "swapping-apksigner.mjs");
+    await writeFile(replacementApk, "replacement APK fixture\n", { mode: 0o600 });
+    await writeFile(
+      swappingApkSigner,
+      [
+        "#!/usr/bin/env node",
+        "import { readFileSync, renameSync } from 'node:fs';",
+        `renameSync(${JSON.stringify(replacementApk)}, ${JSON.stringify(apk)});`,
+        "const bytes = readFileSync(process.argv.at(-1), 'utf8');",
+        `const digest = bytes.includes('replacement') ? ${JSON.stringify(fingerprint)} : ${JSON.stringify("c".repeat(64))};`,
+        "process.stdout.write(`Signer #1 certificate SHA-256 digest: ${digest}\\n`);",
+        "",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    await chmod(swappingApkSigner, 0o700);
+    const swappedDuringSignerCheck = run(verifyManifest, [
+      ...replaceArgument(signedArguments, "--apksigner", swappingApkSigner),
+    ], false);
+    assert.notEqual(swappedDuringSignerCheck.status, 0);
+    assert.match(swappedDuringSignerCheck.stderr, /APK signing certificate does not match/);
+    await writeFile(apk, "signed APK fixture\n", { mode: 0o600 });
+
     const unsignedDirectory = join(root, "unsigned");
     await mkdir(unsignedDirectory);
     const unsignedApk = join(unsignedDirectory, "Codex-Pocket-Voice-v2.0.0-unsigned.apk");

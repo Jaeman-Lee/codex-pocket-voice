@@ -17,7 +17,9 @@ candidate의 exact commit이고 clean일 때만 최종 report를 만든다.
 
 모든 입력 파일은 `O_NOFOLLOW`로 한 번만 열고 같은 file descriptor에서 regular/single-link, 필요 시
 owner-only mode, 시작·종료 metadata와 byte 상한을 확인한다. symlink·hardlink, 읽는 중 교체·변경과
-상한 초과는 원본 경로나 내용을 출력하지 않고 실패한다.
+상한 초과는 원본 경로나 내용을 출력하지 않고 실패한다. APK는 hash·byte count를 계산한 바로 그 열린
+descriptor를 Linux 자식 `apksigner`에도 전달하므로, 두 검사 사이 artifact 경로를 교체해 signer가 다른
+APK를 보게 만들 수 없다.
 
 ## 입력 조건
 
@@ -57,8 +59,9 @@ npm run android:release-evidence -- \
 
 다음 조건이 전부 참일 때만 exit code 0과 `gate.passed: true`를 반환한다.
 
-- pinned certificate·detached signature·APK signer·APK/SBOM hash와 byte count가 모두 유효하고, verifier
-  receipt의 manifest digest와 field 평가에 사용한 exact bytes가 일치
+- pinned certificate·detached signature·APK signer·APK/SBOM hash와 byte count가 모두 유효하고, APK
+  hash와 signer가 같은 열린 descriptor의 bytes에 귀속되며 verifier receipt의 manifest digest와 field
+  평가에 사용한 exact bytes가 일치
 - 기능 환경·여섯 attestation·20개 scenario와 30일 freshness가 모두 pass
 - 세 Android report가 정확한 transport slot에 있고 모두 `release_gate` pass
 - 세 report가 같은 signed candidate이고 설치 package/version/versionCode도 일치

@@ -607,7 +607,8 @@ device/network identifier, credential, prompt/response, 오류 원문과 자유 
 선언을 검증하고 aggregate에서 고정 threshold를 재계산해 편집된 pass를 거부한다. 네 결과가 같은 clean
 candidate이고 모두 30일 이내 pass일 때만 create-once 0600 aggregate를 통과시킨다. field 평가 전에는
 independent trust path의 pinned certificate fingerprint로 detached manifest signature, APK signer와
-APK/SBOM 실제 hash·byte count를 검증한다. verifier가 반환한 exact manifest SHA-256 receipt와 field
+APK/SBOM 실제 hash·byte count를 검증한다. APK hash와 signer 검사는 `O_NOFOLLOW`로 연 같은 descriptor를
+Linux `apksigner` 자식까지 유지해 두 검사 사이 경로 교체를 차단한다. verifier가 반환한 exact manifest SHA-256 receipt와 field
 평가가 읽은 bytes를 대조하고 평가 전·후 exact clean source를 재검증하며, 검증 뒤 경로 교체나 source
 drift를 포함한 실패는 출력 없이 종료한다. 실제 field
 입력은 `O_NOFOLLOW` 단일 descriptor에서 regular/single-link, private report의 owner-only 조건,

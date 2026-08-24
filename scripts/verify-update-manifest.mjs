@@ -24,16 +24,7 @@ if (resolve(artifactDirectory, basename(manifestPath)) !== manifestPath) {
   fail("Update manifest must be directly inside the artifact directory");
 }
 
-for (const artifact of manifest.artifacts) {
-  const path = containedArtifactPath(artifactDirectory, artifact.file);
-  const maximum = artifact.kind === "apk" ? 1024 * 1024 * 1024 : 64 * 1024 * 1024;
-  const bytes = await boundedFile(path, maximum, `${artifact.kind} artifact`);
-  if (bytes.length !== artifact.bytes) fail(`${artifact.kind} artifact byte count does not match`);
-  const digest = createHash("sha256").update(bytes).digest("hex");
-  if (digest !== artifact.sha256) fail(`${artifact.kind} artifact SHA-256 does not match`);
-}
-
-const apk = manifest.artifacts.find((artifact) => artifact.kind === "apk");
+let signingFingerprint;
 if (manifest.signed) {
   const signaturePath = resolve(required(options, "signature"));
   const certificatePath = resolve(required(options, "certificate"));
@@ -57,13 +48,29 @@ if (manifest.signed) {
   if (!verifySignature("sha256", manifestBytes, certificate.publicKey, signature)) {
     fail("Update manifest signature is invalid");
   }
-  verifyApkCertificate(
-    containedArtifactPath(artifactDirectory, apk.file),
-    fingerprint,
-    options.get("apksigner") ?? "apksigner",
-  );
+  signingFingerprint = fingerprint;
 } else if (!options.has("allow-unsigned")) {
   fail("Unsigned update manifest is not allowed");
+}
+
+for (const artifact of manifest.artifacts) {
+  const path = containedArtifactPath(artifactDirectory, artifact.file);
+  const maximum = artifact.kind === "apk" ? 1024 * 1024 * 1024 : 64 * 1024 * 1024;
+  const bytes = await boundedFile(
+    path,
+    maximum,
+    `${artifact.kind} artifact`,
+    artifact.kind === "apk" && signingFingerprint
+      ? (handle) => verifyApkCertificate(
+        handle,
+        signingFingerprint,
+        options.get("apksigner") ?? "apksigner",
+      )
+      : undefined,
+  );
+  if (bytes.length !== artifact.bytes) fail(`${artifact.kind} artifact byte count does not match`);
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  if (digest !== artifact.sha256) fail(`${artifact.kind} artifact SHA-256 does not match`);
 }
 
 if (options.has("current-version-code")) {
@@ -124,10 +131,11 @@ function validateManifest(value) {
   }
 }
 
-function verifyApkCertificate(apkPath, expected, command) {
-  const result = spawnSync(command, ["verify", "--print-certs", apkPath], {
+function verifyApkCertificate(apkHandle, expected, command) {
+  const childApkDescriptor = 3;
+  const result = spawnSync(command, ["verify", "--print-certs", `/proc/self/fd/${childApkDescriptor}`], {
     encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe", apkHandle.fd],
     timeout: 60_000,
   });
   if (result.error || result.status !== 0) fail("APK signature verification failed");
@@ -136,7 +144,7 @@ function verifyApkCertificate(apkPath, expected, command) {
   if (matches.length !== 1 || matches[0] !== expected) fail("APK signing certificate does not match the update manifest");
 }
 
-async function boundedFile(path, maximum, name) {
+async function boundedFile(path, maximum, name, inspect) {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
     .catch(() => fail(`${name} is not a regular non-symlink file`));
   try {
@@ -146,6 +154,7 @@ async function boundedFile(path, maximum, name) {
       fail(`${name} size or link count is invalid`);
     }
     const bytes = await readWithLimit(handle, maximum, name);
+    if (inspect) inspect(handle);
     const final = await handle.stat().catch(() => fail(`${name} metadata is invalid`));
     if (bytes.length !== initial.size || final.size !== initial.size
         || final.mtimeMs !== initial.mtimeMs || final.ctimeMs !== initial.ctimeMs) {

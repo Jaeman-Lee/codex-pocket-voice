@@ -10,6 +10,18 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Same-descriptor APK signer binding fix는 update verifier가 APK hash를 읽은 file descriptor를 닫은 뒤
+  같은 경로를 `apksigner`에 다시 넘겨, 두 검사 사이 경로 교체로 hash 대상과 signer 대상이 달라질 수
+  있던 release trust 경계 오류를 고치는 internal compatibility `patch`다. 아직 전달하지 않은
+  incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,
+  `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. 실제 field·Provider 호출,
+  APK 전달·설치와 Companion 재시작은 하지 않으며 current v1 후보 1.8.2, staged v1.8.4, 검증된
+  1.8.1 rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- verifier는 `O_NOFOLLOW`로 연 APK descriptor를 hash/byte-count 검사부터 signer 검사 종료까지 유지하고,
+  그 descriptor만 자식 `apksigner`에 전달한다. signer 실행 중 원래 경로를 같은 signer의 다른 파일로
+  교체해도 열린 원본 bytes만 검사하며, 결정적 경로 교체 회귀는 검증 실패를 요구한다.
+  `release:check`의 단위 검사 315개와 실제 app-server 통합 3개, production build·schema 일치·SBOM이
+  통과했다.
 - Stable clean-source evidence fix는 Android 저부하 측정과 field 판정이 시작 시점의 clean checkout만
   확인해, 측정·평가 중 source가 달라져도 기존 commit으로 report를 만들 수 있던 provenance 공백을
   고치는 internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/
