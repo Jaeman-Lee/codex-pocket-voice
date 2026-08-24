@@ -107,6 +107,22 @@ test("release evidence rejects candidate drift and a report supplied for the wro
 });
 
 test("Android aggregate parser rejects edited verdicts, extra fields, and noncanonical input", () => {
+  const legacy = structuredClone(passingAndroidReport("p2p")) as unknown as { schemaVersion: number };
+  legacy.schemaVersion = 2;
+  assert.throws(
+    () => parseAndroidFieldReport(canonicalJson(legacy), candidate),
+    /schema is unsupported/,
+  );
+
+  const unverifiedApk = structuredClone(passingAndroidReport("p2p")) as unknown as {
+    app: { digestVerifiedAtStartAndEnd: boolean };
+  };
+  unverifiedApk.app.digestVerifiedAtStartAndEnd = false;
+  assert.throws(
+    () => parseAndroidFieldReport(canonicalJson(unverifiedApk), candidate),
+    /digest verification does not match/,
+  );
+
   const tampered = passingAndroidReport("p2p");
   tampered.cpuPercent!.p95 = 6;
   tampered.cpuPercent!.max = 10;
@@ -357,7 +373,7 @@ function passingAndroidTexts(forCandidate = candidate): Record<AndroidFieldTrans
 
 function passingAndroidReport(transport: AndroidFieldTransport, forCandidate = candidate): AndroidFieldReport {
   const report: AndroidFieldReport = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "android_field_acceptance",
     evidenceKind: "adb_aggregate_measurement",
     candidate: { ...forCandidate },
@@ -370,6 +386,8 @@ function passingAndroidReport(transport: AndroidFieldTransport, forCandidate = c
       packageName: forCandidate.applicationId,
       versionName: forCandidate.version,
       versionCode: forCandidate.versionCode,
+      apkSha256: forCandidate.apkSha256,
+      digestVerifiedAtStartAndEnd: true,
     },
     measurement: {
       requestedDurationSeconds: 3_600,

@@ -61,6 +61,11 @@ interface PackageIdentity {
   versionCode: number;
 }
 
+interface InstalledCandidateState {
+  packageIdentity: PackageIdentity;
+  apkPath: string;
+}
+
 export interface MemorySample {
   pssKib: number;
   rssKib: number | null;
@@ -90,7 +95,7 @@ interface GateCheck {
 }
 
 export interface AndroidFieldReport {
-  schemaVersion: 2;
+  schemaVersion: 3;
   kind: "android_field_acceptance";
   evidenceKind: "adb_aggregate_measurement";
   candidate: FunctionalCandidateIdentity;
@@ -103,6 +108,8 @@ export interface AndroidFieldReport {
     packageName: string;
     versionName: string;
     versionCode: number;
+    apkSha256: string;
+    digestVerifiedAtStartAndEnd: true;
   };
   measurement: {
     requestedDurationSeconds: number;
@@ -190,11 +197,8 @@ export async function measureAndroidFieldAcceptance(
     ["-s", serial, "shell", ...args],
   );
   const packageName = checkedConfig.candidate.applicationId;
-  const packageIdentity = parsePackageIdentity(await shell("dumpsys", "package", packageName));
-  if (packageIdentity.versionName !== checkedConfig.candidate.version
-    || packageIdentity.versionCode !== checkedConfig.candidate.versionCode) {
-    throw new AndroidFieldError("Installed app version does not match the signed candidate");
-  }
+  const installedCandidate = await inspectInstalledCandidate(shell, checkedConfig.candidate);
+  const packageIdentity = installedCandidate.packageIdentity;
 
   const startedWallClockMs = wallClockMs();
   if (!Number.isFinite(startedWallClockMs)) throw new AndroidFieldError("Measurement clock is invalid");
@@ -254,6 +258,11 @@ export async function measureAndroidFieldAcceptance(
     ),
     optionalQuery(() => shell("dumpsys", "battery"), parseBatterySnapshot),
   ]);
+  const endingCandidate = await inspectInstalledCandidate(shell, checkedConfig.candidate);
+  if (endingCandidate.apkPath !== installedCandidate.apkPath
+      || endingCandidate.packageIdentity.userId !== packageIdentity.userId) {
+    throw new AndroidFieldError("Installed app changed during the field measurement");
+  }
   const actualDurationSeconds = Math.max(0.001, (monotonicMs() - startedAt) / 1_000);
   const processPresencePercent = percentage(
     samples.filter((sample) => sample.processPresent === true).length,
@@ -269,7 +278,7 @@ export async function measureAndroidFieldAcceptance(
     throw new AndroidFieldError("Measurement clock is invalid");
   }
   const report: AndroidFieldReport = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "android_field_acceptance",
     evidenceKind: "adb_aggregate_measurement",
     candidate: checkedConfig.candidate,
@@ -282,6 +291,8 @@ export async function measureAndroidFieldAcceptance(
       packageName,
       versionName: packageIdentity.versionName,
       versionCode: packageIdentity.versionCode,
+      apkSha256: checkedConfig.candidate.apkSha256,
+      digestVerifiedAtStartAndEnd: true,
     },
     measurement: {
       requestedDurationSeconds: checkedConfig.durationSeconds,
@@ -350,6 +361,32 @@ export function parsePackageIdentity(output: string): PackageIdentity {
     throw new AndroidFieldError("Installed app identity could not be verified");
   }
   return { userId, versionCode, versionName: versionNameMatch[1]! };
+}
+
+export function parseInstalledApkPath(output: string): string {
+  boundedText(output, "installed package path");
+  const lines = output.trim().split(/\r?\n/);
+  if (lines.length !== 1) throw new AndroidFieldError("Installed APK path could not be verified");
+  const match = /^package:(\/data\/app\/(?:[A-Za-z0-9._~+=,@%-]{1,255}\/){1,8}base\.apk)$/.exec(lines[0]!);
+  if (!match) throw new AndroidFieldError("Installed APK path could not be verified");
+  const path = match[1]!;
+  if (path.split("/").some((segment) => segment === "." || segment === "..")) {
+    throw new AndroidFieldError("Installed APK path could not be verified");
+  }
+  return path;
+}
+
+export function parseInstalledApkDigest(output: string, expectedPath: string): string {
+  boundedText(output, "installed APK digest");
+  if (!expectedPath.startsWith("/data/app/") || expectedPath.length > 4_096
+      || /[\u0000-\u001f\u007f]/.test(expectedPath)) {
+    throw new AndroidFieldError("Installed APK digest could not be verified");
+  }
+  const match = /^([a-fA-F0-9]{64})[ \t]+([^\r\n]+)\r?\n?$/.exec(output);
+  if (!match || match[2] !== expectedPath) {
+    throw new AndroidFieldError("Installed APK digest could not be verified");
+  }
+  return match[1]!.toLowerCase();
 }
 
 export function parseCpuInfo(output: string, packageName: string): number {
@@ -566,6 +603,30 @@ function validatePackageName(packageName: string): void {
   if (!PACKAGE_PATTERN.test(packageName) || packageName.length > 200) {
     throw new AndroidFieldError("Android package name is invalid");
   }
+}
+
+async function inspectInstalledCandidate(
+  shell: (...args: string[]) => Promise<string>,
+  candidate: FunctionalCandidateIdentity,
+): Promise<InstalledCandidateState> {
+  const [packageOutput, pathOutput] = await Promise.all([
+    shell("dumpsys", "package", candidate.applicationId),
+    shell("pm", "path", candidate.applicationId),
+  ]);
+  const packageIdentity = parsePackageIdentity(packageOutput);
+  if (packageIdentity.versionName !== candidate.version
+      || packageIdentity.versionCode !== candidate.versionCode) {
+    throw new AndroidFieldError("Installed app version does not match the signed candidate");
+  }
+  const apkPath = parseInstalledApkPath(pathOutput);
+  const digest = parseInstalledApkDigest(
+    await shell("toybox", "sha256sum", apkPath),
+    apkPath,
+  );
+  if (digest !== candidate.apkSha256) {
+    throw new AndroidFieldError("Installed APK does not match the signed candidate");
+  }
+  return { packageIdentity, apkPath };
 }
 
 function wallTimestamp(value: number): string {

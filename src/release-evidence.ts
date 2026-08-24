@@ -188,7 +188,7 @@ export function parseAndroidFieldReport(
     "schemaVersion", "kind", "evidenceKind", "candidate", "transport", "testWindow", "app",
     "measurement", "cpuPercent", "memoryMib", "battery", "backgroundWake", "gate", "privacy",
   ], "Android field report");
-  if (root.schemaVersion !== 2 || root.kind !== "android_field_acceptance"
+  if (root.schemaVersion !== 3 || root.kind !== "android_field_acceptance"
       || root.evidenceKind !== "adb_aggregate_measurement") {
     throw new ReleaseEvidenceError("Android field report schema is unsupported");
   }
@@ -230,11 +230,21 @@ export function parseAndroidFieldReport(
     throw new ReleaseEvidenceError("Android test window is invalid");
   }
 
-  const appRecord = exactRecord(root.app, ["packageName", "versionName", "versionCode"], "Android app identity");
+  const appRecord = exactRecord(
+    root.app,
+    ["packageName", "versionName", "versionCode", "apkSha256", "digestVerifiedAtStartAndEnd"],
+    "Android app identity",
+  );
   const app = {
     packageName: exactValue(appRecord.packageName, candidate.applicationId, "Installed package"),
     versionName: exactValue(appRecord.versionName, candidate.version, "Installed version"),
     versionCode: exactValue(appRecord.versionCode, candidate.versionCode, "Installed version code"),
+    apkSha256: exactValue(appRecord.apkSha256, candidate.apkSha256, "Installed APK digest"),
+    digestVerifiedAtStartAndEnd: exactValue(
+      appRecord.digestVerifiedAtStartAndEnd,
+      true,
+      "Installed APK digest verification",
+    ),
   };
   const measurementRecord = exactRecord(root.measurement, [
     "requestedDurationSeconds", "actualDurationSeconds", "intervalSeconds", "scheduledSamples",
@@ -357,7 +367,7 @@ export function parseAndroidFieldReport(
   }
 
   const report: AndroidFieldReport = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "android_field_acceptance",
     evidenceKind: "adb_aggregate_measurement",
     candidate,
@@ -452,7 +462,7 @@ function exactRecord(value: unknown, keys: readonly string[], label: string): Re
   return record;
 }
 
-function exactValue<T extends string | number>(value: unknown, expected: T, label: string): T {
+function exactValue<T extends string | number | boolean>(value: unknown, expected: T, label: string): T {
   if (value !== expected) throw new ReleaseEvidenceError(`${label} does not match the required value`);
   return expected;
 }

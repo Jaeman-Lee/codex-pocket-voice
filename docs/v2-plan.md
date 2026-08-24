@@ -587,10 +587,12 @@ Companion TCP listener 확인 뒤 timeout·signal·오류에서 역순 정리한
 background partial wake의 시작·종료 delta만 읽는다. 60분·95% coverage·CPU p95 5%·PSS max 192 MiB·
 battery 4%/h·background wake 10%의 고정 기준을 모두 만족해야 통과하며 unknown/charging/reset은 실패한다.
 create-once 0600 report에는 aggregate verdict만 남기고 device/network/UID/PID/path와 원본 ADB 출력은
-포함하지 않는다. pre-handoff schema 2 report는 별도 암호 검증한 canonical signed manifest의 전체
+포함하지 않는다. pre-handoff schema 3 report는 별도 암호 검증한 canonical signed manifest의 전체
 candidate identity와 clean source commit, 실제 `direct_lan`/`p2p`/`outbound_relay` 경로 및 측정 시작·종료
-시각도 함께 고정한다. manifest나 transport가 없거나 설치 package/versionCode가 candidate와 다르면 ADB
-측정을 진행하거나 report를 만들지 않는다. fixture 검증은 구현했지만 물리 단말 수치는 아직 없다.
+시각을 고정한다. 측정 시작·종료에는 read-only `pm path`와 toybox `sha256sum`으로 단일 설치 base APK
+digest와 package path·UID 안정성을 확인한다. manifest/transport가 없거나 설치 package/versionCode/APK
+bytes가 candidate와 다르면 측정을 진행하거나 report를 만들지 않는다. fixture 검증은 구현했지만 물리
+단말 수치는 아직 없다.
 
 기능 field harness는 먼저 별도 검증한 signed update manifest의 version/commit·manifest/APK/signer digest와
 clean checkout을 묶는다. 모든 항목이 `not_run`인 owner-only 템플릿만 만들고, 실제 Android API 30+,
@@ -599,7 +601,7 @@ Linux Companion 2대, Android client 2대, 서로 다른 OpenRouter upstream 계
 device/network identifier, credential, prompt/response, 오류 원문과 자유 형식 note가 없고 결과가 30일보다
 오래되거나 후보가 다르면 거부한다. 이는 operator-attested evidence이며 실제 실행을 대신하지 않는다.
 
-최종 release evidence gate는 원본 기능 observation을 다시 평가하고 schema 2 direct LAN/P2P/outbound relay
+최종 release evidence gate는 원본 기능 observation을 다시 평가하고 schema 3 direct LAN/P2P/outbound relay
 저부하 report를 exact allowlist로 읽는다. 각 report의 candidate·설치 identity·transport·측정 시각과 privacy
 선언을 검증하고 aggregate에서 고정 threshold를 재계산해 편집된 pass를 거부한다. 네 결과가 같은 clean
 candidate이고 모두 30일 이내 pass일 때만 create-once 0600 aggregate를 통과시킨다. field 평가 전에는
@@ -675,8 +677,9 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
   live 권한 불변과 재시도 가능성 검사
 - 기능 field observation의 signed candidate/clean commit 결합, exact 20-scenario completeness, inert template,
   시간·개수·attestation gate, extra/freeform field 거부와 owner-only create-once report 검사
-- Android 저부하 report의 canonical signed candidate/clean commit·APK digest, exact transport와 측정 시각 결합,
-  설치 package/versionCode drift·미지정/임의 transport 거부 및 owner-only create-once schema 2 검사
+- Android 저부하 report의 canonical signed candidate/clean commit·시작/종료 설치 APK digest, exact
+  transport와 측정 시각 결합, 설치 package/versionCode/path/bytes drift·미지정/임의 transport 거부 및
+  owner-only create-once schema 3 검사
 - pinned certificate·detached manifest signature·APK signer·APK/SBOM bytes 선행 검증 뒤 기능 observation과
   세 transport 저부하 report의 exact candidate/slot/freshness 결합, aggregate threshold 재계산,
   verdict·extra field·wall-duration·artifact 변조 거부와 owner-only create-once 최종 evidence 검사

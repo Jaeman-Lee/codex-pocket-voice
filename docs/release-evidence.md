@@ -17,7 +17,7 @@
 - manifest와 정확히 같은 clean Git commit
 - 같은 manifest/commit/APK digest에 묶인 20개
   [기능 현장 관찰](functional-field-acceptance.md)
-- 각각 `direct_lan`, `p2p`, `outbound_relay`로 기록된 schema 2
+- 각각 `direct_lan`, `p2p`, `outbound_relay`로 기록되고 설치 APK digest를 시작·종료에 확인한 schema 3
   [Android 저부하 report](android-field-acceptance.md) 세 개
 - 기능 관찰과 Android report는 owner-only regular single-link 파일이며 30일 이내 결과
 

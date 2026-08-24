@@ -10,6 +10,8 @@ import {
   measureAndroidFieldAcceptance,
   parseBatterySnapshot,
   parseCpuInfo,
+  parseInstalledApkDigest,
+  parseInstalledApkPath,
   parseMemoryInfo,
   parsePackageIdentity,
   parseWakeSnapshot,
@@ -61,6 +63,20 @@ test("Android field parsers accept bounded API 30 diagnostics and exact app proc
              TOTAL     98304    65536     4096
   `), { pssKib: 98_304, rssKib: null });
   assert.equal(parseMemoryInfo(`No process found for: ${packageName}`), null);
+  const installedPath = "/data/app/~~private-token==/io.github.jaemanlee.codexpocketvoice.stable-private==/base.apk";
+  assert.equal(parseInstalledApkPath(`package:${installedPath}\n`), installedPath);
+  assert.equal(
+    parseInstalledApkDigest(`${candidate.apkSha256}  ${installedPath}\n`, installedPath),
+    candidate.apkSha256,
+  );
+  assert.throws(
+    () => parseInstalledApkPath(`package:${installedPath}\npackage:/data/app/private/split.apk\n`),
+    /path could not be verified/,
+  );
+  assert.throws(
+    () => parseInstalledApkDigest(`${candidate.apkSha256}  /data/app/other/base.apk\n`, installedPath),
+    /digest could not be verified/,
+  );
 });
 
 test("battery and aggregate wake parsers reject unsupported or ambiguous evidence", () => {
@@ -137,7 +153,7 @@ test("field measurement uses only read-only dumpsys queries and emits aggregate 
     sleep: async (milliseconds) => { monotonic += milliseconds; },
   });
 
-  assert.equal(report.schemaVersion, 2);
+  assert.equal(report.schemaVersion, 3);
   assert.equal(report.evidenceKind, "adb_aggregate_measurement");
   assert.deepEqual(report.candidate, candidate);
   assert.equal(report.transport, "direct_lan");
@@ -164,6 +180,13 @@ test("field measurement uses only read-only dumpsys queries and emits aggregate 
     percentOfMeasurement: 0.1,
   });
   assert.equal(report.gate.outcome, "observation_only");
+  assert.deepEqual(report.app, {
+    packageName,
+    versionName: "2.0.0",
+    versionCode: 20_000,
+    apkSha256: candidate.apkSha256,
+    digestVerifiedAtStartAndEnd: true,
+  });
 
   const serialized = JSON.stringify(report);
   for (const secret of [privateSerial, "private-install-path", "private-wifi", "10123"]) {
@@ -177,10 +200,17 @@ test("field measurement uses only read-only dumpsys queries and emits aggregate 
   const shellCalls = executor.calls.filter((args) => args.includes("shell"));
   assert.ok(shellCalls.length > 0);
   for (const args of shellCalls) {
-    assert.equal(args[args.indexOf("shell") + 1], "dumpsys");
+    const command = args.slice(args.indexOf("shell") + 1);
+    assert.ok(
+      command[0] === "dumpsys"
+      || (command[0] === "pm" && command[1] === "path" && command[2] === packageName)
+      || (command[0] === "toybox" && command[1] === "sha256sum"),
+    );
     assert.ok(!args.includes("--reset"));
     assert.ok(!args.includes("--checkin"));
   }
+  assert.equal(shellCalls.filter((args) => args.includes("pm") && args.includes("path")).length, 2);
+  assert.equal(shellCalls.filter((args) => args.includes("sha256sum")).length, 2);
   const wakeCalls = shellCalls.filter((args) => args.includes("batterystats"));
   assert.equal(wakeCalls.length, 2);
   assert.ok(wakeCalls.every((args) => args.includes("-c") && args.includes("--charged")));
@@ -243,6 +273,43 @@ test("field measurement rejects an unbound candidate or unknown transport before
   );
 });
 
+test("field measurement rejects an installed APK digest mismatch before sampling and after an in-place change", async () => {
+  let slept = false;
+  await assert.rejects(
+    measureAndroidFieldAcceptance({
+      candidate,
+      transport: "direct_lan",
+      durationSeconds: 60,
+      intervalSeconds: 20,
+      mode: "observation",
+    }, {
+      executor: new FixtureAdbExecutor(["e".repeat(64)]),
+      monotonicMs: () => 0,
+      wallClockMs: () => Date.parse("2026-08-25T00:00:00.000Z"),
+      sleep: async () => { slept = true; },
+    }),
+    /Installed APK does not match the signed candidate/,
+  );
+  assert.equal(slept, false);
+
+  let monotonic = 0;
+  await assert.rejects(
+    measureAndroidFieldAcceptance({
+      candidate,
+      transport: "p2p",
+      durationSeconds: 60,
+      intervalSeconds: 20,
+      mode: "observation",
+    }, {
+      executor: new FixtureAdbExecutor([candidate.apkSha256, "f".repeat(64)]),
+      monotonicMs: () => monotonic,
+      wallClockMs: () => Date.parse("2026-08-25T00:00:00.000Z") + monotonic,
+      sleep: async (milliseconds) => { monotonic += milliseconds; },
+    }),
+    /Installed APK does not match the signed candidate/,
+  );
+});
+
 test("field report is owner-only, create-once, bounded, and contains no raw fixture values", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "codex-pocket-android-field-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -282,6 +349,9 @@ class FixtureAdbExecutor implements AdbExecutor {
   readonly calls: string[][] = [];
   private batteryReads = 0;
   private wakeReads = 0;
+  private apkDigestReads = 0;
+
+  constructor(private readonly apkDigests: readonly string[] = [candidate.apkSha256]) {}
 
   async execute(readonlyArgs: readonly string[]): Promise<string> {
     const args = [...readonlyArgs];
@@ -291,6 +361,14 @@ class FixtureAdbExecutor implements AdbExecutor {
     }
     if (args.includes("package")) {
       return `userId=10123\ncodePath=/data/app/private-install-path\nversionCode=20000 minSdk=24\nversionName=2.0.0\n`;
+    }
+    if (args.includes("pm") && args.includes("path")) {
+      return "package:/data/app/~~private-token==/private-install-path/base.apk\n";
+    }
+    if (args.includes("sha256sum")) {
+      const digest = this.apkDigests[Math.min(this.apkDigestReads, this.apkDigests.length - 1)]!;
+      this.apkDigestReads += 1;
+      return `${digest}  /data/app/~~private-token==/private-install-path/base.apk\n`;
     }
     if (args.includes("cpuinfo")) {
       return `1.5% 111/${packageName}: 1% user + 0.5% kernel\n0.5% 112/${packageName}:pocket: 0.5% user\n20% TOTAL: 15% user + 5% kernel\n`;
@@ -315,7 +393,7 @@ class FixtureAdbExecutor implements AdbExecutor {
 
 function passingReport(): AndroidFieldReport {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "android_field_acceptance",
     evidenceKind: "adb_aggregate_measurement",
     candidate,
@@ -324,7 +402,13 @@ function passingReport(): AndroidFieldReport {
       startedAt: "2026-08-25T00:00:00.000Z",
       completedAt: "2026-08-25T01:00:01.000Z",
     },
-    app: { packageName, versionName: "2.0.0", versionCode: 20_000 },
+    app: {
+      packageName,
+      versionName: "2.0.0",
+      versionCode: 20_000,
+      apkSha256: candidate.apkSha256,
+      digestVerifiedAtStartAndEnd: true,
+    },
     measurement: {
       requestedDurationSeconds: 3_600,
       actualDurationSeconds: 3_601,

@@ -10,6 +10,17 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Installed APK provenance field fix는 저부하 collector가 package/version만 확인하고 report에 candidate
+  APK digest를 복사해, 같은 identity의 다른 설치 APK를 측정할 수 있던 release evidence 공백을 고치는
+  internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
+  `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate와 pre-handoff schema 2
+  report를 교체한다. 실제 측정·Provider 호출·APK 전달·설치·Companion 재시작은 하지 않으며 current v1
+  후보 1.8.2, staged v1.8.4, 검증된 1.8.1 rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- schema 3 collector는 측정 시작·종료에 read-only `pm path`와 Android toybox `sha256sum`으로 단일 설치
+  `base.apk` bytes를 manifest SHA-256과 대조하고 package path·UID 안정성을 확인한다. digest 불일치,
+  split/ambiguous path와 측정 중 교체는 private 경로·digest를 출력하지 않고 report 생성 전에 실패한다.
+  최종 evidence parser는 이전 schema 2와 확인 표식·digest drift를 거부한다. `release:check`의 단위 검사
+  308개와 실제 app-server 통합 3개, production build·schema 일치·SBOM이 통과했다.
 - Cryptographic final evidence preflight fix는 최종 release evidence가 `signed: true` manifest와 별도
   운영자 검증에 의존하던 exact-candidate 신뢰 공백을 고치는 internal compatibility `patch`다. 아직
   전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,
