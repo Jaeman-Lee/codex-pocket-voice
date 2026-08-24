@@ -24,7 +24,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Staged v1 hotfix APK | 1.8.3 candidate | writer-release PR #5 checks and signed artifact verified; kept separate and not installed |
 | Existing rollback APK | 1.8.1 | user-validated rollback set preserved |
 | Deployed v1 Companion | 1.8.3 at `e0f6ea1` | separate versioned runtime active; completed target writer release verified |
-| OpenAI API milestone | official SDK 6.49.0 | encrypted bounded `store:false` multi-turn replay and fake tool-loop/SSE/Models tests; no API key configured and no paid request sent |
+| OpenAI API milestone | official SDK 6.49.0 | encrypted bounded `store:false` multi-turn replay, fake tool-loop/SSE/Models tests and protected 2-call smoke harness; no API key configured and no paid request sent |
 | OpenRouter milestone | Chat Completions + user/ZDR model, endpoint and key APIs | encrypted bounded multi-turn replay, exact upstream lock/approved backup, bounded price/performance/quota UI, fake routing/tool-loop/SSE and protected 2-call smoke harness; no API key configured and no paid request sent |
 | Provider runtime contract | exact run ownership + ordered single-terminal events | Codex/OpenAI/OpenRouter shared success/partial-failure/cancel/timeout suite and fake 401/403/429/5xx/malformed SSE fixtures passing |
 | Android journal milestone | app-owned SQLite schema 1 | encrypted snapshot migration and rollback mirror implemented; CI-only, no device migration performed |
@@ -37,6 +37,15 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, standalone Linux GO/PBC + memory-only DHCP cleanup lifecycle, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; actual P2P field validation pending |
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+OpenAI protected smoke checkpoint decision: 실제 Responses Provider contract를 실행하는 새 검증 workflow이므로
+`feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 SemVer `2.0.0`/Android
+`versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
+수동 `provider-smoke` environment는 exact allowlist, 운영자 확인 가격, 2회 synthetic 호출, 호출당 input
+4,096/output 256 token 및 $0.02 preflight/usage 상한을 강제한다. 0600 artifact에는 모델·token·추정 비용과
+contract grade만 기록하며 prompt·marker·함수 인자·응답 본문은 넣지 않는다. 이 checkpoint에서는 실제
+key·유료 inference·APK 전달·설치·Companion 재시작을 수행하지 않는다. current v1 후보 1.8.2, 별도
+staged v1.8.3과 검증된 rollback 1.8.1은 그대로 보존한다.
 
 PocketLink Android P2P checkpoint decision: 사용자 동작 기반 Wi-Fi Direct 검색·등록과 native transport는 새
 user-visible v2 workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서

@@ -22,7 +22,7 @@
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, 세 Provider 공용 contract·stream failure fixture, protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신 모듈 구현; production build·실제 pairing/Gateway/SSE/run/approval 기반 Playwright 모바일 회귀 통과, 실기기 회귀 잔여 |
-| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구와 격리 npm 검증 구현; 실모델 eval 잔여 |
+| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구, 격리 npm 검증과 보호된 2-call smoke harness 구현; 실제 모델 실행·프로젝트 등급 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker와 보호된 synthetic smoke harness 구현; 실제 model eval 실행·현장 등급 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in process-death native 알림·retained run 열기, API 30 token-gated notification Intent 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed 구현; 실기기 background/tray-tap deep-link acceptance 잔여 |
 | Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; API 30 ATD에서 Keystore config/identity/background state와 notification Intent 계측 회귀 추가, 실제 P2P group formation·external edge DDoS/실부하·tray-tap/reconnect/voice 실기기 release gate 잔여 |
@@ -353,6 +353,13 @@ update이며 APK를 새 current 후보로 배포하지 않는다. `store:false` 
 응답 항목을 암호화 Companion journal에 보존해 이어가며, 모바일은 Provider·workspace별 대화를 명시적으로
 선택한다. opaque replay state는 API/SSE/export에 노출하지 않고 이미지 원본을 다음 turn에 보존하지 않는다.
 
+수동 `provider-smoke` environment workflow는 exact allowlisted model, 운영자가 확인한 input/output 가격과
+$0.02 상한 아래에서 2회 synthetic Responses 호출만 수행한다. 첫 호출은 `store:false` strict 함수 호출,
+둘째는 encrypted reasoning을 포함한 응답 항목과 `function_call_output`의 stateless replay를 검증한다.
+호출당 input 4,096/output 256 token, 고정 `service_tier: default`를 강제하고 prompt·marker·함수 인자·
+응답 본문이 없는 redacted report만 남긴다. loopback fixture는 구현됐지만 실제 key 실행과 project
+read/coding 현장 등급은 아직 남아 있다.
+
 완료 조건: 실제 프로젝트에서 조사 → diff 제안 → 승인된 patch → test → 결과 검토가 키 노출 없이
 한 run으로 완료된다.
 
@@ -505,7 +512,7 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - 로그·journal·SSE·diagnostics에 API key와 Authorization 헤더가 없는지 검사
 - OpenRouter model capability 변화와 fallback 정책 fixture
 - OpenRouter 가격 단위·endpoint 성능 상한·quota redaction fixture와 수동 smoke harness loopback 검사
-- OpenAI `store: false` 요청과 로컬 상태 replay 검사
+- OpenAI `store: false` 요청·로컬 상태 replay와 보호된 2-call smoke harness loopback 검사
 - API Provider replay 상태의 journal 암호화, API/SSE/export 비노출, 이미지 data URL 제거 검사
 - Playwright에서 production client와 실제 pairing·Gateway·SSE·run·approval 경로로 320/360/412px,
   150% 글자, 키보드 축소, 회전과 긴 prompt·diff·승인 상세 검증 — Chromium CI 자동 검사 구현
@@ -529,6 +536,7 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - secret이 있는 보호된 수동 workflow에서만 저비용 smoke/eval을 실행한다.
 - 모델 목록·인증 확인과 실제 유료 inference를 별도 단계로 나눈다.
 - 실제 smoke는 비용 상한, 호출 횟수와 테스트 prompt를 고정하고 결과에서 비밀정보를 제거한다.
+- OpenAI smoke는 운영자가 공식 가격을 다시 확인해 입력하고 $0.02 preflight/usage 상한을 모두 통과해야 한다.
 
 ### 현장 시나리오
 

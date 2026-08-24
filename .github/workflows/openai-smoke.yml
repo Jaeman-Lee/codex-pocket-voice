@@ -1,0 +1,62 @@
+name: OpenAI protected smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Exact allowlisted OpenAI model ID
+        required: true
+        type: string
+      input_usd_per_mtok:
+        description: Operator-reviewed input price in USD per million tokens
+        required: true
+        type: string
+      output_usd_per_mtok:
+        description: Operator-reviewed output price in USD per million tokens
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openai-protected-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    environment: provider-smoke
+    timeout-minutes: 5
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_SMOKE_MODELS: ${{ vars.OPENAI_SMOKE_MODELS }}
+      OPENAI_SMOKE_MODEL: ${{ inputs.model }}
+      OPENAI_SMOKE_MAX_USD: "0.02"
+      OPENAI_SMOKE_INPUT_USD_PER_MTOK: ${{ inputs.input_usd_per_mtok }}
+      OPENAI_SMOKE_OUTPUT_USD_PER_MTOK: ${{ inputs.output_usd_per_mtok }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install SDK without package lifecycle scripts
+        run: npm ci --ignore-scripts
+
+      - name: Run bounded synthetic smoke
+        env:
+          OPENAI_SMOKE_REPORT: ${{ runner.temp }}/openai-smoke-report.json
+        run: node scripts/openai-smoke.mjs
+
+      - name: Upload redacted grade report
+        uses: actions/upload-artifact@v6
+        with:
+          name: openai-smoke-${{ github.run_id }}
+          path: ${{ runner.temp }}/openai-smoke-report.json
+          if-no-files-found: error
+          retention-days: 14

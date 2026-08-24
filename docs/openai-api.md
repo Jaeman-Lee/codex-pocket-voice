@@ -49,5 +49,26 @@ durable journal 및 터치 승인함이 구현되고 별도 보안 검증을 통
 뜻은 아니다. 자세한 동작은 [Responses API reference](https://developers.openai.com/api/reference/cli/resources/responses/methods/create)와
 [OpenAI data controls](https://developers.openai.com/api/docs/guides/your-data)를 기준으로 확인한다.
 
-공개 CI는 가짜 stream만 사용하며 실제 유료 inference를 보내지 않는다. 실제 key smoke test는 별도
-보호 workflow, 고정된 저비용 prompt와 호출 상한이 준비된 뒤에만 추가한다.
+공개 CI는 가짜 stream만 사용하며 실제 유료 inference를 보내지 않는다.
+
+## 보호된 실제 모델 smoke
+
+`.github/workflows/openai-smoke.yml`은 자동 실행되지 않는 수동 `workflow_dispatch`다. GitHub
+`provider-smoke` environment에 승인자를 지정하고, 그 environment에 `OPENAI_API_KEY` secret과
+쉼표로 구분한 exact `OPENAI_SMOKE_MODELS` variable을 설정한 뒤에만 실행한다. environment의 배포
+브랜치 제한도 `main`과 검토된 기능 브랜치로 좁힌다.
+
+실행자는 모델 ID와 실행 시점의 공식 가격표에서 직접 확인한 input/output USD per million token을
+입력한다. 하네스는 모델을 exact allowlist 및 Models API로 먼저 확인하고 다음 두 Responses 호출만
+허용한다.
+
+1. `store:false`, streaming, strict 강제 함수 호출로 무작위 synthetic marker를 왕복한다.
+2. 첫 응답 항목과 `function_call_output`을 수동 replay하고 marker-only 최종 응답을 확인한다.
+
+두 호출 모두 `service_tier: default`, 호출당 input 4,096/output 256 token 상한을 사용한다. 입력한
+가격으로 계산한 최악 비용이 $0.02를 넘으면 inference 전에 실패하고, 실제 usage 추정 비용도 같은
+상한을 넘으면 보고서를 만들지 않는다. 결과 artifact는 token 수, 비용 추정, 모델과 contract pass만
+포함하는 0600 JSON이며 API key, prompt, marker, 함수 인자와 응답 본문은 포함하지 않는다. 이 smoke는
+streaming·대화·함수 호출·stateless replay만 평가하고 실제 프로젝트 읽기나 코딩 등급을 부여하지 않는다.
+
+현재 checkpoint에서는 loopback fixture만 실행했으며 실제 key나 유료 요청은 사용하지 않았다.
