@@ -10,6 +10,18 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Durable session handoff persistence fix는 동시에 들어온 release/claim의 상태 파일 쓰기가 역순으로
+  끝나 Companion 재시작 뒤 오래된 handoff가 되살아날 수 있던 v2 결함을 고치는 `patch`다. 아직
+  전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,
+  `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. APK 전달·설치, 실제 Provider
+  호출과 실행 중 Companion 재시작은 하지 않으며 current v1 후보 1.8.2, staged v1.8.4, 검증된 1.8.1
+  rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- handoff 저장소의 release/claim은 이제 한 mutation queue에서 호출 순서대로 atomic file replace를
+  완료한 뒤에만 메모리 상태를 공개한다. 저장 실패는 해당 변경을 메모리에도 반영하지 않고, 다음 요청은
+  마지막으로 저장된 상태에서 안전하게 재시도한다.
+- 지연 writer로 동시 쓰기가 겹치지 않고 최신 동일-thread release만 재시작 뒤 복원되는지, 합성 저장
+  실패 뒤 ghost handoff가 남지 않는지를 결정적으로 검사한다. `release:check`의 단위 검사 288개와 실제
+  app-server 통합 3개, production build·schema 일치·SBOM이 통과했다.
 - Atomic session claim fix는 여러 기기가 같은 handoff를 동시에 이어받거나, claim 실패 뒤 모바일만
   해당 대화로 전환될 수 있던 v2 결함을 고치는 `patch`다. 아직 전달하지 않은 incompatible v2 범위
   안에서 `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only
