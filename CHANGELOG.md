@@ -20,6 +20,9 @@ Companion 1.8.3은 재시작하거나 작업 디렉터리를 변경하지 않는
 - 성공 안내는 Companion writer가 실제로 `unsubscribed`됐는지, 실행 완료 뒤 해제 예정인지,
   Companion이 해당 writer를 소유하지 않았는지를 구분한다.
 - 새 APK 설치, Companion 재시작, 활성 Codex/TMUX 종료는 이 변경에서 수행하지 않는다.
+- 커밋 `814dd10`의 Node 20/22와 Android stable APK CI가 모두 통과했다. Actions run
+  `32707398520`은 stable key 서명 APK·SHA256SUMS·SBOM을 CI-only artifact로 만들었으며,
+  로컬에 내려받거나 current/rollback/staged 설치 세트를 교체하지 않았다.
 
 ## 1.8.3 hotfix candidate — release handed-off thread writers
 
@@ -105,7 +108,7 @@ Candidate build history:
 | 1.8.1 | `c5563ec` | rollback candidate | 스마트폰 뷰포트 수용과 조절 가능한 WebView |
 | 1.8.2 | `d76e478` | preserved current candidate | 프로젝트별 세션 인계와 종료 대상 격리 |
 | 1.8.3 | `e0f6ea1` | staged install candidate | 반납한 thread의 app-server writer 반환 |
-| 1.8.4 | pending | source hotfix candidate | Companion writer와 외부 CLI/TMUX writer 범위 구분 |
+| 1.8.4 | `814dd10` | CI-only signed candidate | Companion writer와 외부 CLI/TMUX writer 범위 구분 |
 
 ## 1.6.0 — 2026-08-16
 

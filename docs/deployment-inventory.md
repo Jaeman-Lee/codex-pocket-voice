@@ -68,11 +68,12 @@ candidate로 분류한다. 실행 중인 Codex turn을 끊지 않기 위해 Linu
 | Component | Version / revision | State |
 | --- | --- | --- |
 | Runtime code baseline | `e0f6ea1` on `hotfix/1.8.3-writer-release` | pushed; local release gate and CI passing |
-| Hotfix source candidate | 1.8.4 on `hotfix/1.8.4-external-writer-clarity` | exact path/thread display and writer-scope response under validation |
+| Hotfix source candidate | `814dd10` on `hotfix/1.8.4-external-writer-clarity` | local release gate and Node 20/22/Android CI passing |
 | Primary development workspace | Linux PC Git clone; v2 worktree active | 1.8.3 hotfix runtime is isolated in a separate versioned PC worktree |
 | Termux workspace | lightweight Git mirror at `f08d9e7` | reproducible dependencies and build output scheduled for removal |
 | Pull request | Draft PR #5 into `hotfix/1.8.2-session-scope` | Linux Node 20/22 and Android checks passing; stacked until the 1.8.2 base is merged |
 | Android staged APK | 1.8.3 signed candidate | Actions run `32671707088`; checksum-verified in separate PC candidate folder; not installed |
+| Android CI-only APK | 1.8.4 signed candidate | Actions run `32707398520`; signed APK, checksum and SBOM passed CI but were not downloaded or installed |
 | Android current APK | 1.8.2 signed candidate | current installer set preserved unchanged |
 | Android rollback APK | 1.8.1 signed candidate | rollback set prepared from Actions run `32645200906`; already field-tested by the user |
 | Linux Companion | 1.8.3 at `e0f6ea1` | active from the separate hotfix runtime; target writer released and loopback listener healthy |
