@@ -16,7 +16,7 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | V2 development component | Version / revision | State |
 | --- | --- | --- |
 | Source version | `2.0.0` / Android `versionCode 20000` | development only; not field installed |
-| Target branch | `feature/v2-control-plane` | approved crash-recoverable text change tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, process-death notifications, live branch/worktree identity, staged PocketLink rotations and reviewed same-LAN discovery implemented; P2P/relay and model eval next |
+| Target branch | `feature/v2-control-plane` | approved crash-recoverable text change tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, process-death notifications, voice/media state machines, live branch/worktree identity, staged PocketLink rotations and reviewed same-LAN discovery implemented; App connection/run/journal separation, P2P/relay and model eval next |
 | Gateway protocol | maximum 3, minimum 2 | v1 rollout compatibility retained |
 | Codex app-server schema | `codex-cli 0.149.0` | generated bindings and no-model real integration verified |
 | Current v1 APK | 1.8.2 candidate | signed APK/checksum/SBOM prepared from hotfix PR #4; install not performed |
@@ -32,6 +32,14 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
 | PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD address discovery, observed backup-pin server certificate promotion and recoverable Keystore A/B client identity rotation implemented; P2P, relay and field validation pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+App voice/media state checkpoint decision: v2 내부의 구조 분리와 복구 안정성을 높이는 internal
+compatibility 조정이므로 기존 `breaking`/`2.0.0`, Android `versionCode 20000`, 대상
+`feature/v2-control-plane`을 유지한다. voice reducer는 single-shot/연속 recognizer transition과 fatal
+종료를, media reducer는 최대 4개 attachment·동시 upload batch·progress·임시 ID 교체를
+담당하며 기존 API·저장 format을 바꾸지 않는다. 이 checkpoint는 source와 CI-only APK만
+갱신하고 현장 설치·Companion 재시작은 하지 않는다. current v1 후보 1.8.2, 별도 staged
+1.8.3과 검증된 rollback 1.8.1을 변경하지 않는다.
 
 Process-death notification checkpoint decision: WebView 회수 뒤에도 완료·승인·오류를 받는 새 user-visible v2
 기능이므로 기존 `breaking`/`2.0.0`, Android `versionCode 20000`, 대상

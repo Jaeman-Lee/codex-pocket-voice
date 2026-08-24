@@ -40,6 +40,14 @@ import {
   type PocketLinkStatus,
 } from "./native";
 import { mergeSpeechSegments } from "./speech-utils";
+import { initialVoiceInputState, reduceVoiceInput } from "./voice-input-state";
+import {
+  initialMediaComposerState,
+  MAX_COMPOSER_ATTACHMENTS,
+  mediaComposerBusy,
+  reduceMediaComposer,
+  type MediaComposerAction,
+} from "./media-composer-state";
 import { OperationsDashboard } from "./OperationsDashboard";
 import { activeApprovals, applyApprovalEvent, upsertOperation } from "./operations-state";
 import { operationBelongsToSession, scopedHandoff } from "./session-scope";
@@ -178,16 +186,16 @@ export function App() {
   const [accountId, setAccountId] = useState("cli-default");
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("");
-  const [dictating, setDictating] = useState(false);
-  const [handsFree, setHandsFree] = useState(false);
+  const [voiceInput, dispatchVoiceInput] = useReducer(reduceVoiceInput, initialVoiceInputState);
+  const { dictating, handsFree, supported: speechSupported } = voiceInput;
   const [controlsCollapsed, setControlsCollapsed] = useState(
     () => localStorage.getItem("codex-pocket-controls-open") !== "true",
   );
-  const [speechSupported, setSpeechSupported] = useState(true);
   const [toast, setToast] = useState("");
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
-  const [mediaBusy, setMediaBusy] = useState(false);
+  const [mediaComposer, dispatchMediaComposerState] = useReducer(reduceMediaComposer, initialMediaComposerState);
+  const attachments = mediaComposer.attachments;
+  const mediaBusy = mediaComposerBusy(mediaComposer);
   const [creationLocations, setCreationLocations] = useState<Workspace[]>([]);
   const [showProjectCreator, setShowProjectCreator] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
@@ -266,6 +274,7 @@ export function App() {
   const operationRef = useRef<Operation | null>(null);
   const promptQueueRef = useRef<QueuedPrompt[]>([]);
   const messagesRef = useRef<ChatMessage[]>([]);
+  const mediaComposerRef = useRef(mediaComposer);
   const journalQueueReadyRef = useRef<DeviceId | null>(null);
   const queueDispatchingRef = useRef(false);
   const workspaceRef = useRef("");
@@ -296,6 +305,11 @@ export function App() {
   const pendingNotificationActionRef = useRef<NativeNotificationAction | null>(null);
   const openOperationFromDashboardRef = useRef<(operation: Operation) => void>(() => undefined);
 
+  const dispatchMediaComposer = (action: MediaComposerAction) => {
+    mediaComposerRef.current = reduceMediaComposer(mediaComposerRef.current, action);
+    dispatchMediaComposerState(action);
+  };
+
   useEffect(() => { workspaceRef.current = workspace; }, [workspace]);
   useEffect(() => {
     deviceRef.current = device;
@@ -306,6 +320,7 @@ export function App() {
   useEffect(() => { ttsRef.current = tts; localStorage.setItem("codex-pocket-tts", String(tts)); }, [tts]);
   useEffect(() => { operationRef.current = operation; }, [operation]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
+  useEffect(() => { mediaComposerRef.current = mediaComposer; }, [mediaComposer]);
   useEffect(() => { handsFreeRef.current = handsFree; }, [handsFree]);
   useEffect(() => {
     notificationsEnabledRef.current = notificationsEnabled;
@@ -819,16 +834,15 @@ export function App() {
     }));
     void keep(NativeSpeech.addListener("speechState", (event: NativeSpeechState) => {
       if (event.state === "listening" || event.state === "processing" || event.state === "restarting") {
-        setDictating(true);
-      } else if (!handsFreeRef.current) {
-        setDictating(false);
+        dispatchVoiceInput({ type: "recognition_active" });
+      } else {
+        dispatchVoiceInput({ type: "recognition_idle" });
       }
     }));
     void keep(NativeSpeech.addListener("speechError", (event: NativeSpeechError) => {
       if (!event.recoverable) {
         handsFreeRef.current = false;
-        setHandsFree(false);
-        setDictating(false);
+        dispatchVoiceInput({ type: "fatal_error" });
         showToast(event.message);
       }
     }));
@@ -842,12 +856,12 @@ export function App() {
 
   useEffect(() => {
     if (isNativeApp()) {
-      setSpeechSupported(true);
+      dispatchVoiceInput({ type: "support_changed", supported: true });
       return;
     }
     const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
     if (!Recognition) {
-      setSpeechSupported(false);
+      dispatchVoiceInput({ type: "support_changed", supported: false });
       return;
     }
     const recognition = new Recognition();
@@ -855,7 +869,7 @@ export function App() {
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
-    recognition.onstart = () => setDictating(true);
+    recognition.onstart = () => dispatchVoiceInput({ type: "recognition_active" });
     recognition.onresult = (event) => {
       const segments: string[] = [];
       for (let index = 0; index < event.results.length; index += 1) {
@@ -877,11 +891,12 @@ export function App() {
           try {
             recognition.start();
           } catch {
-            setDictating(false);
+            handsFreeRef.current = false;
+            dispatchVoiceInput({ type: "fatal_error" });
           }
         }, 280);
       } else {
-        setDictating(false);
+        dispatchVoiceInput({ type: "recognition_idle" });
       }
     };
     recognitionRef.current = recognition;
@@ -1176,9 +1191,7 @@ export function App() {
       return;
     }
     if (event.type === "media" && event.media) {
-      setAttachments((current) => current.map((item) => item.id === event.media!.id
-        ? { ...item, ...event.media, previewUrl: item.previewUrl }
-        : item));
+      dispatchMediaComposer({ type: "server_update", media: event.media });
       return;
     }
     if (event.type === "operation" && event.operation) {
@@ -1451,41 +1464,57 @@ export function App() {
 
   async function addMedia(files: FileList | null) {
     if (!files?.length) return;
-    const selected = [...files].slice(0, Math.max(0, 4 - attachments.length));
-    if (selected.length < files.length) showToast("첨부 파일은 한 번에 최대 4개까지 보낼 수 있습니다.");
-    setMediaBusy(true);
+    const selected = [...files].slice(0, Math.max(
+      0,
+      MAX_COMPOSER_ATTACHMENTS - mediaComposerRef.current.attachments.length,
+    ));
+    if (selected.length < files.length) {
+      showToast(`첨부 파일은 한 번에 최대 ${MAX_COMPOSER_ATTACHMENTS}개까지 보낼 수 있습니다.`);
+    }
+    if (selected.length === 0) {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    const pending = selected.map((file) => {
+      const localId = newId("upload");
+      const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
+      const placeholder: PendingAttachment = {
+        id: localId,
+        name: file.name,
+        kind: file.type.startsWith("video/") ? "video" : "image",
+        mimeType: file.type,
+        size: file.size,
+        status: "uploading",
+        frameCount: 0,
+        progress: 0,
+        previewUrl,
+      };
+      dispatchMediaComposer({ type: "add_placeholder", attachment: placeholder });
+      return { file, localId, previewUrl };
+    });
+    dispatchMediaComposer({ type: "begin_upload_batch" });
     try {
-      for (const file of selected) {
-        const localId = newId("upload");
-        const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
-        const placeholder: PendingAttachment = {
-          id: localId,
-          name: file.name,
-          kind: file.type.startsWith("video/") ? "video" : "image",
-          mimeType: file.type,
-          size: file.size,
-          status: "uploading",
-          frameCount: 0,
-          progress: 0,
-          previewUrl,
-        };
-        setAttachments((current) => [...current, placeholder]);
+      for (const { file, localId, previewUrl } of pending) {
+        if (!mediaComposerRef.current.attachments.some((item) => item.id === localId)) continue;
         try {
           const uploaded = await uploadMedia<MediaItem>(file, (progress) => {
-            setAttachments((current) => current.map((item) => item.id === localId ? { ...item, progress } : item));
+            dispatchMediaComposer({ type: "upload_progress", id: localId, progress });
           });
-          setAttachments((current) => current.map((item) => item.id === localId
-            ? { ...uploaded, previewUrl, progress: 100 }
-            : item));
+          if (!mediaComposerRef.current.attachments.some((item) => item.id === localId)) {
+            await api(`/api/media/${encodeURIComponent(uploaded.id)}`, { method: "DELETE" }).catch(() => undefined);
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
+            continue;
+          }
+          dispatchMediaComposer({ type: "upload_complete", placeholderId: localId, media: uploaded, previewUrl });
           if (uploaded.kind === "video") void analyzeMedia(uploaded.id);
         } catch (error) {
-          setAttachments((current) => current.filter((item) => item.id !== localId));
+          dispatchMediaComposer({ type: "remove", id: localId });
           if (previewUrl) URL.revokeObjectURL(previewUrl);
           showToast(errorMessage(error));
         }
       }
     } finally {
-      setMediaBusy(false);
+      dispatchMediaComposer({ type: "finish_upload_batch" });
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
@@ -1512,19 +1541,15 @@ export function App() {
   }
 
   function updateMedia(media: MediaItem) {
-    setAttachments((current) => current.map((item) => item.id === media.id
-      ? { ...item, ...media, previewUrl: item.previewUrl }
-      : item));
+    dispatchMediaComposer({ type: "server_update", media });
   }
 
   async function removeAttachment(id: string) {
     const uploaded = attachments.find((item) => item.id === id && item.status !== "uploading");
     if (uploaded) await api(`/api/media/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => undefined);
-    setAttachments((current) => {
-      const removed = current.find((item) => item.id === id);
-      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
-      return current.filter((item) => item.id !== id);
-    });
+    const removed = attachments.find((item) => item.id === id);
+    if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+    dispatchMediaComposer({ type: "remove", id });
   }
 
   async function submitPrompt() {
@@ -1552,7 +1577,7 @@ export function App() {
       expiresAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
     };
     setPrompt("");
-    setAttachments([]);
+    dispatchMediaComposer({ type: "clear" });
     if (connection !== "online" || operationRef.current !== null) {
       const nextQueue = [...promptQueueRef.current, queued];
       updatePromptQueue(nextQueue);
@@ -2182,17 +2207,12 @@ export function App() {
     }
   }
 
-  function setHandsFreeMode(enabled: boolean) {
-    handsFreeRef.current = enabled;
-    setHandsFree(enabled);
-  }
-
   async function startDictation(continuous: boolean) {
-    if (dictating || handsFreeRef.current) return;
+    if (!speechSupported || dictating || handsFreeRef.current) return;
     dictationBaseRef.current = prompt.trim();
     nativeFinalRef.current = "";
-    setHandsFreeMode(continuous);
-    setDictating(true);
+    handsFreeRef.current = continuous;
+    dispatchVoiceInput({ type: "begin", continuous });
     textareaRef.current?.blur();
 
     if (isNativeApp()) {
@@ -2202,8 +2222,8 @@ export function App() {
           continuous,
         });
       } catch (error) {
-        setHandsFreeMode(false);
-        setDictating(false);
+        handsFreeRef.current = false;
+        dispatchVoiceInput({ type: "fatal_error" });
         showToast(`음성 인식 오류: ${errorMessage(error)}`);
       }
       return;
@@ -2211,8 +2231,8 @@ export function App() {
 
     const recognition = recognitionRef.current;
     if (!recognition) {
-      setHandsFreeMode(false);
-      setDictating(false);
+      handsFreeRef.current = false;
+      dispatchVoiceInput({ type: "fatal_error" });
       return;
     }
     try {
@@ -2220,15 +2240,15 @@ export function App() {
       recognition.continuous = continuous;
       recognition.start();
     } catch (error) {
-      setHandsFreeMode(false);
-      setDictating(false);
+      handsFreeRef.current = false;
+      dispatchVoiceInput({ type: "fatal_error" });
       showToast(errorMessage(error));
     }
   }
 
   async function stopDictation() {
-    setHandsFreeMode(false);
-    setDictating(false);
+    handsFreeRef.current = false;
+    dispatchVoiceInput({ type: "stop" });
     if (isNativeApp()) {
       try {
         await NativeSpeech.stop();
@@ -3832,7 +3852,7 @@ export function App() {
             <button
               className="attach-button"
               type="button"
-              disabled={mediaBusy || attachments.length >= 4}
+              disabled={mediaBusy || attachments.length >= MAX_COMPOSER_ATTACHMENTS}
               aria-label="이미지 또는 영상 첨부"
               onClick={() => fileInputRef.current?.click()}
             >📎 <span>{tr("attachment")}</span></button>

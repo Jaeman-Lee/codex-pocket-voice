@@ -18,6 +18,9 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   응답 유실 뒤 같은 프롬프트가 중복 실행되지 않게 했다.
 - `ToolBroker`와 `ApprovalBroker`의 로컬 정책 계약을 추가했다. 고위험·외부 효과 승인은 터치 확인만
   허용하고, 만료되거나 오프라인인 요청을 자동 승인하지 않는다.
+- `App.tsx`의 음성 입력과 미디어 첨부 상태를 각각 순수 reducer로 분리했다. 연속 받아쓰기
+  재시작·치명적 오류 transition, 동시 upload batch, 4개 상한과 임시 ID→서버 ID 교체를
+  상태 머신 테스트로 고정했다.
 - 세션 인계를 프로젝트·대화별로 격리하고, 다른 프로젝트의 인계 세션이 현재 프로젝트처럼 보이던
   문제를 수정했다. v1 단일 handoff 상태는 손실 없이 다중 상태로 마이그레이션한다.
 - Codex 원본 notification과 OpenAI SSE를 `output.delta`, `tool.started`, `workspace.diff`,
