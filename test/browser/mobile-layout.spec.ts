@@ -27,6 +27,8 @@ test("project speech terms stay encrypted, persist across reload, and fit a 320p
   await page.getByRole("button", { name: "프로젝트 용어 추가" }).click();
   await expect(glossary).toContainText("오픈 라우터");
   await expect(glossary).toContainText("OpenRouter");
+  await glossary.scrollIntoViewIfNeeded();
+  await settleLayout(page);
   await expectElementContained(page, glossary);
   await expectElementContained(page, page.getByLabel("음성에서 들리는 표현"));
   await expectElementContained(page, page.getByRole("button", { name: "프로젝트 용어 추가" }));
@@ -237,6 +239,11 @@ test("API preflight confirmation stays contained and forwards only the one-time 
   let observedConfirmation = "";
   await installApiPolicyFixture(page, (token) => { observedConfirmation = token; });
   await bootPairedApp(page, { width: 320, height: 740 });
+
+  const staleDashboard = page.getByRole("dialog", { name: "작업 대시보드" });
+  if (await staleDashboard.isVisible()) {
+    await staleDashboard.getByRole("button", { name: "작업 대시보드 닫기" }).click();
+  }
 
   await page.getByRole("button", { name: "프로젝트와 대화 선택 열기" }).click();
   await page.getByLabel("AI 제공자 선택").selectOption("openai");
