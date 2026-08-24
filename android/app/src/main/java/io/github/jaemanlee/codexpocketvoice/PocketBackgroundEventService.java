@@ -7,6 +7,8 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.os.Build;
 import android.os.IBinder;
 
@@ -37,6 +39,8 @@ public class PocketBackgroundEventService extends Service {
     private ExecutorService controlExecutor;
     private ExecutorService monitorExecutor;
     private PocketBackgroundEventStore store;
+    private ConnectivityManager connectivityManager;
+    private ConnectivityManager.NetworkCallback networkCallback;
 
     static boolean isRunning() {
         return RUNNING.get();
@@ -51,6 +55,7 @@ public class PocketBackgroundEventService extends Service {
         monitorExecutor = Executors.newFixedThreadPool(PocketBackgroundEventPolicy.MAX_SUBSCRIPTIONS);
         createNotificationChannel();
         PocketNotificationsPlugin.createWorkChannel(this);
+        registerConnectivityCallback();
         RUNNING.set(true);
     }
 
@@ -69,11 +74,59 @@ public class PocketBackgroundEventService extends Service {
     @Override
     public void onDestroy() {
         stopping.set(true);
+        unregisterConnectivityCallback();
         closeMonitors();
         if (controlExecutor != null) controlExecutor.shutdownNow();
         if (monitorExecutor != null) monitorExecutor.shutdownNow();
         RUNNING.set(false);
         super.onDestroy();
+    }
+
+    private void registerConnectivityCallback() {
+        connectivityManager = getSystemService(ConnectivityManager.class);
+        if (connectivityManager == null) return;
+        ConnectivityManager.NetworkCallback callback = new ConnectivityManager.NetworkCallback() {
+            @Override
+            public void onAvailable(Network network) {
+                reconnectMonitorsForNetworkChange();
+            }
+
+            @Override
+            public void onLost(Network network) {
+                reconnectMonitorsForNetworkChange();
+            }
+        };
+        try {
+            connectivityManager.registerDefaultNetworkCallback(callback);
+            networkCallback = callback;
+        } catch (RuntimeException ignored) {
+            connectivityManager = null;
+            networkCallback = null;
+            // Exponential retry remains active if the platform cannot register a callback.
+        }
+    }
+
+    private void unregisterConnectivityCallback() {
+        ConnectivityManager manager = connectivityManager;
+        ConnectivityManager.NetworkCallback callback = networkCallback;
+        connectivityManager = null;
+        networkCallback = null;
+        if (manager == null || callback == null) return;
+        try {
+            manager.unregisterNetworkCallback(callback);
+        } catch (RuntimeException ignored) {
+            // The callback may already have been removed while the process was reclaimed.
+        }
+    }
+
+    private void reconnectMonitorsForNetworkChange() {
+        if (stopping.get()) return;
+        List<Monitor> snapshot;
+        synchronized (monitors) {
+            if (stopping.get()) return;
+            snapshot = new ArrayList<>(monitors);
+        }
+        for (Monitor monitor : snapshot) monitor.networkChanged();
     }
 
     private void reload() {
@@ -161,6 +214,7 @@ public class PocketBackgroundEventService extends Service {
     private final class Monitor implements Runnable, PocketBackgroundEventParser.Listener {
         private final PocketBackgroundEventStore.Subscription subscription;
         private final AtomicBoolean active = new AtomicBoolean(true);
+        private final PocketReconnectSignal reconnectSignal = new PocketReconnectSignal();
         private volatile HttpURLConnection connection;
         private volatile long cursor;
 
@@ -173,6 +227,7 @@ public class PocketBackgroundEventService extends Service {
         public void run() {
             int retryMs = INITIAL_RETRY_MS;
             while (active.get()) {
+                long reconnectGeneration = reconnectSignal.currentGeneration();
                 try {
                     connect();
                     retryMs = INITIAL_RETRY_MS;
@@ -183,8 +238,10 @@ public class PocketBackgroundEventService extends Service {
                     connection = null;
                     if (current != null) current.disconnect();
                 }
-                if (!awaitRetry(retryMs)) return;
-                retryMs = Math.min(MAX_RETRY_MS, retryMs * 2);
+                if (!reconnectSignal.awaitRetry(reconnectGeneration, retryMs, active)) return;
+                retryMs = reconnectSignal.currentGeneration() == reconnectGeneration
+                        ? Math.min(MAX_RETRY_MS, retryMs * 2)
+                        : INITIAL_RETRY_MS;
             }
         }
 
@@ -252,26 +309,18 @@ public class PocketBackgroundEventService extends Service {
             }
         }
 
-        private boolean awaitRetry(long milliseconds) {
-            synchronized (this) {
-                if (!active.get()) return false;
-                try {
-                    wait(milliseconds);
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    return false;
-                }
-                return active.get();
-            }
+        void networkChanged() {
+            if (!active.get()) return;
+            reconnectSignal.signal();
+            HttpURLConnection current = connection;
+            if (current != null) current.disconnect();
         }
 
         void close() {
             if (!active.getAndSet(false)) return;
+            reconnectSignal.signal();
             HttpURLConnection current = connection;
             if (current != null) current.disconnect();
-            synchronized (this) {
-                notifyAll();
-            }
         }
     }
 }

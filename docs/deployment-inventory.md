@@ -39,7 +39,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Project speech glossary | maximum 32 reviewed terms per device+workspace | encrypted hashed-scope storage, bounded non-chaining transcript correction and optional API 33 native recognition hints implemented; production browser/Android CI and physical voice acceptance pending |
 | Spoken settings review | one exact project/provider/model command | dedicated one-shot capture, ambiguity rejection, inert current→target review, touch-only apply and stale owner/catalog revalidation implemented; Chromium CI and physical voice acceptance pending |
 | Mobile browser acceptance | Playwright Chromium on Node 22 | production build plus real pairing/Gateway/SSE/run/approval path covers 320/360/412px, 150% text, keyboard resize, rotation, long diff and touch decline line-feedback payload; synthetic only, device acceptance still pending |
-| Android work notifications | opt-in connectedDevice service | maximum 8 encrypted loopback subscriptions, notification-only authenticated SSE, durable cursor/replay freshness and generic retained-operation navigation implemented; API 30 token/bounds/consume/extra-scrub Intent path automated, field tray-tap/process-kill acceptance pending |
+| Android work notifications | opt-in connectedDevice service | maximum 8 encrypted loopback subscriptions, notification-only authenticated SSE, durable cursor/replay freshness, default-network-triggered bounded reconnect and generic retained-operation navigation implemented; API 30 token/bounds/consume/extra-scrub Intent path automated, field tray-tap/process-kill/network-switch acceptance pending |
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Run artifact boundary | maximum 8 / 256 MiB per operation | redacted verifier/Codex logs plus allowlisted run-reported test/image/APK regular-file snapshots; authenticated opaque download, symlink/sensitive/path escape rejection and history-delete cleanup implemented; physical Android download acceptance pending |
 | Diagnostic support bundle | schema 1 allowlist JSON | authenticated app/protocol/tool/count aggregate download, normalized version tokens and capability-gated 320px UI implemented; no device/network/workspace/request/error content, physical share acceptance pending |
@@ -47,6 +47,19 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, standalone Linux GO/PBC + memory-only DHCP cleanup lifecycle, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; actual P2P field validation pending |
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+Android background network-transition checkpoint decision: notification SSE의 최대 60초 retry 지연을 줄이는
+기존 v2 native transport 수정이므로 internal compatibility `patch`로 분류한다. 아직 전달하지 않은
+incompatible v2 안에서 SemVer `2.0.0`/Android `versionCode 20000`, 대상
+`feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. opt-in foreground service는
+default-network available/lost callback 한 개로 현재 loopback SSE를 닫고 backoff wait를 즉시 해제한 뒤
+1초 기준부터 다시 시도한다. callback 등록 실패는 기존 최대 60초 bounded retry로 fail safe하며 service
+종료 때 callback·waiter·HTTP 연결을 정리한다. network·endpoint·device·token 값은 callback state나 로그에
+추가하지 않는다. APK 전달·설치, 실제 network switch, Provider 호출과 Companion 재시작은 하지 않고
+current v1 후보 1.8.2, staged v1.8.4와 검증된 rollback 1.8.1을 그대로 보존한다.
+`release:check`의 단위 테스트 268개, 실제 app-server 통합 3개, production build·schema 일치와 SBOM
+생성은 통과했고 notification source 계약도 통과했다. Linux host에는 Java/JAVA_HOME이 없어 새 native
+JVM retry test와 Android assemble을 로컬 실행하지 못했으므로 PR Android CI를 최종 native gate로 사용한다.
 
 Diagnostic support bundle checkpoint decision: AI 연결 센터에서 field diagnostics JSON을 내려받는 기능은 새
 user-visible v2 workflow이므로 `feature`로 분류한다. 아직 전달하지 않은 incompatible v2 안에서 SemVer

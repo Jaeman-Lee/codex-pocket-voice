@@ -3,9 +3,10 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("Android work notifications survive WebView death with encrypted bounded loopback subscriptions", async () => {
-  const [plugin, service, store, parser, policy, activity, manifest, nativeApi, app, api] = await Promise.all([
+  const [plugin, service, reconnectSignal, store, parser, policy, activity, manifest, nativeApi, app, api] = await Promise.all([
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketNotificationsPlugin.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketBackgroundEventService.java"),
+    source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketReconnectSignal.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketBackgroundEventStore.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketBackgroundEventParser.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketBackgroundEventPolicy.java"),
@@ -17,6 +18,7 @@ test("Android work notifications survive WebView death with encrypted bounded lo
   ]);
 
   assert.match(manifest, /android\.permission\.POST_NOTIFICATIONS/);
+  assert.match(manifest, /android\.permission\.ACCESS_NETWORK_STATE/);
   assert.match(manifest, /PocketBackgroundEventService/);
   assert.match(manifest, /android:exported="false"[\s\S]*android:foregroundServiceType="connectedDevice"/);
   assert.match(activity, /registerPlugin\(PocketNotificationsPlugin\.class\)/);
@@ -47,8 +49,15 @@ test("Android work notifications survive WebView death with encrypted bounded lo
   assert.match(service, /setRequestProperty\("Authorization", "Bearer " \+ subscription\.token\)/);
   assert.match(service, /setRequestProperty\("Last-Event-ID"/);
   assert.match(service, /MAX_RETRY_MS = 60_000/);
-  assert.match(service, /onDestroy\(\)[\s\S]*stopping\.set\(true\)[\s\S]*closeMonitors\(\)/);
+  assert.match(service, /registerDefaultNetworkCallback\(callback\)/);
+  assert.match(service, /onAvailable\(Network network\)[\s\S]*reconnectMonitorsForNetworkChange\(\)/);
+  assert.match(service, /onLost\(Network network\)[\s\S]*reconnectMonitorsForNetworkChange\(\)/);
+  assert.match(service, /networkChanged\(\)[\s\S]*reconnectSignal\.signal\(\)[\s\S]*current\.disconnect\(\)/);
+  assert.match(service, /onDestroy\(\)[\s\S]*stopping\.set\(true\)[\s\S]*unregisterConnectivityCallback\(\)[\s\S]*closeMonitors\(\)/);
   assert.match(service, /private void reload\(\)[\s\S]*if \(stopping\.get\(\)\) return/);
+  assert.match(reconnectSignal, /generation == observedGeneration/);
+  assert.match(reconnectSignal, /System\.nanoTime\(\)/);
+  assert.match(reconnectSignal, /notifyAll\(\)/);
   assert.doesNotMatch(service, /(?:print|Log\.)[^\n]*(?:token|operationId|occurredAt)/i);
   assert.doesNotMatch(service, /prompt|workspace|cwd|finalResponse|redactedSummary/);
 

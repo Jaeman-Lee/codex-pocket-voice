@@ -10,6 +10,15 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Android background network-transition reconnect는 notification SSE가 끊긴 뒤 최대 60초 backoff를
+  기다릴 수 있던 기존 v2 native 동작을 고치는 internal compatibility `patch`다. 아직 현장 전달하지 않은
+  incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고
+  이전 CI-only candidate를 대체한다. APK 전달·설치, 실제 Provider 호출과 실행 중 Companion 재시작은
+  하지 않으며 current v1 후보 1.8.2, staged v1.8.4와 검증된 v1.8.1 rollback을 그대로 보존한다.
+- opt-in notification foreground service는 Android default network의 available/lost callback을 한 개만
+  등록한다. 전환 시 현재 loopback SSE를 닫고 대기 중인 exponential backoff를 깨워 1초 기준부터 다시
+  연결하며, callback 등록이 불가능하면 기존 최대 60초 bounded retry를 유지한다. service 종료 시 callback과
+  모든 waiter/HTTP 연결을 해제하고 network·device·token 값은 callback state나 로그에 저장하지 않는다.
 - Privacy-safe diagnostic support bundle은 현장 문제를 사용자가 내려받아 전달하는 새 user-visible
   workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서
   `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
