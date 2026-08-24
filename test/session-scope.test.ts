@@ -5,6 +5,7 @@ import {
   scopedHandoff,
   threadBelongsToWorkspace,
   threadsForWorkspace,
+  visibleCodexHandoff,
 } from "../client/src/session-scope.js";
 import type { Operation, SessionHandoff, ThreadSummary } from "../client/src/types.js";
 
@@ -21,6 +22,9 @@ test("handoff UI never presents another project's session as the current project
   assert.equal(scopedHandoff(handoff, "/workspace/codex-pocket-voice", null), null);
   assert.equal(scopedHandoff(handoff, "/workspace/stock-explorer", null)?.id, handoff.id);
   assert.equal(scopedHandoff(handoff, "/workspace/stock-explorer", handoff.id), null);
+  assert.equal(visibleCodexHandoff(handoff, "openai", "/workspace/stock-explorer", null), null);
+  assert.equal(visibleCodexHandoff(handoff, "openrouter", "/workspace/stock-explorer", null), null);
+  assert.equal(visibleCodexHandoff(handoff, "codex", "/workspace/stock-explorer", null)?.id, handoff.id);
 });
 
 test("session actions ignore operations owned by another project or conversation", () => {

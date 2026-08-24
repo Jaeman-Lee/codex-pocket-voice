@@ -1,7 +1,7 @@
 # Codex Pocket Voice v2 실행 계획
 
 - 상태: 구현 중
-- 마지막 검토: 2026-08-24 KST
+- 마지막 검토: 2026-08-25 KST
 
 이 문서는 `1.8.1`을 v1 rollback 기준선으로 두고, v2를 구현하기 위한 제품·아키텍처·보안·검증
 계획을 정의한다. 이 문서 자체는 배포 가능한 코드 변경이 아니므로 SemVer와 APK를 변경하지 않는다.
@@ -480,6 +480,9 @@ allowlist JSON으로 조립한다. 장치 ID·IP/port·경로·Git metadata·환
 idle handoff는 exact thread를 해제한 뒤에만 모바일 상태를 분리하고, running handoff는 terminal event 뒤
 같은 thread의 중복 release를 하나로 합쳐 bounded backoff로 `thread/unsubscribe`를 재시도한다. 모든
 idle release 시도가 실패하면 handoff를 기록하지 않아 CLI writer와 모바일 표시가 어긋나지 않는다.
+이어받기는 Codex 화면의 exact thread와 남아 있는 operation을 검증하고 서버의 at-most-once claim 및
+동일 handoff 응답을 받은 뒤에만 로컬 프로젝트·대화·메시지를 전환한다. 경쟁 claim, 응답 유실,
+장치·Provider 전환과 활성 로컬 작업은 실패-폐쇄로 기존 상태를 유지한다.
 작업 카드는 한 줄 120자 목표 이름, retained 범위 내 최대 50개 pin과 보관·복원을 제공한다. metadata는
 Companion 재시작 뒤 복원되고 SSE로 다른 연결 기기에 전파된다. 사용자가 직접 켜는 Android
 완료·승인·오류 알림도 구현했다. 잠금 화면에는 generic 상태만 표시하고

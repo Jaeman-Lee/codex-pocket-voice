@@ -1,4 +1,4 @@
-import type { Operation, SessionHandoff, ThreadSummary } from "./types";
+import type { Operation, ProviderId, SessionHandoff, ThreadSummary } from "./types";
 
 export function threadsForWorkspace(
   threads: readonly ThreadSummary[],
@@ -23,6 +23,15 @@ export function scopedHandoff(
 ): SessionHandoff | null {
   if (!workspace || !handoff || handoff.workspace !== workspace || handoff.id === dismissedHandoffId) return null;
   return handoff;
+}
+
+export function visibleCodexHandoff(
+  handoff: SessionHandoff | null,
+  provider: ProviderId,
+  workspace: string,
+  dismissedHandoffId: string | null,
+): SessionHandoff | null {
+  return provider === "codex" ? scopedHandoff(handoff, workspace, dismissedHandoffId) : null;
 }
 
 export function operationBelongsToSession(

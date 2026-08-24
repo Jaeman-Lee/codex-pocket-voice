@@ -21,6 +21,37 @@ test("the paired shell stays inside 320, 360, and 412px portrait viewports", asy
   }
 });
 
+test("a failed competing handoff claim never changes the local project conversation", async ({ page }) => {
+  await page.route("**/api/session/handoff?*", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    json: {
+      handoff: {
+        id: "handoff-browser-race",
+        workspace: process.cwd(),
+        threadId: "thread-mobile",
+        releasedBy: { id: "phone-other", label: "Other phone" },
+        releasedAt: "2026-08-24T00:00:00.000Z",
+        expiresAt: "2026-08-25T00:00:00.000Z",
+      },
+    },
+  }));
+  await page.route("**/api/session/handoffs/handoff-browser-race/claim", (route) => route.fulfill({
+    status: 409,
+    contentType: "application/json",
+    json: { error: "Session handoff was already claimed" },
+  }));
+
+  await bootPairedApp(page, { width: 320, height: 740 });
+  const conversations = page.getByLabel("AI 대화 선택");
+  await expect(conversations).toHaveValue("");
+  await page.getByRole("button", { name: "이어받기" }).click();
+  await expect(page.locator(".toast")).toContainText("already claimed");
+  await expect(conversations).toHaveValue("");
+  await expect(page.locator(".handoff-banner")).toBeVisible();
+  await expectShellContained(page);
+});
+
 test("run test logs and APK artifacts stay reviewable and downloadable at 320px", async ({ page }) => {
   const createdAt = new Date().toISOString();
   await page.route("**/api/runs", async (route) => {

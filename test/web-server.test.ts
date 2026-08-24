@@ -908,11 +908,19 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(idleRelease.threadUnsubscribeStatus, "unsubscribed");
   assert.deepEqual(fake.unsubscribed, ["thread-web", "thread-web"]);
   assert.deepEqual(fake.unsubscribeAttempts, Array(6).fill("thread-web"));
-  await jsonFetch(`${base}/api/session/handoffs/${idleRelease.handoff.id}/claim`, {
-    method: "POST",
-    headers: authorized({ "Content-Type": "application/json", Origin: base }),
-    body: "{}",
-  });
+  const competingClaims = await Promise.all([0, 1].map(() => fetch(
+    `${base}/api/session/handoffs/${idleRelease.handoff.id}/claim`,
+    {
+      method: "POST",
+      headers: authorized({ "Content-Type": "application/json", Origin: base }),
+      body: "{}",
+    },
+  )));
+  const successfulClaims = competingClaims.filter((response) => response.status === 200);
+  const rejectedClaims = competingClaims.filter((response) => response.status === 404 || response.status === 409);
+  assert.equal(successfulClaims.length, 1);
+  assert.equal(rejectedClaims.length, 1);
+  assert.equal((await successfulClaims[0]!.json() as any).claimed.id, idleRelease.handoff.id);
   const archived = await jsonFetch(`${base}/api/runs/${operationId}/metadata`, {
     method: "PATCH",
     headers: authorized({ "Content-Type": "application/json", Origin: base }),

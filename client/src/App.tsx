@@ -92,10 +92,11 @@ import {
 } from "./fleet-state";
 import {
   operationBelongsToSession,
-  scopedHandoff,
   threadBelongsToWorkspace,
   threadsForWorkspace,
+  visibleCodexHandoff,
 } from "./session-scope";
+import { claimSessionHandoff } from "./session-handoff-claim";
 import {
   latestProviderForkSource,
   providerConversationMessages,
@@ -833,17 +834,20 @@ export function App() {
     runScope?: ActiveRunScope,
   ) => {
     const requestedDevice = deviceRef.current;
+    const requestedProvider = providerRef.current;
     try {
       const suffix = selectedWorkspace ? `?workspace=${encodeURIComponent(selectedWorkspace)}` : "";
       const data = await api<{ handoff: SessionHandoff | null }>(`/api/session/handoff${suffix}`);
-      if (deviceRef.current !== requestedDevice || workspaceRef.current !== selectedWorkspace
+      if (deviceRef.current !== requestedDevice || providerRef.current !== requestedProvider
+          || workspaceRef.current !== selectedWorkspace
           || (attempt !== undefined && attempt !== connectionAttemptRef.current)
           || (runScope && !activeRunScopeMatches(activeRunRef.current, runScope))) return;
       setHandoffSupported(true);
       const dismissed = localStorage.getItem(handoffDismissedKey(requestedDevice));
-      setHandoff(scopedHandoff(data.handoff, selectedWorkspace, dismissed));
+      setHandoff(visibleCodexHandoff(data.handoff, requestedProvider, selectedWorkspace, dismissed));
     } catch {
-      if (deviceRef.current !== requestedDevice || workspaceRef.current !== selectedWorkspace
+      if (deviceRef.current !== requestedDevice || providerRef.current !== requestedProvider
+          || workspaceRef.current !== selectedWorkspace
           || (attempt !== undefined && attempt !== connectionAttemptRef.current)
           || (runScope && !activeRunScopeMatches(activeRunRef.current, runScope))) return;
       setHandoffSupported(false);
@@ -1819,10 +1823,13 @@ export function App() {
       return;
     }
     if (event.type === "session" && event.action === "released" && event.handoff) {
-      if (event.handoff.workspace === workspaceRef.current
-        && localStorage.getItem(handoffDismissedKey(deviceRef.current)) !== event.handoff.id) {
-        setHandoff(event.handoff);
-      }
+      const visible = visibleCodexHandoff(
+        event.handoff,
+        providerRef.current,
+        workspaceRef.current,
+        localStorage.getItem(handoffDismissedKey(deviceRef.current)),
+      );
+      if (visible) setHandoff(visible);
       return;
     }
     if (event.type === "session" && event.action === "claimed" && event.handoffId) {
@@ -2846,45 +2853,64 @@ export function App() {
       showToast("현재 기기의 대기열을 먼저 실행하거나 취소한 뒤 인계받으세요.");
       return;
     }
+    if (providerRef.current !== "codex") {
+      showToast("OpenAI Codex를 선택한 뒤 세션을 이어받아 주세요.");
+      return;
+    }
+    if (activeRunRef.current.operation || activeRunRef.current.requestId) {
+      showToast("현재 작업 상태를 확인한 뒤 다른 세션을 이어받아 주세요.");
+      return;
+    }
     const selectedDevice = deviceRef.current;
     setHandoffBusy(true);
     try {
       if (!workspaces.some((item) => item.path === pending.workspace)) {
         throw new Error("인계된 프로젝트가 현재 PC의 허용 목록에 없습니다.");
       }
+      const prepared = await claimSessionHandoff(pending, {
+        isCurrent: () => deviceRef.current === selectedDevice && providerRef.current === "codex",
+        readThread: async (threadId) => (
+          await api<{ thread: ThreadDetail }>(`/api/threads/${encodeURIComponent(threadId)}`)
+        ).thread,
+        readOperation: async (operationId) => {
+          try {
+            return (await api<{ operation: Operation }>(`/api/runs/${encodeURIComponent(operationId)}`)).operation;
+          } catch (error) {
+            if (error instanceof ApiError && error.status === 404) return null;
+            throw error;
+          }
+        },
+        claim: async (handoffId) => (
+          await api<{ claimed: SessionHandoff }>(
+            `/api/session/handoffs/${encodeURIComponent(handoffId)}/claim`,
+            { method: "POST", body: {} },
+          )
+        ).claimed,
+      });
+      if (deviceRef.current !== selectedDevice || providerRef.current !== "codex") return;
+
+      clearRunForkState();
       setWorkspace(pending.workspace);
       workspaceRef.current = pending.workspace;
-      localStorage.setItem(storageKey("workspace", deviceRef.current), pending.workspace);
+      localStorage.setItem(storageKey("workspace", selectedDevice), pending.workspace);
       const runScope = resetActiveRun(selectedDevice);
-      await loadThreads(pending.workspace, false, pending.threadId, undefined, runScope);
-      const data = await api<{ thread: ThreadDetail }>(`/api/threads/${encodeURIComponent(pending.threadId)}`);
-      if (deviceRef.current !== selectedDevice || !activeRunScopeMatches(activeRunRef.current, runScope)) return;
       setThreadId(pending.threadId);
       threadRef.current = pending.threadId;
-      localStorage.setItem(storageKey("thread", deviceRef.current), pending.threadId);
-      const restored = historyMessages(data.thread);
+      persistConversationSelection(selectedDevice, "codex", pending.workspace, pending.threadId);
+      setThreads((current) => current.filter((item) => item.cwd === pending.workspace));
+      const restored = historyMessages(prepared.thread);
       messagesRef.current = restored;
       setMessages(restored);
       beginConversationJournalScope();
-      if (pending.operationId) {
-        const active = await api<{ operation: Operation }>(`/api/runs/${encodeURIComponent(pending.operationId)}`)
-          .catch(() => null);
-        if (deviceRef.current !== selectedDevice || !activeRunScopeMatches(activeRunRef.current, runScope)) return;
-        if (active?.operation.status === "running") handleOperationEvent("started", active.operation, runScope);
-        else if (active?.operation.status === "unknown") handleOperationEvent("recovered", active.operation, runScope);
-        else if (active?.operation.status === "failed") handleOperationEvent("failed", active.operation, runScope);
-      }
-      let claimWarning = "";
-      try {
-        await api(`/api/session/handoffs/${encodeURIComponent(pending.id)}/claim`, { method: "POST", body: {} });
-      } catch (error) {
-        if (!(error instanceof ApiError && error.status === 404)) {
-          claimWarning = "세션은 연결했지만 다른 기기의 인계 표시를 정리하지 못했습니다.";
-        }
-      }
-      localStorage.setItem(handoffDismissedKey(deviceRef.current), pending.id);
+      if (prepared.operation?.status === "running") handleOperationEvent("started", prepared.operation, runScope);
+      else if (prepared.operation?.status === "unknown") handleOperationEvent("recovered", prepared.operation, runScope);
+      else if (prepared.operation?.status === "failed") handleOperationEvent("failed", prepared.operation, runScope);
+      void loadThreads(pending.workspace, true, pending.threadId, undefined, runScope);
+      localStorage.setItem(handoffDismissedKey(selectedDevice), pending.id);
       setHandoff(null);
-      showToast(claimWarning || (pending.operationId ? "실행 중인 세션을 이어받았습니다." : "세션을 이어받았습니다."));
+      showToast(prepared.operation?.status === "running"
+        ? "실행 중인 세션을 이어받았습니다."
+        : "세션을 이어받았습니다.");
     } catch (error) {
       showToast(errorMessage(error));
     } finally {
@@ -5476,7 +5502,11 @@ export function App() {
               <strong>다른 기기에서 반납한 세션</strong>
               <span>{workspaceName(handoff.workspace)} · {workspaceIdentityLabel(workspaceIdentityFor(workspaces, handoff.workspace))} · {handoff.operationId ? "PC 작업 실행 중" : "대화 이어가기"}</span>
             </div>
-            <button type="button" disabled={handoffBusy} onClick={() => void resumeHandoff()}>{handoffBusy ? "연결 중…" : "이어받기"}</button>
+            <button
+              type="button"
+              disabled={handoffBusy || provider !== "codex" || operation !== null || activeRun.requestId !== null}
+              onClick={() => void resumeHandoff()}
+            >{handoffBusy ? "연결 중…" : "이어받기"}</button>
           </div>
         )}
         {(journalRestored || (connection !== "online" && (messages.length > 0 || promptQueue.length > 0))) && (

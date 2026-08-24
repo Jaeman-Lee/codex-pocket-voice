@@ -809,6 +809,7 @@ async function handleApi(
       throw new HttpError(409, "Session handoff no longer belongs to its recorded workspace");
     }
     const claimed = await handoffs.claim(handoffId);
+    if (!claimed) throw new HttpError(409, "Session handoff was already claimed");
     broadcast(sseClients, { type: "session", action: "claimed", handoffId });
     sendJson(response, 200, { claimed });
     return;

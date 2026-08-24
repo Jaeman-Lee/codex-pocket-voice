@@ -10,6 +10,21 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Atomic session claim fix는 여러 기기가 같은 handoff를 동시에 이어받거나, claim 실패 뒤 모바일만
+  해당 대화로 전환될 수 있던 v2 결함을 고치는 `patch`다. 아직 전달하지 않은 incompatible v2 범위
+  안에서 `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only
+  candidate를 대체한다. APK 전달·설치, 실제 Provider 호출과 실행 중 Companion 재시작은 하지 않으며
+  current v1 후보 1.8.2, staged v1.8.4, 검증된 1.8.1 rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- Gateway의 handoff claim은 경합 시 단 하나만 성공하고 뒤늦은 요청에는 404/409를 반환한다. 모바일은
+  exact thread와 남아 있는 operation의 Codex/provider/workspace/conversation 소유권을 먼저 검증한 뒤
+  서버 claim을 완료하며, 응답 handoff도 원래 대상과 일치해야만 프로젝트·대화·메시지를 전환한다.
+  claim 실패·응답 유실·장치 전환에서는 기존 로컬 세션을 그대로 두고 성공으로 추측하지 않는다.
+- Codex handoff는 OpenAI/OpenRouter 화면에 도착한 늦은 조회나 SSE에서 표시하지 않으며 사용자가 Codex를
+  명시적으로 선택해야 다시 조회한다. 활성 요청·작업이나 이 기기에만 있는 Queue가 있으면 이어받기를
+  차단해 현재 상태를 버리지 않는다.
+- exact/malformed/경쟁 claim과 Provider·선택 변경 경계를 단위·Gateway 통합 검사로 고정했고,
+  `release:check`의 단위 검사 286개와 실제 app-server 통합 3개를 통과했다. claim 실패 시 기존 선택을
+  유지하는 320px production 브라우저 회귀는 PR Chromium CI에서 확인한다.
 - Exact project session scope fix는 선택한 프로젝트의 부모 경로가 하위 프로젝트 대화까지 표시·반납할
   수 있던 v2 결함을 고치는 `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서
   `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를

@@ -93,7 +93,8 @@ package, 정확한 manifest 서명·APK/SBOM hash와 더 높은 versionCode를 �
 - AI 연결 센터가 작은 화면과 키보드 표시 상태에서 내부 스크롤된다.
 - 음성 짧게 누르기·길게 누르기와 중복 문장 방지가 동작한다.
 - 실행 중 프롬프트 대기열, 오프라인 기록 복원과 재연결이 동작한다.
-- 실행 중인 세션을 반납해도 PC 작업이 계속되며 다른 페어링 기기에서 같은 대화를 이어받는다.
+- 실행 중인 세션을 반납해도 PC 작업이 계속되며 다른 페어링 기기 한 대만 같은 대화를 이어받는다.
+  경쟁 claim이나 응답 실패는 기존 모바일 프로젝트·Provider·대화를 바꾸지 않는다.
 - 사진·영상 첨부와 로컬 분석 실패 메시지가 확인된다.
 - [Android 저부하 현장 검증](android-field-acceptance.md)의 60분 release gate를 direct LAN, 실제 P2P와
   outbound relay 지원 경로별로 통과하고 aggregate 결과를 검토한다.
