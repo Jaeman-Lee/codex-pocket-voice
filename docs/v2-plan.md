@@ -608,7 +608,9 @@ candidate이고 모두 30일 이내 pass일 때만 create-once 0600 aggregate를
 independent trust path의 pinned certificate fingerprint로 detached manifest signature, APK signer와
 APK/SBOM 실제 hash·byte count를 검증한다. verifier가 반환한 exact manifest SHA-256 receipt와 field
 평가가 읽은 bytes도 다시 대조하며, 검증 뒤 경로 교체를 포함한 실패는 출력 없이 종료한다. 실제 field
-evidence는 아직 없고 signed/tampered/swapped bundle과 합성 field fixture로만 검증했다.
+입력은 `O_NOFOLLOW` 단일 descriptor에서 regular/single-link, private report의 owner-only 조건,
+시작·종료 metadata와 byte 상한을 확인해 symlink/hardlink·읽는 중 교체도 거부한다. 실제 field evidence는 아직 없고
+signed/tampered/swapped/linked bundle과 합성 field fixture로만 검증했다.
 
 Android CI는 APK와 SBOM의 SHA-256·크기, package, SemVer/versionCode, commit을 담은 canonical
 `update-manifest.json`을 생성한다. official signed build는 APK release key로 manifest 원문에 RSA/ECDSA

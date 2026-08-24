@@ -2,11 +2,11 @@
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { AndroidFieldTransport } from "../src/android-field-metrics.js";
+import { readBoundedRegularFile } from "../src/bounded-file.js";
 import { FunctionalFieldError } from "../src/functional-field-acceptance.js";
 import {
   ReleaseEvidenceError,
@@ -193,23 +193,13 @@ function parseVerifierReceipt(text: string): string {
 }
 
 async function readBoundedFile(path: string, privateFile: boolean, label: string): Promise<string> {
-  const resolved = resolve(path);
-  let info;
   try {
-    info = await lstat(resolved);
+    return (await readBoundedRegularFile(resolve(path), {
+      maximumBytes: MAX_INPUT_BYTES,
+      requirePrivate: privateFile,
+    })).toString("utf8");
   } catch {
-    throw new ReleaseEvidenceError(`${label} could not be read`);
-  }
-  const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
-  if (!info.isFile() || info.nlink !== 1 || info.size <= 0 || info.size > MAX_INPUT_BYTES
-      || !Number.isSafeInteger(info.size)
-      || (privateFile && ((info.mode & 0o077) !== 0 || (currentUid !== null && info.uid !== currentUid)))) {
     throw new ReleaseEvidenceError(`${label} is not an acceptable ${privateFile ? "private " : ""}regular file`);
-  }
-  try {
-    return await readFile(resolved, "utf8");
-  } catch {
-    throw new ReleaseEvidenceError(`${label} could not be read`);
   }
 }
 

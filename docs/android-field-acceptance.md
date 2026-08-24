@@ -45,6 +45,9 @@ package 변경 명령은 실행하지 않는다.
    아래 명령에 `--serial`을 추가한다.
 4. 저장소 밖의 private directory에 새 report 경로를 정하고 실행한다.
 
+manifest는 symlink/hardlink가 아닌 단일 regular file이어야 한다. 도구는 `O_NOFOLLOW`로 한 번 연 file
+descriptor에서 크기와 시작·종료 metadata를 확인하므로 읽는 중 경로 교체·변경은 ADB 조회 전에 거부한다.
+
 ```sh
 npm run android:field-acceptance -- \
   --manifest /private/update-bundle/update-manifest.json \

@@ -1,7 +1,6 @@
 #!/usr/bin/env -S node --import tsx
 
 import { execFile } from "node:child_process";
-import { lstat, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
@@ -19,6 +18,7 @@ import {
   parseFunctionalCandidateManifest,
   requireFunctionalCandidateSource,
 } from "../src/functional-field-acceptance.js";
+import { readBoundedRegularFile } from "../src/bounded-file.js";
 import { APP_VERSION } from "../src/version.js";
 
 const execFileAsync = promisify(execFile);
@@ -171,21 +171,13 @@ async function cleanSourceIdentity(): Promise<{ version: string; versionCode: nu
 }
 
 async function readManifest(path: string): Promise<string> {
-  const resolved = resolve(path);
-  let info;
   try {
-    info = await lstat(resolved);
+    return (await readBoundedRegularFile(resolve(path), {
+      maximumBytes: MAX_MANIFEST_BYTES,
+      requirePrivate: false,
+    })).toString("utf8");
   } catch {
-    throw new AndroidFieldError("Update manifest could not be read");
-  }
-  if (!info.isFile() || info.nlink !== 1 || info.size <= 0 || info.size > MAX_MANIFEST_BYTES
-      || !Number.isSafeInteger(info.size)) {
     throw new AndroidFieldError("Update manifest file is invalid");
-  }
-  try {
-    return await readFile(resolved, "utf8");
-  } catch {
-    throw new AndroidFieldError("Update manifest could not be read");
   }
 }
 

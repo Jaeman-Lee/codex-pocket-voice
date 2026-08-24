@@ -13,9 +13,14 @@
 신뢰 경로에서 확인해야 한다. 최종 report의 `structured_aggregate_only`는 암호 검증과 운영자 관찰을
 구조화한 증거이며 실제 Provider·물리 단말 실행을 대신하지 않는다.
 
+모든 입력 파일은 `O_NOFOLLOW`로 한 번만 열고 같은 file descriptor에서 regular/single-link, 필요 시
+owner-only mode, 시작·종료 metadata와 byte 상한을 확인한다. symlink·hardlink, 읽는 중 교체·변경과
+상한 초과는 원본 경로나 내용을 출력하지 않고 실패한다.
+
 ## 입력 조건
 
-- canonical signed `update-manifest.json`, detached signature, 인증서, APK와 SBOM이 있는 artifact directory
+- symlink/hardlink가 아닌 canonical signed `update-manifest.json`, detached signature, 인증서, APK와 SBOM이
+  있는 artifact directory
 - 별도 신뢰 경로에서 확인한 signing certificate SHA-256 fingerprint와 신뢰할 수 있는 `apksigner`
 - manifest와 정확히 같은 clean Git commit
 - 같은 manifest/commit/APK digest에 묶인 20개

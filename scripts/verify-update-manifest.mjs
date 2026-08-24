@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { createHash, verify as verifySignature, X509Certificate } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -136,11 +137,41 @@ function verifyApkCertificate(apkPath, expected, command) {
 }
 
 async function boundedFile(path, maximum, name) {
-  const info = await stat(path).catch(() => fail(`${name} is missing`));
-  if (!info.isFile() || info.size <= 0 || !Number.isSafeInteger(info.size) || info.size > maximum) {
-    fail(`${name} size is invalid`);
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+    .catch(() => fail(`${name} is not a regular non-symlink file`));
+  try {
+    const initial = await handle.stat().catch(() => fail(`${name} metadata is invalid`));
+    if (!initial.isFile() || initial.nlink !== 1 || initial.size <= 0
+        || !Number.isSafeInteger(initial.size) || initial.size > maximum) {
+      fail(`${name} size or link count is invalid`);
+    }
+    const bytes = await readWithLimit(handle, maximum, name);
+    const final = await handle.stat().catch(() => fail(`${name} metadata is invalid`));
+    if (bytes.length !== initial.size || final.size !== initial.size
+        || final.mtimeMs !== initial.mtimeMs || final.ctimeMs !== initial.ctimeMs) {
+      fail(`${name} changed while it was read`);
+    }
+    return bytes;
+  } finally {
+    await handle.close().catch(() => undefined);
   }
-  return readFile(path);
+}
+
+async function readWithLimit(handle, maximum, name) {
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const remaining = maximum + 1 - total;
+    if (remaining <= 0) fail(`${name} exceeds its size limit`);
+    const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, remaining));
+    const { bytesRead } = await handle.read(chunk, 0, chunk.length, null)
+      .catch(() => fail(`${name} could not be read`));
+    if (bytesRead === 0) break;
+    total += bytesRead;
+    if (total > maximum) fail(`${name} exceeds its size limit`);
+    chunks.push(chunk.subarray(0, bytesRead));
+  }
+  return Buffer.concat(chunks, total);
 }
 
 function containedArtifactPath(directory, file) {

@@ -10,6 +10,16 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Atomic bounded release-input read fix는 verifier와 field CLI의 `stat/lstat` 뒤 경로 재열기 및 verifier의
+  symlink 추적이 입력 크기·link·privacy 판정과 실제 읽은 bytes를 분리할 수 있던 release trust 경계
+  공백을 고치는 internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서
+  `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
+  대체한다. 실제 field·Provider 호출, APK 전달·설치와 Companion 재시작은 하지 않으며 current v1 후보
+  1.8.2, staged v1.8.4, 검증된 1.8.1 rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- manifest·field report reader는 `O_NOFOLLOW`로 연 단일 file descriptor에서 regular/single-link,
+  owner-only mode, 시작·종료 metadata와 byte 상한을 확인한다. update verifier도 manifest·signature·
+  certificate·APK·SBOM을 같은 방식으로 읽고 symlink/hardlink를 거부한다. `release:check`의 단위 검사
+  311개와 실제 app-server 통합 3개, production build·schema 일치·SBOM이 통과했다.
 - Verified-manifest handoff fix는 최종 evidence 도구가 별도 프로세스에서 암호 검증한 뒤 같은 경로의
   manifest를 다시 읽어, 그 사이 교체된 바이트를 평가할 수 있던 release trust 경계 공백을 고치는
   internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android

@@ -16,6 +16,8 @@
 4. v1.8.1 APK와 대응 무결성 파일을 rollback 위치에 별도로 보존하고 먼저 검증한다.
 5. observation/report는 저장소 밖 owner-only private 디렉터리에 둔다. device ID·serial·model, IP·SSID·port,
    사용자명·경로, API key/token, prompt/response, 오류 원문이나 자유 형식 메모를 기록하지 않는다.
+   manifest와 observation은 symlink/hardlink가 아닌 single-link regular file이어야 하며, 도구는
+   `O_NOFOLLOW` 단일 descriptor에서 owner/mode·크기와 시작·종료 metadata를 확인한다.
 
 ## Observation 템플릿
 

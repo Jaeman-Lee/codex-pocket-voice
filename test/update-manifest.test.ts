@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, sign, X509Certificate } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,6 +77,21 @@ test("update manifests bind the APK, signing identity, and monotonic version", {
       kind: "verified_update_manifest",
       manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
     });
+
+    const linkedManifest = join(signedDirectory, "linked-update-manifest.json");
+    await symlink(manifest, linkedManifest);
+    const symlinked = run(verifyManifest, [
+      ...replaceArgument(signedArguments, "--manifest", linkedManifest),
+    ], false);
+    assert.notEqual(symlinked.status, 0);
+    assert.match(symlinked.stderr, /regular non-symlink file/);
+
+    const hardlinkedApk = join(root, "hardlinked.apk");
+    await link(apk, hardlinkedApk);
+    const hardlinked = run(verifyManifest, signedArguments, false);
+    assert.notEqual(hardlinked.status, 0);
+    assert.match(hardlinked.stderr, /link count is invalid/);
+    await unlink(hardlinkedApk);
 
     const untrusted = run(verifyManifest, [
       ...replaceArgument(signedArguments, "--expected-certificate-sha256", "b".repeat(64)),

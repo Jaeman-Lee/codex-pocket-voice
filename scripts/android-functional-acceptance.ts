@@ -1,7 +1,6 @@
 #!/usr/bin/env -S node --import tsx
 
 import { execFile } from "node:child_process";
-import { lstat, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
@@ -14,6 +13,7 @@ import {
   requireUnusedFunctionalFieldFile,
   writeFunctionalFieldFile,
 } from "../src/functional-field-acceptance.js";
+import { readBoundedRegularFile } from "../src/bounded-file.js";
 import { APP_VERSION } from "../src/version.js";
 
 const execFileAsync = promisify(execFile);
@@ -119,23 +119,15 @@ async function cleanSourceIdentity(): Promise<{ version: string; versionCode: nu
 }
 
 async function readBoundedFile(path: string, maximum: number, privateFile: boolean): Promise<string> {
-  const resolved = resolve(path);
-  let info;
   try {
-    info = await lstat(resolved);
+    return (await readBoundedRegularFile(resolve(path), {
+      maximumBytes: maximum,
+      requirePrivate: privateFile,
+    })).toString("utf8");
   } catch {
-    throw new FunctionalFieldError(privateFile ? "Functional observations could not be read" : "Update manifest could not be read");
-  }
-  const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
-  if (!info.isFile() || info.nlink !== 1 || info.size <= 0 || info.size > maximum
-      || !Number.isSafeInteger(info.size)
-      || (privateFile && ((info.mode & 0o077) !== 0 || (currentUid !== null && info.uid !== currentUid)))) {
-    throw new FunctionalFieldError(privateFile ? "Functional observations are not a private regular file" : "Update manifest file is invalid");
-  }
-  try {
-    return await readFile(resolved, "utf8");
-  } catch {
-    throw new FunctionalFieldError(privateFile ? "Functional observations could not be read" : "Update manifest could not be read");
+    throw new FunctionalFieldError(
+      privateFile ? "Functional observations are not a private regular file" : "Update manifest file is invalid",
+    );
   }
 }
 
