@@ -6,6 +6,7 @@ import type {
   ProviderRunInput,
   ProviderRunStatus,
 } from "./providers/types.js";
+import { ProviderRunEventGate } from "./provider-event-contract.js";
 import type { WorkspaceIdentity } from "./workspace-identity.js";
 
 const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60_000;
@@ -123,6 +124,7 @@ export class RunCoordinator {
   private readonly pendingConversations = new Set<string>();
   private readonly idempotency = new Map<string, IdempotencyEntry>();
   private readonly idempotencyByOperation = new Map<string, RunIdempotencyRecord>();
+  private readonly providerEventGates = new Map<string, ProviderRunEventGate>();
   private readonly listeners = new Set<(event: RunCoordinatorEvent) => void>();
   private readonly now: () => number;
   private readonly createId: () => string;
@@ -391,6 +393,7 @@ export class RunCoordinator {
       };
       this.operations.set(operation.id, operation);
       this.activeByConversation.set(actualConversation, operation.id);
+      this.providerEventGates.set(operation.id, new ProviderRunEventGate(operation));
       const operationIdempotency = idempotency ? { ...idempotency, operationId: operation.id } : undefined;
       if (operationIdempotency) this.idempotencyByOperation.set(operation.id, operationIdempotency);
       try {
@@ -398,6 +401,7 @@ export class RunCoordinator {
       } catch (error) {
         this.operations.delete(operation.id);
         this.activeByConversation.delete(actualConversation);
+        this.providerEventGates.delete(operation.id);
         this.idempotencyByOperation.delete(operation.id);
         throw error;
       }
@@ -468,6 +472,8 @@ export class RunCoordinator {
       operation.status = completed.status;
       operation.completedAt = new Date(this.now()).toISOString();
       operation.result = completed.result;
+      if (completed.status === "failed") operation.error = providerFailureMessage(completed.result);
+      else delete operation.error;
       if (completed.status === "completed" && completed.resumeState) {
         if (completed.resumeState.providerId !== operation.providerId) {
           throw new Error("Provider resume state does not belong to the completed operation");
@@ -500,6 +506,7 @@ export class RunCoordinator {
     } finally {
       const key = conversationKey(operation.providerId, operation.conversationId);
       if (this.activeByConversation.get(key) === operation.id) this.activeByConversation.delete(key);
+      this.providerEventGates.delete(operation.id);
     }
   }
 
@@ -523,6 +530,8 @@ export class RunCoordinator {
     const operationId = this.activeByConversation.get(key);
     const operation = operationId ? this.operations.get(operationId) : undefined;
     if (!operationId || !operation) return;
+    const gate = this.providerEventGates.get(operationId);
+    if (!gate?.accept(event)) return;
     this.emit({ type: "provider", operationId, cwd: operation.cwd, event });
   }
 
@@ -552,6 +561,7 @@ export class RunCoordinator {
 
   private removeOperation(operationId: string, persist = true): void {
     this.operations.delete(operationId);
+    this.providerEventGates.delete(operationId);
     this.idempotencyByOperation.delete(operationId);
     if (persist) this.stateStore?.deleteOperation(operationId);
     for (const [key, entry] of this.idempotency) {
@@ -602,4 +612,16 @@ function safeError(error: unknown): string {
   return error instanceof Error && error.message
     ? error.message.slice(0, 500)
     : "알 수 없는 저장 오류";
+}
+
+function providerFailureMessage(result: Record<string, unknown>): string {
+  const error = result.error;
+  const message = typeof error === "string"
+    ? error
+    : typeof error === "object" && error !== null && !Array.isArray(error)
+      && typeof (error as Record<string, unknown>).message === "string"
+      ? (error as Record<string, unknown>).message as string
+      : "Provider 실행이 실패했습니다.";
+  const normalized = message.replace(/[\r\n]+/g, " ").trim();
+  return (normalized || "Provider 실행이 실패했습니다.").slice(0, 500);
 }

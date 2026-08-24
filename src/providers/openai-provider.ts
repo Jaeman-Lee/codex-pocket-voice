@@ -323,7 +323,15 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
           } : {}),
         };
         const stream = await client.createResponse(request, options.active.controller.signal);
+        let lastUpstreamSequence: number | undefined;
         for await (const event of stream) {
+          if (!Number.isSafeInteger(event.sequence_number) || event.sequence_number < 0) {
+            throw new ProviderError(502, "OpenAI 응답 스트림의 event 순서가 올바르지 않습니다.");
+          }
+          // Responses stream events expose a per-response sequence number. A
+          // retried/replayed frame must not duplicate text, usage, or tools.
+          if (lastUpstreamSequence !== undefined && event.sequence_number <= lastUpstreamSequence) continue;
+          lastUpstreamSequence = event.sequence_number;
           if (event.type === "response.created") remoteResponseId = event.response.id;
           if (event.type === "response.output_text.delta") {
             roundText += event.delta;
@@ -435,7 +443,16 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
       }
       const classified = classifyApiError(error);
       emit({ kind: "run.failed", message: classified.message });
-      throw classified;
+      return {
+        status: "failed",
+        result: {
+          providerId: this.id,
+          model: options.model,
+          error: classified.message,
+          errorStatus: classified.statusCode,
+          finalResponse,
+        },
+      };
     } finally {
       if (timer) clearTimeout(timer);
       this.toolBroker?.clearRun(this.id, options.runId);

@@ -28,6 +28,7 @@ export class CodexProviderAdapter implements ModelProviderAdapter, ProviderRunti
   readonly id = "codex" as const;
   readonly canRun = true;
   readonly runtime: ProviderRuntime = this;
+  private readonly eventSequences = new Map<string, number>();
 
   constructor(private readonly client: CodexProviderClient) {}
 
@@ -116,6 +117,8 @@ export class CodexProviderAdapter implements ModelProviderAdapter, ProviderRunti
       effort: input.effort,
       timeoutMs: input.timeoutMs,
     });
+    const key = runKey(begun.thread.id, begun.turn.id);
+    this.eventSequences.set(key, this.eventSequences.get(key) ?? 0);
     return {
       providerId: this.id,
       conversationId: begun.thread.id,
@@ -124,7 +127,7 @@ export class CodexProviderAdapter implements ModelProviderAdapter, ProviderRunti
       completion: begun.completion.then((turn) => ({
         status: providerRunStatus(turn.status),
         result: summarizeTurn(begun.thread, turn),
-      })),
+      })).finally(() => this.eventSequences.delete(key)),
     };
   }
 
@@ -147,7 +150,19 @@ export class CodexProviderAdapter implements ModelProviderAdapter, ProviderRunti
             ? turn.id
             : undefined,
       });
-      if (normalized) listener(normalized);
+      if (!normalized) return;
+      if (!normalized.runId) {
+        listener(normalized);
+        return;
+      }
+      const key = runKey(normalized.conversationId, normalized.runId);
+      const sequence = (this.eventSequences.get(key) ?? 0) + 1;
+      this.eventSequences.set(key, sequence);
+      listener({
+        ...normalized,
+        eventId: `${normalized.runId}:${sequence}`,
+        sequence,
+      });
     });
   }
 }
@@ -218,4 +233,8 @@ function providerRunStatus(status: string): ProviderRunStatus {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function runKey(conversationId: string, runId: string): string {
+  return JSON.stringify([conversationId, runId]);
 }

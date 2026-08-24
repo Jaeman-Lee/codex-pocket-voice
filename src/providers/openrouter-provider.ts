@@ -553,7 +553,16 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
       }
       const classified = classifyOpenRouterError(error);
       emit({ kind: "run.failed", message: classified.message });
-      throw classified;
+      return {
+        status: "failed",
+        result: {
+          providerId: this.id,
+          model: options.model.id,
+          error: classified.message,
+          errorStatus: classified.statusCode,
+          finalResponse,
+        },
+      };
     } finally {
       if (timer) clearTimeout(timer);
       this.toolBroker?.clearRun(this.id, options.runId);

@@ -225,6 +225,77 @@ test("RunCoordinator converts provider stream failures into terminal failed oper
   coordinator.close();
 });
 
+test("RunCoordinator never attributes stale, duplicate, or post-terminal provider events to a resumed run", async () => {
+  const providers = new FakeRunProviders();
+  const coordinator = new RunCoordinator(providers, {
+    createId: sequentialIds("operation-first-events", "operation-second-events"),
+  });
+  const forwarded: ProviderEvent[] = [];
+  coordinator.subscribe((event) => {
+    if (event.type === "provider") forwarded.push(event.event);
+  });
+  const first = await coordinator.start({
+    providerId: "fake",
+    accountId: "account-1",
+    prompt: "first",
+    input: { cwd: process.cwd(), prompt: "first", model: "model-a" },
+  });
+  providers.complete(0, {
+    status: "completed",
+    result: { finalResponse: "first" },
+    resumeState: resumeState("event-state"),
+  });
+  await waitFor(() => coordinator.get(first.id)?.status === "completed");
+  const second = await coordinator.start({
+    providerId: "fake",
+    accountId: "account-1",
+    prompt: "second",
+    input: { cwd: process.cwd(), prompt: "second", conversationId: first.conversationId },
+  });
+
+  providers.emit(providerDelta(first.conversationId, "run-1", 1, "late old run"));
+  providers.emit(providerDelta(second.conversationId, second.runId, 1, "current"));
+  providers.emit(providerDelta(second.conversationId, second.runId, 1, "duplicate"));
+  providers.emit(providerDelta(second.conversationId, second.runId, 3, "newest"));
+  providers.emit(providerDelta(second.conversationId, second.runId, 2, "out of order"));
+  providers.emit({
+    providerId: "fake",
+    conversationId: second.conversationId,
+    runId: second.runId,
+    eventId: `${second.runId}:4`,
+    sequence: 4,
+    kind: "run.completed",
+    status: "completed",
+  });
+  providers.emit(providerDelta(second.conversationId, second.runId, 5, "after terminal"));
+
+  assert.deepEqual(
+    forwarded.filter((event) => event.kind === "output.delta").map((event) => event.delta),
+    ["current", "newest"],
+  );
+  assert.equal(forwarded.filter((event) => event.kind === "run.completed").length, 1);
+  providers.complete(1, { status: "completed", result: { finalResponse: "second" } });
+  await waitFor(() => coordinator.get(second.id)?.status === "completed");
+  coordinator.close();
+});
+
+test("RunCoordinator exposes a safe error for failed ProviderRun completions", async () => {
+  const providers = new FakeRunProviders();
+  const coordinator = new RunCoordinator(providers, { createId: () => "operation-failed-result" });
+  const operation = await coordinator.start({
+    providerId: "fake",
+    prompt: "fail safely",
+    input: { cwd: process.cwd(), prompt: "fail safely" },
+  });
+  providers.complete(0, {
+    status: "failed",
+    result: { error: { message: "provider failed\nwithout raw transport details" } },
+  });
+  await waitFor(() => coordinator.get(operation.id)?.status === "failed");
+  assert.equal(coordinator.get(operation.id)?.error, "provider failed without raw transport details");
+  coordinator.close();
+});
+
 test("RunCoordinator cancels a provider run that escapes the allowed workspace", async () => {
   const providers = new FakeRunProviders();
   providers.cwd = "/outside/allowed/root";
@@ -448,6 +519,18 @@ function resumeState(value: string) {
     providerId: "fake",
     model: "model-a",
     data: { value },
+  };
+}
+
+function providerDelta(conversationId: string, runId: string, sequence: number, delta: string): ProviderEvent {
+  return {
+    providerId: "fake",
+    conversationId,
+    runId,
+    eventId: `${runId}:${sequence}`,
+    sequence,
+    kind: "output.delta",
+    delta,
   };
 }
 

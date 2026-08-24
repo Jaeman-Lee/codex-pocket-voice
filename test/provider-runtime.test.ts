@@ -9,10 +9,21 @@ import { ProviderRegistry } from "../src/providers/registry.js";
 test("provider runtime normalizes Codex runs, events, completion, and cancellation", async () => {
   const client = new FakeCodexProviderClient();
   const registry = new ProviderRegistry(client, [new CodexProviderAdapter(client)]);
-  const events: Array<{ providerId: string; conversationId: string; kind: string; delta?: string }> = [];
+  const events: Array<{
+    providerId: string;
+    conversationId: string;
+    runId?: string;
+    eventId?: string;
+    sequence?: number;
+    kind: string;
+    delta?: string;
+  }> = [];
   const unsubscribe = registry.subscribe((event) => events.push({
     providerId: event.providerId,
     conversationId: event.conversationId,
+    runId: event.runId,
+    eventId: event.eventId,
+    sequence: event.sequence,
     kind: event.kind,
     delta: event.kind === "output.delta" ? event.delta : undefined,
   }));
@@ -31,10 +42,18 @@ test("provider runtime normalizes Codex runs, events, completion, and cancellati
   assert.equal(client.lastRun?.threadId, "thread-runtime");
   assert.equal(client.lastRun?.networkAccess, false);
 
-  client.emit("item/agentMessage/delta", { threadId: "thread-runtime", delta: "working" });
+  client.emit("item/agentMessage/delta", {
+    threadId: "thread-runtime",
+    turnId: "turn-runtime",
+    itemId: "message-runtime",
+    delta: "working",
+  });
   assert.deepEqual(events, [{
     providerId: "codex",
     conversationId: "thread-runtime",
+    runId: "turn-runtime",
+    eventId: "turn-runtime:1",
+    sequence: 1,
     kind: "output.delta",
     delta: "working",
   }]);

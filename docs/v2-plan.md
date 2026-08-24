@@ -21,7 +21,7 @@
 
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
-| Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신 모듈 구현; 실제 모바일 회귀·Provider contract 확장 잔여 |
+| Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, 세 Provider 공용 contract·stream failure fixture, fake Gateway와 protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신 모듈 구현; 실제 모바일 회귀 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in process-death native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe 구현; 실기기 background/deep-link acceptance 잔여 |
@@ -312,6 +312,12 @@ queue 자동 실행은 대기하고, poll은 generation/device/operation이 모�
 poll timer를 변경하지 않는다. `journal-state` reducer는 conversation key와 queue device별 load
 generation을 관리한다. 이전 scope 복원은 무시하고, queue load 중 추가한 prompt는 persisted queue와
 ID 기준으로 병합한 뒤 암호화 journal에 다시 저장한다.
+Provider event는 `ProviderRunEventGate`에서 exact Provider·conversation·run 소유권을 확인한다. run ID가
+없는 run-scoped event, 이전 run frame, 중복 event ID, 역순 sequence와 terminal 뒤 frame은 journal/SSE로
+전달하지 않는다. Codex, OpenAI와 OpenRouter는 성공·부분 stream 실패·취소·timeout에서 동일하게 단일
+terminal event와 `ProviderRunCompletion`을 만든다. OpenAI/OpenRouter의 401/403/429/5xx와 redaction,
+OpenRouter의 malformed·truncated·empty SSE를 fake transport로 재현한다. OpenAI Responses의 같은
+`sequence_number`가 replay되면 delta·usage·tool을 두 번 적용하지 않는다.
 
 완료 조건: Codex CLI의 기존 run·queue·handoff가 동일하게 동작하고 새 Provider를 fake runtime으로
 끝까지 실행할 수 있다.
@@ -452,8 +458,9 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 
 ### 자동 검사
 
-- 모든 Provider에 동일한 contract test 적용
-- 가짜 HTTP/SSE 서버로 정상, 부분 stream, 잘못된 JSON, 중복 이벤트, 401, 403, 429, 5xx와 timeout 재현
+- 모든 Provider에 동일한 성공·부분 stream 실패·취소·timeout contract test 적용 — 자동 검사 구현
+- 가짜 HTTP/SSE transport로 정상, 부분 stream, 잘못된 JSON, 중복·역순·terminal 뒤 이벤트, 401, 403,
+  429, 5xx와 timeout 재현 — 자동 검사 구현
 - malformed tool argument, symlink 탈출, root 밖 경로, 명령 timeout과 출력 폭주 차단
 - 로그·journal·SSE·diagnostics에 API key와 Authorization 헤더가 없는지 검사
 - OpenRouter model capability 변화와 fallback 정책 fixture

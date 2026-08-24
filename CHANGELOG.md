@@ -16,6 +16,14 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   유지했다.
 - `RunCoordinator`가 실행 상태, 취소, Provider event 범위와 재시도 request ID를 한 곳에서 관리해
   응답 유실 뒤 같은 프롬프트가 중복 실행되지 않게 했다.
+- Codex CLI, OpenAI Responses와 OpenRouter에 같은 성공·부분 stream 실패·취소·timeout runtime
+  contract suite를 적용했다. 공통 event gate는 Provider·conversation·run 소유권, 단조 sequence,
+  event ID 중복과 단일 terminal을 검사해 이전 run, replay·역순 frame과 terminal 뒤 frame을 새
+  operation journal에 붙이지 않는다. Codex event에도 run별 event ID와 sequence를 부여한다.
+- OpenAI/OpenRouter transport 오류는 raw 예외를 completion 밖으로 던지는 대신 공통 `failed`
+  completion과 redacted terminal event로 끝난다. 401/403/429/5xx, 부분 stream, malformed·truncated·
+  empty SSE fixture를 공개 검사에 추가했고, OpenAI Responses의 upstream `sequence_number` replay는
+  텍스트·usage·도구 호출을 중복 적용하지 않는다.
 - `ToolBroker`와 `ApprovalBroker`의 로컬 정책 계약을 추가했다. 고위험·외부 효과 승인은 터치 확인만
   허용하고, 만료되거나 오프라인인 요청을 자동 승인하지 않는다.
 - `App.tsx`의 음성 입력과 미디어 첨부 상태를 각각 순수 reducer로 분리했다. 연속 받아쓰기
