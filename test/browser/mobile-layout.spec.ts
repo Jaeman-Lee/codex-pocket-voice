@@ -356,6 +356,8 @@ test("device removal uses a contained two-touch review and revokes only the sele
 
   const review = removable.getByRole("alert");
   await expect(review).toContainText("Companion에서 이 스마트폰의 인증 권한을 먼저 해제합니다");
+  await review.scrollIntoViewIfNeeded();
+  await settleLayout(page);
   await expectElementContained(page, review);
   await expectElementContained(page, review.getByRole("button", { name: "권한 해제 후 삭제" }));
   await expectShellContained(page);
