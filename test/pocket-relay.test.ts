@@ -61,6 +61,7 @@ test("Pocket relay configuration requires private credentials and a pinned TLS e
     CODEX_POCKET_RELAY_LISTEN_PORT: "9443",
     CODEX_POCKET_RELAY_CERT_FILE: relayIdentity.certificateFile,
     CODEX_POCKET_RELAY_KEY_FILE: relayIdentity.privateKeyFile,
+    CODEX_POCKET_RELAY_TLS_HANDSHAKE_TIMEOUT_MS: "9000",
     CODEX_POCKET_RELAY_RATE_WINDOW_MS: "30000",
     CODEX_POCKET_RELAY_MAX_CONNECTIONS_PER_IP: "12",
     CODEX_POCKET_RELAY_MAX_CONNECTION_STARTS_PER_IP: "40",
@@ -69,6 +70,7 @@ test("Pocket relay configuration requires private credentials and a pinned TLS e
   });
   assert.equal(server.host, "127.0.0.1");
   assert.equal(server.port, 9443);
+  assert.equal(server.tlsHandshakeTimeoutMs, 9_000);
   assert.equal(server.rateWindowMs, 30_000);
   assert.equal(server.maxConnectionsPerIp, 12);
   assert.equal(server.maxConnectionStartsPerIp, 40);
@@ -81,6 +83,12 @@ test("Pocket relay configuration requires private credentials and a pinned TLS e
     CODEX_POCKET_RELAY_KEY_FILE: relayIdentity.privateKeyFile,
     CODEX_POCKET_RELAY_RATE_WINDOW_MS: "999",
   }), /RATE_WINDOW_MS is invalid/);
+  await assert.rejects(loadPocketRelayServerConfig({
+    CODEX_POCKET_RELAY_LISTEN_HOST: "127.0.0.1",
+    CODEX_POCKET_RELAY_CERT_FILE: relayIdentity.certificateFile,
+    CODEX_POCKET_RELAY_KEY_FILE: relayIdentity.privateKeyFile,
+    CODEX_POCKET_RELAY_TLS_HANDSHAKE_TIMEOUT_MS: "999",
+  }), /TLS_HANDSHAKE_TIMEOUT_MS is invalid/);
 
   await chmod(relayIdentity.privateKeyFile, 0o644);
   await assert.rejects(loadPocketRelayServerConfig({

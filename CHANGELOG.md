@@ -10,6 +10,15 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Relay pre-TLS admission hardening은 공개 server의 새 timeout 설정과 운영 검증을 추가하므로
+  `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
+  `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
+  APK 전달·설치, 실행 중 Companion 재시작과 실제 공용 relay 노출은 하지 않으며 v1.8.2 current 후보,
+  별도 staged v1.8.3과 검증된 v1.8.1 rollback을 그대로 보존한다.
+- broker는 TCP accept 시점부터 기본 10초의 TLS handshake deadline을 적용해 ClientHello조차 보내지 않는
+  socket을 정리하고, 종료 시 secure callback 이전 socket까지 즉시 닫는다. 합성 burst 검사는 source별
+  동시 연결·시작 횟수와 deadline, 반복 shutdown 대기를 검증하며 통계 표면은 식별자 없는 고정 aggregate
+  field만 허용한다. 실제 인터넷 용량·분산 DDoS 검증은 여전히 외부 edge release gate다.
 - PocketLink Android Wi-Fi Direct 경로는 새 user-visible v2 transport workflow이므로 `feature`로 분류한다.
   아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,
   `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. v2 APK 전달·설치와 실행 중

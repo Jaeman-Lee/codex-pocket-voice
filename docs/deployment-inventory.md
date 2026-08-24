@@ -359,6 +359,13 @@ PocketLink public relay admission checkpoint decision: source별 동시 연결·
 APK 전달·설치와 실행 중 Companion 재시작도 하지 않고 current v1 후보 1.8.2, 별도 staged v1.8.3과
 검증된 rollback 1.8.1을 그대로 보존한다.
 
+PocketLink relay pre-TLS admission checkpoint decision: TCP accept부터 handshake deadline, pre-handshake
+socket의 bounded shutdown과 합성 burst 검증을 추가하는 새 public server 운영 capability이므로
+`feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 SemVer `2.0.0`/Android
+`versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
+실제 공용 endpoint 노출·외부 부하/DDoS 시험, APK 전달·설치와 실행 중 Companion 재시작은 하지 않는다.
+current v1 후보 1.8.2, 별도 staged 1.8.3과 검증된 rollback 1.8.1을 그대로 보존한다.
+
 PocketLink bootstrap state checkpoint decision: QR/LAN bootstrap의 분산 UI 상태를 순수 reducer로
 분리하고 stale·동시 전이를 fail-closed로 바꾸는 internal compatibility `patch`다. 아직 전달하지 않은
 v2 안의 변경이므로 SemVer `2.0.0`/Android `versionCode 20000`과 대상

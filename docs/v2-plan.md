@@ -25,7 +25,7 @@
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker와 보호된 synthetic smoke harness 구현; 실제 model eval 실행·현장 등급 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in process-death native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed 구현; 실기기 background/deep-link acceptance 잔여 |
-| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot 제한과 logless aggregate stats, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; API 30 ATD에서 Keystore config/identity/background state 계측 회귀 추가, 실제 P2P group formation·external edge DDoS/부하·deep-link/reconnect/voice 실기기 release gate 잔여 |
+| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; API 30 ATD에서 Keystore config/identity/background state 계측 회귀 추가, 실제 P2P group formation·external edge DDoS/실부하·deep-link/reconnect/voice 실기기 release gate 잔여 |
 
 ## 2. 제품 정의
 
@@ -462,7 +462,12 @@ TLS hostname·SPKI·mTLS 실패는 어떤 다음 경로로도 우회하지 않�
 우회하지 않는다. broker는 IPv4-mapped
 주소를 정규화하고 source별 동시 socket, fixed-window 연결 시작과 새 ephemeral slot을 제한하며 최대
 추적 peer state도 bounded memory로 유지한다. source·slot access log 대신 aggregate counter만 메모리에
-두고 `SIGUSR1`에서 확인한다. Linux Companion은 별도 명시적 root foreground CLI에서 unmanaged
+두고 `SIGUSR1`에서 확인한다. TCP accept부터 outer TLS 완료까지 기본 10초 deadline을 별도로 적용하고
+shutdown은 pre-handshake socket까지 정리한다. 합성 loopback burst는 동시 연결·시작 quota, timeout,
+aggregate-only stats와 반복 close를 검증한다. 이는 실제 인터넷 capacity/DDoS 검증을 대체하지 않는다.
+공개 edge는 L4 공격·bandwidth와 별도 metadata 보존 정책을 책임지며, source를 보존하지 않는 proxy는
+하나의 quota를 공유한다. slot state가 process-local이므로 무작위 다중 broker balancing도 허용하지 않는다.
+Linux Companion은 별도 명시적 root foreground CLI에서 unmanaged
 wpa_supplicant interface의 첫 PBC peer만 수락하고 `go_intent=15`·GO-only 결과를 강제한다. 별도 group
 interface에만 고정 주소와 leasefile 없는 1-client DHCP를 붙이고 DNS/default route를 광고하지 않으며,
 Companion TCP listener 확인 뒤 timeout·signal·오류에서 역순 정리한다. 외부 edge DDoS·실부하와 metadata
@@ -509,7 +514,8 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - 공식 Release의 잘못된 repo/tag/중복 asset/digest/content-type, oversized JSON/ZIP, HTTP·외부-host redirect와 조회 token 만료 차단
 - DNS-SD의 wrong service/TXT, public·loopback 주소, 후보 flood·중복·만료·Unicode control과 pin/TXT smuggling 차단
 - relay의 private secret/key, TLS hostname+SPKI pin, 틀린 slot/secret 비소비, connection/slot/waiter/frame/
-  timeout 상한, source IP 정규화·동시 연결·fixed-window 시작/new-slot 제한과 relay 안쪽
+  timeout 상한, source IP 정규화·동시 연결·fixed-window 시작/new-slot 제한, 무응답 pre-TLS burst·shutdown과
+  aggregate-only stats schema 및 relay 안쪽
   Android↔Companion mTLS 보존 검사 — Node 자동 검사 구현
 - Android relay protocol의 exact frame, unknown/duplicate/oversize 거부, 내부 TLS byte 비소비와
   direct/relay source·JVM contract 검사 — 자동 검사 구현; 실제 Android nested socket은 실기기 gate 잔여

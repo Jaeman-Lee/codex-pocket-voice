@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { chmod, mkdtemp, readFile, rm } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
+import { connect as connectTcp, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -66,6 +67,91 @@ test("Pocket relay bounds concurrent and newly started connections per source ad
   assert.equal(stats.openConnections, 2);
   assert.equal(stats.trackedPeers, 1);
   assert.equal(stats.requestRejected, 1, "an admitted socket closed without a frame is a rejected request");
+});
+
+test("Pocket relay bounds stalled TLS handshakes and exposes aggregate-only load stats", async (t) => {
+  const fixture = await createRelayFixture(t, "stalled-handshakes");
+  const relay = await startPocketRelayServer({
+    ...fixture.serverIdentity,
+    host: "127.0.0.1",
+    port: 0,
+    tlsHandshakeTimeoutMs: 1_000,
+    maxConnections: 32,
+    rateWindowMs: 60_000,
+    maxConnectionsPerIp: 3,
+    maxConnectionStartsPerIp: 5,
+    maxNewSlotsPerIp: 4,
+    maxTrackedPeers: 4,
+  });
+  t.after(() => relay.close());
+
+  const sockets = await Promise.all(Array.from({ length: 8 }, () => openRawTcp(relay.port)));
+  t.after(() => sockets.forEach((socket) => socket.destroy()));
+  await waitForCondition(() => {
+    const stats = relay.stats();
+    return stats.acceptedConnections + stats.admissionRejected === sockets.length;
+  }, 1_000, "relay did not account for the synthetic connection burst");
+
+  let stats = relay.stats();
+  assert.equal(stats.acceptedConnections, 3);
+  assert.equal(stats.admissionRejected, 5);
+  assert.equal(stats.rateLimited, 3);
+  assert.equal(stats.openConnections, 3);
+  assert.deepEqual(Object.keys(stats).sort(), [
+    "acceptedConnections",
+    "admissionRejected",
+    "openConnections",
+    "pairedTunnels",
+    "rateLimited",
+    "requestRejected",
+    "slotLimited",
+    "slots",
+    "trackedPeers",
+    "tunnels",
+    "waiting",
+  ]);
+
+  await waitForCondition(
+    () => relay.stats().openConnections === 0,
+    2_500,
+    "stalled TLS handshakes outlived the configured timeout",
+  );
+  stats = relay.stats();
+  assert.equal(stats.trackedPeers, 1);
+  assert.equal(stats.slots, 0);
+  assert.equal(stats.waiting, 0);
+  assert.equal(stats.tunnels, 0);
+});
+
+test("Pocket relay close promptly destroys pre-handshake TCP sockets and is awaitable twice", async (t) => {
+  const fixture = await createRelayFixture(t, "close-stalled-handshake");
+  const relay = await startPocketRelayServer({
+    ...fixture.serverIdentity,
+    host: "127.0.0.1",
+    port: 0,
+    tlsHandshakeTimeoutMs: 60_000,
+  });
+  t.after(() => relay.close());
+  const socket = await openRawTcp(relay.port);
+  t.after(() => socket.destroy());
+  await waitForCondition(
+    () => relay.stats().openConnections === 1,
+    1_000,
+    "relay did not admit the pre-handshake socket",
+  );
+
+  const firstClose = relay.close();
+  const secondClose = relay.close();
+  assert.equal(firstClose, secondClose, "concurrent callers must await the same shutdown");
+  const socketClosed = socket.destroyed ? Promise.resolve() : once(socket, "close");
+  await Promise.race([
+    Promise.all([firstClose, socketClosed]),
+    new Promise<never>((_, reject) => setTimeout(
+      () => reject(new Error("relay close waited for the TLS handshake timeout")),
+      1_000,
+    )),
+  ]);
+  assert.equal(socket.destroyed, true);
 });
 
 test("Pocket relay limits new opaque slots without binding a slot to one IP", async (t) => {
@@ -172,6 +258,39 @@ async function openRelayTls(port: number, certificate: Buffer): Promise<TLSSocke
   });
   await once(socket, "secureConnect");
   return socket;
+}
+
+async function openRawTcp(port: number): Promise<Socket> {
+  const socket = connectTcp({ host: "127.0.0.1", port });
+  socket.on("error", () => undefined);
+  await new Promise<void>((resolvePromise, reject) => {
+    const timeout = setTimeout(() => finish(new Error("timed out opening raw relay TCP socket")), 1_000);
+    const onConnect = () => finish();
+    const onError = (error: Error) => finish(error);
+    socket.once("connect", onConnect);
+    socket.once("error", onError);
+
+    function finish(error?: Error): void {
+      clearTimeout(timeout);
+      socket.off("connect", onConnect);
+      socket.off("error", onError);
+      if (error) reject(error);
+      else resolvePromise();
+    }
+  });
+  return socket;
+}
+
+async function waitForCondition(
+  condition: () => boolean,
+  timeoutMs: number,
+  message: string,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (!condition()) {
+    if (Date.now() - startedAt >= timeoutMs) throw new Error(message);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+  }
 }
 
 async function expectRelayTlsRejected(port: number, certificate: Buffer, localAddress?: string): Promise<void> {

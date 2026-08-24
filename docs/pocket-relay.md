@@ -50,7 +50,7 @@ private-key 상위 디렉터리는 `0700`, key는 `0600` 단일-link 일반 파�
 공개 SPKI pin만 출력하고 slot·secret을 설정·저장·로그하지 않는다. protocol 1의 companion/client
 등록 frame은 2 KiB로 제한되며 다음 기본 상한을 적용한다.
 
-- TLS 1.2/1.3, session ticket 비활성화, 최대 socket 256개
+- TLS 1.2/1.3, session ticket 비활성화, TCP accept부터 handshake 최대 10초, 전체 socket 256개
 - ephemeral slot 64개, slot당 대기 Companion socket 4개
 - source IP당 동시 socket 16개, 60초 fixed window당 연결 시작 60회·새 slot 8개
 - 최대 1,024개 source IP의 현재 window만 메모리에서 추적하고 유휴 window는 제거
@@ -69,18 +69,36 @@ window는 1초~10분으로 제한된다.
 
 | 환경 변수 | 기본값 | 의미 |
 | --- | ---: | --- |
+| `CODEX_POCKET_RELAY_TLS_HANDSHAKE_TIMEOUT_MS` | `10000` | TCP accept부터 outer TLS handshake 완료까지의 상한(1초~60초) |
 | `CODEX_POCKET_RELAY_RATE_WINDOW_MS` | `60000` | 연결 시작·새 slot fixed window |
 | `CODEX_POCKET_RELAY_MAX_CONNECTIONS_PER_IP` | `16` | 한 source IP의 동시 TCP/TLS socket |
 | `CODEX_POCKET_RELAY_MAX_CONNECTION_STARTS_PER_IP` | `60` | 한 window의 TCP 연결 시작 횟수 |
 | `CODEX_POCKET_RELAY_MAX_NEW_SLOTS_PER_IP` | `8` | 한 window에 처음 만든 opaque slot 수 |
 | `CODEX_POCKET_RELAY_MAX_TRACKED_PEERS` | `1024` | 메모리에 유지하는 source IP state 상한 |
 
-IPv4와 IPv4-mapped IPv6는 같은 source로 정규화한다. 기존 slot의 정상 Companion pool과 client attach는
+IPv4와 IPv4-mapped IPv6는 같은 source로 정규화한다. ClientHello를 전혀 보내지 않는 TCP socket도
+handshake deadline에 포함하고, broker 종료는 secure callback 이전 socket까지 닫은 뒤 완료된다. 기존
+slot의 정상 Companion pool과 client attach는
 새 slot budget을 소비하지 않으며, slot을 source IP에 영구 결합하지 않아 휴대폰 망 전환과 NAT 변경을
 허용한다. 반대로 `X-Forwarded-For`와 PROXY protocol은 신뢰하지 않는다. broker가 직접 outer TLS를
 종료해야 하며 TCP proxy 앞에 둘 경우 모든 연결이 proxy IP 하나의 한도를 공유하므로 edge에서도 별도
 connection/DDoS 제어가 필요하다. 이 in-process 제한은 단일 source의 socket·handshake·임의 slot 고갈을
 줄이는 장치이지 분산 DDoS 방어를 대신하지 않는다.
+
+공개 edge와 broker 사이의 책임 경계는 다음과 같다.
+
+- edge는 TCP SYN·새 연결·동시 연결·bandwidth와 분산 공격을 제한한다. broker의 source별 quota만으로
+  인터넷 공격을 흡수할 수 있다고 가정하지 않는다.
+- outer TLS와 certificate pin의 종단은 broker다. 앞단은 L4 pass-through만 사용하고 HTTP header나
+  PROXY protocol로 source를 주입하지 않는다. 원본 source를 보존하지 않는 TCP proxy를 쓰면 proxy 전체를
+  한 source로 간주하도록 quota와 health check를 설계한다.
+- slot과 waiter는 한 process의 메모리 상태다. 무작위 다중 인스턴스 load balancing을 사용하지 않고,
+  Android와 Companion이 같은 단일 broker/shard endpoint를 명시적으로 사용한다. 재시작 시 재연결을
+  전제로 한다.
+- broker는 식별자 없는 aggregate counter만 제공한다. edge·방화벽·hosting access log의 IP, 시각,
+  byte metadata 보존 기간과 접근 권한은 별도 정책으로 정하고 release review에 기록한다.
+- 외부 endpoint의 정상 NAT 규모, 지연, reconnect burst, 장시간 tunnel과 장애 복구는 staging에서 따로
+  측정한다. 저장소의 loopback 합성 검사는 capacity benchmark나 DDoS 인증이 아니다.
 
 Linux 운영자는 `SIGUSR1`을 보내 source·slot 식별자가 없는 `slots`, `waiting`, `tunnels`, 현재 연결·추적
 peer 수와 누적 accepted/rejected/rate-limited/slot-limited/paired counter를 stderr에서 확인할 수 있다.
@@ -191,6 +209,9 @@ Node 통합 검사는 서로 다른 relay/Companion/Android test certificate를 
 - 잘못된 secret이 기존 Companion waiter를 소비하지 않음
 - IPv4-mapped 주소 정규화, source별 동시 socket·연결 시작·새 slot 상한과 window reset
 - 기존 slot 재사용은 새 slot budget을 소비하지 않고 aggregate stats에 제한 결과만 반영됨
+- 여덟 개의 무응답 loopback TCP burst에서 동시 3개·window 시작 5개 상한, 1초 handshake 정리와
+  pre-handshake socket이 있어도 즉시 끝나는 반복 shutdown을 검증함
+- stats schema가 source IP, slot, secret, 연결별 시각 없이 고정 aggregate field만 갖는지 검증함
 - 바깥 relay TLS 안에서 별도의 Android client certificate와 Companion certificate로 mTLS가 성립함
 - relay를 통과한 뒤에만 로컬 Companion이 payload를 읽고 응답함
 - Android protocol JVM 검사에서 response field 순서/공백 호환, unknown·duplicate·oversize 거부,

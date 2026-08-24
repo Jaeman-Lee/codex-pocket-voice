@@ -23,6 +23,7 @@ const DEFAULT_POOL_SIZE = 4;
 const MAX_RELAY_FRAME_BYTES = 2_048;
 const MAX_SECRET_FILE_BYTES = 512;
 const MAX_TLS_FILE_BYTES = 64 * 1_024;
+const DEFAULT_TLS_HANDSHAKE_TIMEOUT_MS = 10_000;
 const DEFAULT_HEADER_TIMEOUT_MS = 10_000;
 const DEFAULT_WAIT_TIMEOUT_MS = 60_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 120_000;
@@ -55,6 +56,7 @@ export interface PocketRelayServerConfig {
   port: number;
   certificate: Buffer;
   privateKey: Buffer;
+  tlsHandshakeTimeoutMs?: number;
   headerTimeoutMs?: number;
   waiterTimeoutMs?: number;
   tunnelIdleTimeoutMs?: number;
@@ -249,6 +251,13 @@ export async function loadPocketRelayServerConfig(
     port,
     certificate,
     privateKey,
+    tlsHandshakeTimeoutMs: optionalBoundedInteger(
+      environment.CODEX_POCKET_RELAY_TLS_HANDSHAKE_TIMEOUT_MS,
+      "CODEX_POCKET_RELAY_TLS_HANDSHAKE_TIMEOUT_MS",
+      DEFAULT_TLS_HANDSHAKE_TIMEOUT_MS,
+      1_000,
+      60_000,
+    ),
     rateWindowMs: optionalBoundedInteger(
       environment.CODEX_POCKET_RELAY_RATE_WINDOW_MS,
       "CODEX_POCKET_RELAY_RATE_WINDOW_MS",
@@ -300,6 +309,9 @@ export async function startPocketRelayServer(config: PocketRelayServerConfig): P
   const maxTrackedPeers = config.maxTrackedPeers ?? DEFAULT_MAX_TRACKED_PEERS;
   const slots = new Map<string, RelaySlot>();
   const peers = new Map<string, RelayPeerState>();
+  const admittedSockets = new Set<Socket>();
+  const admittedConnections = new Map<string, Socket>();
+  const handshakeTimers = new Map<Socket, NodeJS.Timeout>();
   const pendingSockets = new Set<TLSSocket>();
   const tunnelSockets = new Set<TLSSocket>();
   const counters: RelayCounters = {
@@ -312,8 +324,13 @@ export async function startPocketRelayServer(config: PocketRelayServerConfig): P
   };
   let tunnelCount = 0;
   let openConnectionCount = 0;
-  let closing = false;
+  let closePromise: Promise<void> | undefined;
   let peerCleanup: NodeJS.Timeout | undefined;
+  const tlsHandshakeTimeoutMs = config.tlsHandshakeTimeoutMs ?? DEFAULT_TLS_HANDSHAKE_TIMEOUT_MS;
+  const headerTimeoutMs = config.headerTimeoutMs ?? DEFAULT_HEADER_TIMEOUT_MS;
+  const waiterTimeoutMs = config.waiterTimeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
+  const tunnelIdleTimeoutMs = config.tunnelIdleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+  const tunnelLifetimeMs = config.tunnelLifetimeMs ?? DEFAULT_TUNNEL_LIFETIME_MS;
 
   const server = createTlsServer({
     cert: config.certificate,
@@ -322,8 +339,10 @@ export async function startPocketRelayServer(config: PocketRelayServerConfig): P
     maxVersion: "TLSv1.3",
     requestCert: false,
     rejectUnauthorized: false,
+    handshakeTimeout: tlsHandshakeTimeoutMs,
     secureOptions: cryptoConstants.SSL_OP_NO_TICKET,
   }, (socket) => {
+    clearHandshakeTimer(socket);
     pendingSockets.add(socket);
     socket.setNoDelay(true);
     socket.setKeepAlive(true, 30_000);
@@ -335,10 +354,6 @@ export async function startPocketRelayServer(config: PocketRelayServerConfig): P
   server.on("tlsClientError", () => undefined);
   server.on("resumeSession", (_sessionId, callback) => callback(null, null));
 
-  const headerTimeoutMs = config.headerTimeoutMs ?? DEFAULT_HEADER_TIMEOUT_MS;
-  const waiterTimeoutMs = config.waiterTimeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
-  const tunnelIdleTimeoutMs = config.tunnelIdleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
-  const tunnelLifetimeMs = config.tunnelLifetimeMs ?? DEFAULT_TUNNEL_LIFETIME_MS;
   async function handleRelayRequest(socket: TLSSocket): Promise<void> {
     const request = parseRelayRequest(await readFrame(socket, headerTimeoutMs));
     if (request.role === "companion") {
@@ -467,14 +482,36 @@ export async function startPocketRelayServer(config: PocketRelayServerConfig): P
     peer.openConnections += 1;
     openConnectionCount += 1;
     counters.acceptedConnections += 1;
+    admittedSockets.add(socket);
+    const connectionKey = relayConnectionKey(socket);
+    if (connectionKey) admittedConnections.set(connectionKey, socket);
+    const handshakeTimer = setTimeout(() => socket.destroy(), tlsHandshakeTimeoutMs);
+    handshakeTimer.unref();
+    handshakeTimers.set(socket, handshakeTimer);
     let released = false;
     socket.once("close", () => {
       if (released) return;
       released = true;
+      admittedSockets.delete(socket);
+      if (connectionKey && admittedConnections.get(connectionKey) === socket) {
+        admittedConnections.delete(connectionKey);
+      }
+      const timer = handshakeTimers.get(socket);
+      if (timer) clearTimeout(timer);
+      handshakeTimers.delete(socket);
       peer!.openConnections = Math.max(0, peer!.openConnections - 1);
       peer!.lastSeenAt = now();
       openConnectionCount = Math.max(0, openConnectionCount - 1);
     });
+  }
+
+  function clearHandshakeTimer(socket: Socket): void {
+    const connectionKey = relayConnectionKey(socket);
+    const admitted = connectionKey ? admittedConnections.get(connectionKey) : undefined;
+    const timer = admitted ? handshakeTimers.get(admitted) : undefined;
+    if (!admitted || !timer) return;
+    clearTimeout(timer);
+    handshakeTimers.delete(admitted);
   }
 
   function consumeNewSlot(socket: TLSSocket): boolean {
@@ -532,22 +569,28 @@ export async function startPocketRelayServer(config: PocketRelayServerConfig): P
       trackedPeers: peers.size,
       ...counters,
     }),
-    async close() {
-      if (closing) return;
-      closing = true;
-      if (peerCleanup) clearInterval(peerCleanup);
-      for (const socket of [...pendingSockets, ...tunnelSockets]) socket.destroy();
-      pendingSockets.clear();
-      tunnelSockets.clear();
-      for (const slot of slots.values()) {
-        for (const waiter of slot.waiters) clearTimeout(waiter.timer);
-      }
-      slots.clear();
-      peers.clear();
-      if (!server.listening) return;
-      await new Promise<void>((resolvePromise, reject) => {
-        server.close((error) => error ? reject(error) : resolvePromise());
-      });
+    close() {
+      if (closePromise) return closePromise;
+      closePromise = (async () => {
+        if (peerCleanup) clearInterval(peerCleanup);
+        for (const timer of handshakeTimers.values()) clearTimeout(timer);
+        for (const socket of [...admittedSockets, ...pendingSockets, ...tunnelSockets]) socket.destroy();
+        admittedSockets.clear();
+        admittedConnections.clear();
+        handshakeTimers.clear();
+        pendingSockets.clear();
+        tunnelSockets.clear();
+        for (const slot of slots.values()) {
+          for (const waiter of slot.waiters) clearTimeout(waiter.timer);
+        }
+        slots.clear();
+        peers.clear();
+        if (!server.listening) return;
+        await new Promise<void>((resolvePromise, reject) => {
+          server.close((error) => error ? reject(error) : resolvePromise());
+        });
+      })();
+      return closePromise;
     },
   };
 }
@@ -691,6 +734,12 @@ export function normalizePocketRelayPeerAddress(value: string | undefined): stri
   const high = Number.parseInt(mapped[1]!, 16);
   const low = Number.parseInt(mapped[2]!, 16);
   return `${high >>> 8}.${high & 0xff}.${low >>> 8}.${low & 0xff}`;
+}
+
+function relayConnectionKey(socket: Socket): string | undefined {
+  const address = normalizePocketRelayPeerAddress(socket.remoteAddress);
+  const port = socket.remotePort;
+  return address && Number.isInteger(port) ? `${address}:${port}` : undefined;
 }
 
 async function connectRelay(
@@ -984,6 +1033,13 @@ function validateServerLimits(config: PocketRelayServerConfig): void {
   if (!validHost(config.host) || !Number.isInteger(config.port) || config.port < 0 || config.port > 65_535) {
     throw configError("Pocket relay listener is invalid");
   }
+  boundedDuration(
+    config.tlsHandshakeTimeoutMs,
+    DEFAULT_TLS_HANDSHAKE_TIMEOUT_MS,
+    1_000,
+    60_000,
+    "tlsHandshakeTimeoutMs",
+  );
   boundedDuration(config.headerTimeoutMs, DEFAULT_HEADER_TIMEOUT_MS, 100, 60_000, "headerTimeoutMs");
   boundedDuration(config.waiterTimeoutMs, DEFAULT_WAIT_TIMEOUT_MS, 1_000, 10 * 60_000, "waiterTimeoutMs");
   boundedDuration(config.tunnelIdleTimeoutMs, DEFAULT_IDLE_TIMEOUT_MS, 1_000, 60 * 60_000, "tunnelIdleTimeoutMs");
