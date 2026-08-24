@@ -6,6 +6,7 @@ import type {
   ProviderRunInput,
   ProviderRoutingSelection,
   ProviderRunStatus,
+  ProviderSteerInput,
 } from "./providers/types.js";
 import { ProviderRunEventGate } from "./provider-event-contract.js";
 import type { WorkspaceIdentity } from "./workspace-identity.js";
@@ -19,8 +20,20 @@ const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const DEFAULT_MAX_OPERATIONS = 500;
 const MAX_PINNED_OPERATIONS = 50;
 const MAX_GOAL_NAME_LENGTH = 120;
+const MAX_STEERS_PER_OPERATION = 32;
+const MAX_STEER_PROMPT_LENGTH = 100_000;
+const MAX_STEER_PROMPT_TOTAL = 1_000_000;
 
 export type RunOperationStatus = "running" | "unknown" | ProviderRunStatus;
+
+export interface RunSteerRecord {
+  requestId: string;
+  requestFingerprint: string;
+  prompt: string;
+  attachmentCount: number;
+  requestedAt: string;
+  acceptedAt: string;
+}
 
 export interface RunOperation {
   id: string;
@@ -29,6 +42,7 @@ export interface RunOperation {
   runId: string;
   cwd: string;
   prompt: string;
+  steers?: RunSteerRecord[];
   accountId?: string;
   model?: string;
   effort?: string;
@@ -56,6 +70,12 @@ export interface StartRunCommand {
   workspaceIdentity?: WorkspaceIdentity;
   idempotencyKey?: string;
   policyConfirmation?: string;
+}
+
+export interface SteerRunCommand {
+  requestId: string;
+  prompt: string;
+  input: ProviderSteerInput;
 }
 
 export interface RunListFilter {
@@ -90,7 +110,7 @@ export interface RunStateStore {
 export type RunCoordinatorEvent =
   | {
       type: "operation";
-      action: "started" | "completed" | "failed" | "acknowledged" | "metadata_updated";
+      action: "started" | "steered" | "completed" | "failed" | "acknowledged" | "metadata_updated";
       operation: RunOperation;
     }
   | {
@@ -102,6 +122,12 @@ export type RunCoordinatorEvent =
 
 export interface RunProviderRegistry {
   startRun(providerId: unknown, accountId: unknown, input: ProviderRunInput): Promise<ProviderRun>;
+  steerRun(
+    providerId: unknown,
+    conversationId: string,
+    runId: string,
+    input: ProviderSteerInput,
+  ): Promise<void>;
   cancelRun(providerId: unknown, conversationId: string, runId: string): Promise<void>;
   subscribe(listener: (event: ProviderEvent) => void): () => void;
 }
@@ -122,6 +148,13 @@ interface IdempotencyEntry {
   pending?: Promise<RunOperation>;
 }
 
+interface SteerIdempotencyEntry {
+  fingerprint: string;
+  operationId: string;
+  pending?: Promise<RunOperation>;
+  persisted: boolean;
+}
+
 export class RunCoordinatorError extends Error {
   constructor(readonly statusCode: number, message: string) {
     super(message);
@@ -134,6 +167,7 @@ export class RunCoordinator {
   private readonly pendingConversations = new Set<string>();
   private readonly idempotency = new Map<string, IdempotencyEntry>();
   private readonly idempotencyByOperation = new Map<string, RunIdempotencyRecord>();
+  private readonly steerIdempotency = new Map<string, SteerIdempotencyEntry>();
   private readonly providerEventGates = new Map<string, ProviderRunEventGate>();
   private readonly listeners = new Set<(event: RunCoordinatorEvent) => void>();
   private readonly now: () => number;
@@ -168,6 +202,15 @@ export class RunCoordinator {
         this.idempotency.set(entry.key, {
           fingerprint: entry.fingerprint,
           operationId: entry.operationId,
+        });
+      }
+    }
+    for (const operation of this.operations.values()) {
+      for (const steer of operation.steers ?? []) {
+        this.steerIdempotency.set(steerKey(operation.id, steer.requestId), {
+          fingerprint: steer.requestFingerprint,
+          operationId: operation.id,
+          persisted: true,
         });
       }
     }
@@ -254,6 +297,65 @@ export class RunCoordinator {
       await this.providers.cancelRun(operation.providerId, operation.conversationId, operation.runId);
     }
     return { operation: cloneOperation(operation), interruptRequested };
+  }
+
+  async steer(operationId: string, command: SteerRunCommand): Promise<RunOperation> {
+    this.cleanup();
+    const operation = this.operations.get(operationId);
+    if (!operation) throw new RunCoordinatorError(404, "Operation not found");
+    assertSteerCommand(command);
+    const key = steerKey(operationId, command.requestId);
+    const fingerprint = steerFingerprint(command.input);
+    const existing = this.steerIdempotency.get(key);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        throw new RunCoordinatorError(409, "같은 requestId를 다른 방향 수정 요청에 다시 사용할 수 없습니다.");
+      }
+      if (existing.pending) return cloneOperation(await existing.pending);
+      const retained = this.operations.get(existing.operationId);
+      if (retained) {
+        if (!existing.persisted) {
+          this.stateStore?.saveOperation(retained, this.idempotencyForOperation(retained.id));
+          existing.persisted = true;
+          const recovered = cloneOperation(retained);
+          this.emit({ type: "operation", action: "steered", operation: recovered });
+          return recovered;
+        }
+        return cloneOperation(retained);
+      }
+      this.steerIdempotency.delete(key);
+    }
+    if ([...this.steerIdempotency.values()].some((entry) => (
+      entry.operationId === operationId && entry.pending !== undefined
+    ))) {
+      throw new RunCoordinatorError(409, "다른 방향 수정 요청을 처리 중입니다. 완료 후 다시 시도해 주세요.");
+    }
+    const steers = operation.steers ?? [];
+    if (steers.length >= MAX_STEERS_PER_OPERATION
+        || steers.reduce((total, item) => total + item.prompt.length, 0) + command.prompt.length > MAX_STEER_PROMPT_TOTAL) {
+      throw new RunCoordinatorError(409, "한 작업의 방향 수정 기록 한도를 초과했습니다. 다음 요청은 대기열에 추가해 주세요.");
+    }
+    const pending = this.steerNew(operation, command, fingerprint);
+    this.steerIdempotency.set(key, { fingerprint, operationId, pending, persisted: false });
+    try {
+      const updated = await pending;
+      const entry = this.steerIdempotency.get(key);
+      if (entry) {
+        entry.pending = undefined;
+        entry.persisted = true;
+      }
+      return cloneOperation(updated);
+    } catch (error) {
+      const entry = this.steerIdempotency.get(key);
+      if (entry?.pending === pending) {
+        const accepted = operation.steers?.some((item) => (
+          item.requestId === command.requestId && item.requestFingerprint === fingerprint
+        ));
+        if (accepted) entry.pending = undefined;
+        else this.steerIdempotency.delete(key);
+      }
+      throw error;
+    }
   }
 
   acknowledge(operationId: string): RunOperation {
@@ -447,6 +549,37 @@ export class RunCoordinator {
     }
   }
 
+  private async steerNew(
+    operation: RunOperation,
+    command: SteerRunCommand,
+    requestFingerprint: string,
+  ): Promise<RunOperation> {
+    if (operation.status !== "running") {
+      throw new RunCoordinatorError(409, "실행 중인 작업만 지금 방향을 수정할 수 있습니다.");
+    }
+    const requestedAt = new Date(this.now()).toISOString();
+    await this.providers.steerRun(
+      operation.providerId,
+      operation.conversationId,
+      operation.runId,
+      command.input,
+    );
+    const acceptedAt = new Date(this.now()).toISOString();
+    const record: RunSteerRecord = {
+      requestId: command.requestId,
+      requestFingerprint,
+      prompt: command.prompt,
+      attachmentCount: command.input.imagePaths?.length ?? 0,
+      requestedAt,
+      acceptedAt,
+    };
+    operation.steers = [...(operation.steers ?? []), record];
+    this.stateStore?.saveOperation(operation, this.idempotencyForOperation(operation.id));
+    const updated = cloneOperation(operation);
+    this.emit({ type: "operation", action: "steered", operation: updated });
+    return updated;
+  }
+
   private reserveConversation(key: string): void {
     if (this.activeByConversation.has(key) || this.pendingConversations.has(key)) {
       throw new RunCoordinatorError(409, "이 대화에는 이미 실행 중인 작업이 있습니다.");
@@ -608,6 +741,9 @@ export class RunCoordinator {
     for (const [key, entry] of this.idempotency) {
       if (entry.operationId === operationId) this.idempotency.delete(key);
     }
+    for (const [key, entry] of this.steerIdempotency) {
+      if (entry.operationId === operationId) this.steerIdempotency.delete(key);
+    }
   }
 
   private idempotencyForOperation(operationId: string): RunIdempotencyRecord | undefined {
@@ -629,6 +765,27 @@ function fingerprintCommand(command: StartRunCommand): string {
       input: command.input,
     }))
     .digest("hex");
+}
+
+function assertSteerCommand(command: SteerRunCommand): void {
+  if (!command.requestId || command.requestId.length > 200 || /[\u0000-\u001f\u007f]/.test(command.requestId)) {
+    throw new RunCoordinatorError(400, "방향 수정 requestId가 올바르지 않습니다.");
+  }
+  if (!command.prompt.trim() || command.prompt.length > MAX_STEER_PROMPT_LENGTH
+      || command.input.prompt.length > MAX_STEER_PROMPT_LENGTH + 50_000) {
+    throw new RunCoordinatorError(400, "방향 수정 요청이 비어 있거나 크기 제한을 초과했습니다.");
+  }
+  if (command.input.imagePaths && command.input.imagePaths.length > 4) {
+    throw new RunCoordinatorError(400, "방향 수정에는 첨부를 최대 4개까지 보낼 수 있습니다.");
+  }
+}
+
+function steerKey(operationId: string, requestId: string): string {
+  return JSON.stringify([operationId, requestId]);
+}
+
+function steerFingerprint(input: ProviderSteerInput): string {
+  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
 }
 
 function cloneOperation(operation: RunOperation): RunOperation {

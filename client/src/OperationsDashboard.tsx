@@ -713,6 +713,11 @@ function OperationCard({
       </div>
       <strong>{short(operation.goalName ?? operation.prompt, 100)}</strong>
       {operation.goalName && <small className="operation-prompt">{short(operation.prompt, 140)}</small>}
+      {(operation.steers?.length ?? 0) > 0 && (
+        <small className="operation-steer">
+          ↪ 방향 수정 {operation.steers!.length}회 · {short(operation.steers!.at(-1)?.prompt ?? "", 120)}
+        </small>
+      )}
       <div className="operation-facts">
         <span>{operation.providerId ?? "codex"}</span>
         <span>{model}</span>

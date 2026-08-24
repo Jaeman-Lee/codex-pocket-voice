@@ -304,6 +304,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
         workspaceWrite: verifiedCoding && this.hasWriteTools,
         commandExecution: verifiedCoding && this.hasCommandTools,
         usageAccounting: true,
+        steering: false,
       },
       installGuide: {
         summary: "API key는 Android가 아니라 Linux Companion에만 설정합니다.",

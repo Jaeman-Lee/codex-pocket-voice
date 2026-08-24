@@ -21,10 +21,10 @@
 
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
-| Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, 세 Provider 공용 contract·stream failure fixture, protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신 모듈 구현; production build·실제 pairing/Gateway/SSE/run/approval 기반 Playwright 모바일 회귀 통과, 실기기 회귀 잔여 |
+| Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Codex exact-turn Steer와 durable idempotency, Tool/Approval 계약, 세 Provider 공용 contract·stream failure fixture, protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신 모듈 구현; production build·실제 pairing/Gateway/SSE/run/approval 기반 Playwright 모바일 회귀 통과, 실기기 회귀 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only systemd encrypted credential, 암호화 durable multi-turn, server-authored output/total token·비용 hard limit과 실제/추정 비용 accounting, model-grade 기반 read/coding tool gate, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구, 격리 npm 검증과 보호된 2-call smoke harness 구현; 실제 모델 실행·프로젝트 등급 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가장 비싼 승인 route 기준 사전 비용검사, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker, 보호된 synthetic smoke harness와 exact model/upstream grade enforcement 구현; 실제 model eval 실행·현장 등급 잔여 |
-| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 및 API 비용 정책 설정, touch-only 월 비용 확인, opt-in process-death native 알림·retained run 열기, API 30 token-gated notification Intent 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed 구현; 실기기 background/tray-tap deep-link acceptance 잔여 |
+| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, 모바일 기본 Queue·명시적 Codex Steer와 durable 기록, bounded retention 및 API 비용 정책 설정, touch-only 월 비용 확인, opt-in process-death native 알림·retained run 열기, API 30 token-gated notification Intent 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed 구현; 실기기 background/tray-tap deep-link acceptance 잔여 |
 | Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; API 30 ATD에서 Keystore config/identity/background state와 notification Intent 계측 회귀 추가, 실제 P2P group formation·external edge DDoS/실부하·tray-tap/reconnect/voice 실기기 release gate 잔여 |
 
 ## 2. 제품 정의
@@ -322,6 +322,11 @@ Provider event는 `ProviderRunEventGate`에서 exact Provider·conversation·run
 terminal event와 `ProviderRunCompletion`을 만든다. OpenAI/OpenRouter의 401/403/429/5xx와 redaction,
 OpenRouter의 malformed·truncated·empty SSE를 fake transport로 재현한다. OpenAI Responses의 같은
 `sequence_number`가 replay되면 delta·usage·tool을 두 번 적용하지 않는다.
+Codex Steer는 Gateway가 보유한 operation ID에서 exact thread와 active turn을 찾아서만 수행한다.
+클라이언트는 thread/turn/Provider/workspace를 지정할 수 없으며, 같은 request ID 재시도는 한 번만 적용하고
+서로 다른 동시 요청은 거절한다. 수락 시각과 prompt·첨부 개수는 암호화 operation journal에 남기되
+공개 응답에는 내부 request ID와 fingerprint를 노출하지 않는다. OpenAI/OpenRouter는 steering capability를
+광고하지 않으며 새 Queue run으로 자동 변환하지 않는다.
 
 완료 조건: Codex CLI의 기존 run·queue·handoff가 동일하게 동작하고 새 Provider를 fake runtime으로
 끝까지 실행할 수 있다.
@@ -438,6 +443,9 @@ cursor에서 시작하며, 최신 16건 replay 중 10분 freshness와 approval �
 API 30 Managed Device는 명시적 MainActivity Intent와 app-private action token, bounded 식별자, capture 뒤
 extra 제거, one-time pending action 소비를 실행한다. 틀린 token과 malformed ID는 action을 만들지 않는다.
 실제 notification tray tap·process-kill·절전·네트워크 전환 acceptance는 다음 단계다.
+실행 중 composer는 `다음에 실행`을 기본값으로 유지하며, Codex capability와 현재 operation이 정확히
+일치할 때만 별도 `지금 방향 수정` 버튼을 노출한다. Steer 전송 중 prompt·첨부를 잠그고 응답 유실 재시도에는
+같은 request ID를 쓰며, 수락된 기록은 재접속·대시보드 복원 뒤에도 원래 run 안에 표시한다.
 
 완료 조건: 여러 프로젝트 run을 동시에 추적하고 앱 종료·네트워크 전환 후 정확한 상태로 복구한다.
 
@@ -528,6 +536,8 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - API Provider replay 상태의 journal 암호화, API/SSE/export 비노출, 이미지 data URL 제거 검사
 - Playwright에서 production client와 실제 pairing·Gateway·SSE·run·approval 경로로 320/360/412px,
   150% 글자, 키보드 축소, 회전과 긴 prompt·diff·승인 상세 검증 — Chromium CI 자동 검사 구현
+- production 모바일 경로에서 실행 중 입력의 Queue 기본값, explicit Codex Steer, exact active turn 전달,
+  durable 재표시와 320px containment 검증 — 자동 검사 구현
 - Android API 30 managed-device instrumentation에서 Keystore config/identity, background encrypted cursor·
   변조 거부와 notification Intent token/bounds/extra scrub/one-time consume 검증 — CI 자동 검사 구현;
   실제 tray tap, background reconnect와 음성 확인은 실기기 gate 잔여

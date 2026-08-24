@@ -42,6 +42,17 @@ test("provider runtime normalizes Codex runs, events, completion, and cancellati
   assert.equal(client.lastRun?.threadId, "thread-runtime");
   assert.equal(client.lastRun?.networkAccess, false);
 
+  await registry.steerRun("codex", run.conversationId, run.runId, {
+    prompt: "focus on the requested file",
+    imagePaths: ["review.png"],
+  });
+  assert.deepEqual(client.steered, {
+    threadId: "thread-runtime",
+    turnId: "turn-runtime",
+    prompt: "focus on the requested file",
+    imagePaths: ["review.png"],
+  });
+
   client.emit("item/agentMessage/delta", {
     threadId: "thread-runtime",
     turnId: "turn-runtime",
@@ -85,6 +96,7 @@ test("provider runtime rejects unknown accounts before starting a run", async ()
 class FakeCodexProviderClient implements CodexProviderClient {
   lastRun?: RunTurnOptions;
   cancelled?: [string, string];
+  steered?: { threadId: string; turnId: string; prompt: string; imagePaths?: string[] };
   private completion?: (turn: Turn) => void;
   private readonly listeners = new Set<(notification: AppServerNotification) => void>();
 
@@ -108,6 +120,10 @@ class FakeCodexProviderClient implements CodexProviderClient {
 
   async interrupt(threadId: string, turnId: string): Promise<void> {
     this.cancelled = [threadId, turnId];
+  }
+
+  async steerTurn(options: { threadId: string; turnId: string; prompt: string; imagePaths?: string[] }): Promise<void> {
+    this.steered = options;
   }
 
   subscribe(listener: (notification: AppServerNotification) => void): () => void {

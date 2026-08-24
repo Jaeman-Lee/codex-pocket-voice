@@ -211,6 +211,8 @@ export function App() {
   const [threadId, setThreadId] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [prompt, setPrompt] = useState("");
+  const [composerRunMode, setComposerRunMode] = useState<"queue" | "steer">("queue");
+  const [steering, setSteering] = useState(false);
   const [activeRun, dispatchActiveRunState] = useReducer(reduceActiveRun, initialActiveRunState(device));
   const { operation, activity } = activeRun;
   const [tts, setTts] = useState(() => localStorage.getItem("codex-pocket-tts") === "true");
@@ -338,6 +340,7 @@ export function App() {
   const queueJournalGenerationRef = useRef(0);
   const queueDispatchingRef = useRef(false);
   const pendingRunPolicyReviewRef = useRef<PendingRunPolicyReview | null>(null);
+  const steerRequestRef = useRef<{ fingerprint: string; requestId: string } | null>(null);
   const workspaceRef = useRef("");
   const deviceRef = useRef<DeviceId>(device);
   const threadRef = useRef("");
@@ -401,6 +404,16 @@ export function App() {
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { mediaComposerRef.current = mediaComposer; }, [mediaComposer]);
   useEffect(() => { handsFreeRef.current = handsFree; }, [handsFree]);
+  useEffect(() => {
+    const current = activeRunRef.current.operation;
+    const canSteer = current?.status === "running"
+      && current.providerId === "codex"
+      && activeProvider(providers, "codex")?.capabilities.steering === true;
+    if (!canSteer) {
+      setComposerRunMode("queue");
+      steerRequestRef.current = null;
+    }
+  }, [operation?.id, operation?.status, providers]);
   useEffect(() => {
     notificationsEnabledRef.current = notificationsEnabled;
     localStorage.setItem("codex-pocket-notifications", String(notificationsEnabled));
@@ -1335,6 +1348,7 @@ export function App() {
       const data = await api<{ operation: Operation }>(`/api/runs/${encodeURIComponent(operationId)}`);
       if (!activeRunOwnsOperation(activeRunRef.current, scope, operationId)) return;
       if (data.operation.status === "running") {
+        syncSteerMessages(data.operation);
         dispatchActiveRun({ type: "update", ...scope, operationId, operation: data.operation });
         scheduleOperationPoll(operationId, scope);
         return;
@@ -1410,6 +1424,7 @@ export function App() {
       ensureLiveMessage(expectedScope);
     }
     if (activeRunRef.current.operation?.id !== nextOperation.id) return;
+    syncSteerMessages(nextOperation);
     dispatchActiveRun({
       type: "update",
       ...expectedScope,
@@ -1484,6 +1499,30 @@ export function App() {
       );
       startNextQueuedPrompt(threadRef.current);
     }
+  }
+
+  function syncSteerMessages(nextOperation: Operation) {
+    const additions = (nextOperation.steers ?? []).flatMap((steer, index) => {
+      const id = `steer-${nextOperation.id}-${steer.acceptedAt}-${index}`;
+      if (messagesRef.current.some((message) => message.id === id)) return [];
+      const attachmentLabel = steer.attachmentCount > 0 ? `\n\n📎 첨부 ${steer.attachmentCount}개` : "";
+      return [{
+        id,
+        role: "user" as const,
+        text: `↪ 지금 방향 수정\n${steer.prompt}${attachmentLabel}`,
+      }];
+    });
+    if (additions.length === 0) return;
+    setMessages((current) => {
+      const liveMessageId = activeRunRef.current.liveMessageId;
+      const liveIndex = liveMessageId ? current.findIndex((message) => message.id === liveMessageId) : -1;
+      const next = liveIndex >= 0
+        ? [...current.slice(0, liveIndex), ...additions, ...current.slice(liveIndex)]
+        : [...current, ...additions];
+      messagesRef.current = next;
+      return next;
+    });
+    markConversationJournalLive();
   }
 
   function handleEvent(event: CodexEvent) {
@@ -1943,6 +1982,11 @@ export function App() {
     }
     if (dictating) await stopDictation();
 
+    if (composerRunMode === "steer") {
+      await submitSteer(text);
+      return;
+    }
+
     const queued: QueuedPrompt = {
       id: newId("queued"),
       text,
@@ -1973,6 +2017,57 @@ export function App() {
       return;
     }
     await executePrompt(queued);
+  }
+
+  async function submitSteer(text: string) {
+    const current = activeRunRef.current.operation;
+    const selectedDevice = deviceRef.current;
+    const scope = activeRunScope(activeRunRef.current);
+    const canSteer = connection === "online" && current?.status === "running"
+      && current.providerId === "codex"
+      && activeProvider(providers, "codex")?.capabilities.steering === true;
+    if (!canSteer || !current) {
+      setComposerRunMode("queue");
+      showToast("현재 작업에는 방향 수정을 적용할 수 없습니다. 입력은 그대로 두었습니다.");
+      return;
+    }
+    if (steering) return;
+    const fingerprint = JSON.stringify([
+      selectedDevice,
+      current.id,
+      text,
+      attachments.map((item) => item.id),
+    ]);
+    if (steerRequestRef.current?.fingerprint !== fingerprint) {
+      steerRequestRef.current = { fingerprint, requestId: newId("steer") };
+    }
+    const requestId = steerRequestRef.current.requestId;
+    setSteering(true);
+    try {
+      const data = await api<{ operation: Operation }>(`/api/runs/${encodeURIComponent(current.id)}/steer`, {
+        method: "POST",
+        body: {
+          requestId,
+          prompt: text,
+          attachments: attachments.map((item) => item.id),
+        },
+      });
+      if (deviceRef.current !== selectedDevice || !activeRunScopeMatches(activeRunRef.current, scope)) return;
+      const stillOwnsOperation = activeRunOwnsOperation(activeRunRef.current, scope, current.id);
+      for (const item of attachments) if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      setPrompt("");
+      dispatchMediaComposer({ type: "clear" });
+      setComposerRunMode("queue");
+      steerRequestRef.current = null;
+      if (stillOwnsOperation) handleOperationEvent("steered", data.operation, scope);
+      showToast("현재 Codex 작업에 방향 수정을 전달했습니다.");
+    } catch (error) {
+      if (deviceRef.current !== selectedDevice) return;
+      if (error instanceof ApiError && error.status === 409) setComposerRunMode("queue");
+      showToast(errorMessage(error));
+    } finally {
+      setSteering(false);
+    }
   }
 
   async function executePrompt(queued: QueuedPrompt, continuedThreadId = "") {
@@ -3570,6 +3665,11 @@ export function App() {
         ]
       : [
           { id: newId("operation-user"), role: "user", text: nextOperation.prompt },
+          ...(nextOperation.steers ?? []).map((steer, index) => ({
+            id: `steer-${nextOperation.id}-${steer.acceptedAt}-${index}`,
+            role: "user" as const,
+            text: `↪ 지금 방향 수정\n${steer.prompt}${steer.attachmentCount > 0 ? `\n\n📎 첨부 ${steer.attachmentCount}개` : ""}`,
+          })),
           {
             id: assistantId,
             role: "assistant",
@@ -3604,6 +3704,10 @@ export function App() {
   openOperationFromDashboardRef.current = openOperationFromDashboard;
 
   const pendingApprovalCount = activeApprovals(approvalInbox).length;
+  const steeringAvailable = connection === "online" && operation?.status === "running"
+    && (operation.providerId ?? "codex") === "codex"
+    && activeProvider(providers, "codex")?.capabilities.steering === true;
+  const steerSelected = steeringAvailable && composerRunMode === "steer";
   const selectedModelOption = activeModel(models, model);
   const selectedPrimaryRoute = selectedModelOption?.routingOptions?.find((item) => item.id === routingPrimary);
   const selectedBackupRoute = selectedModelOption?.routingOptions?.find((item) => item.id === routingBackup);
@@ -4545,6 +4649,32 @@ export function App() {
           </div>
         )}
         <div className={`composer${handsFree ? " hands-free" : ""}`}>
+          {steeringAvailable && (
+            <div className="run-input-mode" role="group" aria-label="실행 중 요청 방식">
+              <button
+                type="button"
+                aria-pressed={!steerSelected}
+                disabled={steering}
+                onClick={() => setComposerRunMode("queue")}
+              >
+                <strong>다음에 실행</strong>
+                <span>현재 작업 뒤 대기열</span>
+              </button>
+              <button
+                type="button"
+                className="steer"
+                aria-pressed={steerSelected}
+                disabled={steering}
+                onClick={() => setComposerRunMode("steer")}
+              >
+                <strong>지금 방향 수정</strong>
+                <span>현재 Codex turn에 전달</span>
+              </button>
+              <small>{steerSelected
+                ? "이 입력은 새 작업이 아니라 현재 응답의 방향을 바꿉니다. Provider·모델·프로젝트는 그대로입니다."
+                : "기본값입니다. 현재 작업이 끝난 뒤 별도 요청으로 실행합니다."}</small>
+            </div>
+          )}
           {models.length > 0 && (
             <div className="model-bar" aria-label="AI 모델 설정">
               <label>
@@ -4670,7 +4800,12 @@ export function App() {
                     <span>{mediaStatusText(item, device)}</span>
                     {item.analysis?.summary && <small>{short(item.analysis.summary, 72)}</small>}
                   </div>
-                  <button type="button" aria-label={`${item.name} 첨부 제거`} onClick={() => void removeAttachment(item.id)}>×</button>
+                  <button
+                    type="button"
+                    disabled={steering}
+                    aria-label={`${item.name} 첨부 제거`}
+                    onClick={() => void removeAttachment(item.id)}
+                  >×</button>
                 </article>
               ))}
             </div>
@@ -4688,6 +4823,7 @@ export function App() {
                 inputMode="text"
                 rows={2}
                 maxLength={100_000}
+                disabled={steering}
                 value={prompt}
                 placeholder={tr("speechPlaceholder")}
                 aria-label="Codex에게 보낼 요청"
@@ -4735,7 +4871,7 @@ export function App() {
             <button
               className="attach-button"
               type="button"
-              disabled={mediaBusy || attachments.length >= MAX_COMPOSER_ATTACHMENTS}
+              disabled={steering || mediaBusy || attachments.length >= MAX_COMPOSER_ATTACHMENTS}
               aria-label="이미지 또는 영상 첨부"
               onClick={() => fileInputRef.current?.click()}
             >📎 <span>{tr("attachment")}</span></button>
@@ -4745,18 +4881,24 @@ export function App() {
               {tr("readAnswer")}
             </label>
             <label className="toggle network-toggle" title="패키지 설치 등 꼭 필요한 경우에만 켜세요">
-              <input type="checkbox" checked={networkAccess} onChange={(event) => setNetworkAccess(event.target.checked)} />
+              <input
+                type="checkbox"
+                checked={networkAccess}
+                disabled={steerSelected}
+                onChange={(event) => setNetworkAccess(event.target.checked)}
+              />
               <span aria-hidden="true" />
               {tr("network")}
             </label>
             <button
               className="send-button"
               type="button"
-              disabled={dictating || mediaBusy || (!prompt.trim() && attachments.length === 0) || attachments.some((item) => item.kind === "video" && item.status !== "ready")}
-              aria-label={activity.running ? "요청을 대기열에 추가" : "요청 전송"}
+              disabled={steering || dictating || mediaBusy || (!prompt.trim() && attachments.length === 0) || attachments.some((item) => item.kind === "video" && item.status !== "ready")}
+              aria-label={steerSelected ? "지금 방향 수정 전송" : activity.running ? "요청을 대기열에 추가" : "요청 전송"}
               onClick={() => void submitPrompt()}
             >
-              {activity.running ? tr("queue") : tr("send")} <span aria-hidden="true">{activity.running ? "+" : "↑"}</span>
+              {steering ? "전달 중…" : steerSelected ? "방향 수정" : activity.running ? tr("queue") : tr("send")}
+              <span aria-hidden="true">{steerSelected ? "↪" : activity.running ? "+" : "↑"}</span>
             </button>
           </div>
         </div>

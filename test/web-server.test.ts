@@ -295,10 +295,12 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(providerData.providers[0].canLogin, true);
   assert.equal(providerData.providers[0].capabilities.streaming, true);
   assert.equal(providerData.providers[0].capabilities.approvals, false);
+  assert.equal(providerData.providers[0].capabilities.steering, true);
   const openAIProvider = providerData.providers.find((item: any) => item.id === "openai");
   const openRouterProvider = providerData.providers.find((item: any) => item.id === "openrouter");
   assert.equal(openAIProvider.capabilities.approvals, false);
   assert.equal(openAIProvider.capabilities.workspaceWrite, false);
+  assert.equal(openAIProvider.capabilities.steering, false);
   assert.equal(typeof openAIProvider.capabilities.commandExecution, "boolean");
   assert.equal(openRouterProvider.capabilities.approvals, false);
   assert.equal(openRouterProvider.capabilities.workspaceWrite, false);
@@ -538,6 +540,45 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(nativeHealth.headers.get("access-control-allow-origin"), "http://localhost");
 
   const operationId = started.operation.id;
+  const crossOriginSteer = await fetch(`${base}/api/runs/${operationId}/steer`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "https://evil.example" }),
+    body: JSON.stringify({ requestId: "steer-web-1", prompt: "focus on mobile containment" }),
+  });
+  assert.equal(crossOriginSteer.status, 403);
+  const steerRequest = {
+    requestId: "steer-web-1",
+    prompt: "focus on mobile containment",
+    attachments: [uploaded.media.id],
+  };
+  const steered = await jsonFetch(`${base}/api/runs/${operationId}/steer`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify(steerRequest),
+  });
+  assert.equal(steered.operation.steers.length, 1);
+  assert.equal(steered.operation.steers[0].prompt, steerRequest.prompt);
+  assert.equal(steered.operation.steers[0].attachmentCount, 1);
+  assert.equal(steered.operation.steers[0].requestId, undefined);
+  assert.equal(steered.operation.steers[0].requestFingerprint, undefined);
+  assert.equal(fake.steers.length, 1);
+  assert.equal(fake.steers[0]?.threadId, "thread-web");
+  assert.equal(fake.steers[0]?.turnId, "turn-web");
+  assert.match(fake.steers[0]?.prompt ?? "", /^focus on mobile containment/);
+  assert.equal(fake.steers[0]?.imagePaths?.length, 1);
+  const retriedSteer = await jsonFetch(`${base}/api/runs/${operationId}/steer`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify(steerRequest),
+  });
+  assert.equal(retriedSteer.operation.steers.length, 1);
+  assert.equal(fake.steers.length, 1);
+  const conflictingSteer = await fetch(`${base}/api/runs/${operationId}/steer`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ ...steerRequest, prompt: "conflicting direction" }),
+  });
+  assert.equal(conflictingSteer.status, 409);
   const crossOriginMetadata = await fetch(`${base}/api/runs/${operationId}/metadata`, {
     method: "PATCH",
     headers: authorized({ "Content-Type": "application/json", Origin: "https://evil.example" }),
@@ -996,6 +1037,7 @@ class FakeWebClient implements WebCodexClient {
   unsubscribeAttempts: string[] = [];
   unsubscribeFailures = 0;
   runsStarted = 0;
+  steers: Array<{ threadId: string; turnId: string; prompt: string; imagePaths?: string[] }> = [];
   private listeners = new Set<(notification: AppServerNotification) => void>();
   private resolveTurn?: (turn: Turn) => void;
 
@@ -1052,6 +1094,10 @@ class FakeWebClient implements WebCodexClient {
 
   async interrupt(threadId: string, turnId: string) {
     this.interrupted = [threadId, turnId];
+  }
+
+  async steerTurn(options: { threadId: string; turnId: string; prompt: string; imagePaths?: string[] }) {
+    this.steers.push(options);
   }
 
   async unsubscribeThread(threadId: string) {

@@ -84,6 +84,43 @@ test("focused input remains reachable through keyboard resize and landscape rota
   await expectVisualViewportMatchesWindow(page);
 });
 
+test("running Codex defaults to Queue and sends Steer only after explicit selection", async ({ page }) => {
+  let observedSteer: Record<string, unknown> | null = null;
+  await page.route("**/api/runs/*/steer", async (route) => {
+    if (route.request().method() === "POST") {
+      observedSteer = route.request().postDataJSON() as Record<string, unknown>;
+    }
+    await route.continue();
+  });
+  await bootPairedApp(page, { width: 320, height: 740 });
+  const textarea = page.getByLabel("Codex에게 보낼 요청");
+  await textarea.fill("Queue와 Steer를 구분해 주세요.");
+  await page.getByRole("button", { name: "요청 전송" }).click();
+
+  const modes = page.getByRole("group", { name: "실행 중 요청 방식" });
+  await expect(modes).toBeVisible();
+  await expect(modes.getByRole("button", { name: /다음에 실행/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(modes.getByRole("button", { name: /지금 방향 수정/ })).toHaveAttribute("aria-pressed", "false");
+  await expectElementContained(page, modes);
+
+  await textarea.fill("이 요청은 현재 작업 다음에 실행해 주세요.");
+  await page.getByRole("button", { name: "요청을 대기열에 추가" }).click();
+  await expect(page.getByLabel("예약 요청")).toContainText("이 요청은 현재 작업 다음에 실행해 주세요.");
+  expect(observedSteer).toBeNull();
+
+  await modes.getByRole("button", { name: /지금 방향 수정/ }).click();
+  await expect(modes.getByRole("button", { name: /지금 방향 수정/ })).toHaveAttribute("aria-pressed", "true");
+  await textarea.fill("모바일 폭 초과를 먼저 확인하는 방향으로 바꿔 주세요.");
+  await page.getByRole("button", { name: "지금 방향 수정 전송" }).click();
+  await expect.poll(() => observedSteer?.prompt).toBe("모바일 폭 초과를 먼저 확인하는 방향으로 바꿔 주세요.");
+  await expect(page.locator(".message.user").filter({
+    hasText: "모바일 폭 초과를 먼저 확인하는 방향으로 바꿔 주세요.",
+  })).toBeVisible();
+  await expect(page.getByLabel("예약 요청")).toContainText("대기열 1");
+  await expect(modes.getByRole("button", { name: /다음에 실행/ })).toHaveAttribute("aria-pressed", "true");
+  await expectShellContained(page);
+});
+
 test("API preflight confirmation stays contained and forwards only the one-time approval", async ({ page }) => {
   let observedConfirmation = "";
   await installApiPolicyFixture(page, (token) => { observedConfirmation = token; });
@@ -213,6 +250,7 @@ async function installApiPolicyFixture(page: Page, observe: (token: string) => v
         workspaceWrite: false,
         commandExecution: false,
         usageAccounting: true,
+        steering: false,
       },
       installGuide: { summary: "fixture", command: "", docsUrl: "https://example.invalid" },
     });

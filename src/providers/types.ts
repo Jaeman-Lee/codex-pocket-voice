@@ -26,6 +26,11 @@ export interface ProviderRunLimits {
   maxTotalTokens: number;
 }
 
+export interface ProviderSteerInput {
+  prompt: string;
+  imagePaths?: string[];
+}
+
 export interface ProviderResumeState {
   version: 1;
   providerId: string;
@@ -87,6 +92,7 @@ export type ProviderEvent = ProviderEventBase & (
 
 export interface ProviderRuntime {
   startRun(input: ProviderRunInput): Promise<ProviderRun>;
+  steerRun?(conversationId: string, runId: string, input: ProviderSteerInput): Promise<void>;
   cancelRun(conversationId: string, runId: string): Promise<void>;
   subscribe(listener: (event: ProviderEvent) => void): () => void;
 }
@@ -171,6 +177,7 @@ export interface ProviderDescriptor {
     workspaceWrite: boolean;
     commandExecution: boolean;
     usageAccounting: boolean;
+    steering: boolean;
   };
   installGuide: {
     summary: string;

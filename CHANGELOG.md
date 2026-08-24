@@ -10,6 +10,16 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Queue/Steer 분리는 실행 중 Codex turn의 방향을 바꾸는 새 user-visible workflow이므로 `feature`로
+  분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
+  `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
+  APK 전달·설치, 실제 Provider 호출과 실행 중 Companion 재시작은 하지 않으며 current v1 후보
+  1.8.2, staged v1.8.4와 검증된 v1.8.1 rollback을 그대로 보존한다.
+- 실행 중 입력은 기본적으로 `다음에 실행` Queue에 들어가고, 사용자가 `지금 방향 수정`을 명시적으로
+  고른 경우에만 Codex의 exact thread·active turn에 `turn/steer`를 보낸다. Provider·모델·프로젝트는
+  서버 소유 operation에서 고정하며, request ID 재시도는 중복 적용하지 않고 서로 다른 동시 steer는
+  거절한다. 수락된 수정은 암호화 journal과 모바일 작업 기록에 남는다. OpenAI/OpenRouter는 지원
+  capability를 광고하지 않으므로 이 동작을 자동 대체하거나 흉내 내지 않는다.
 - Server-authored API cost/token policy는 OpenAI·OpenRouter 실행 전에 새 사용자 보호 workflow를
   추가하므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서
   `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를

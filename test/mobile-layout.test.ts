@@ -128,6 +128,21 @@ test("API policy confirmation is touch-only and never persists its one-time toke
   assert.match(dashboard, /확인하고 API 정책 적용/);
 });
 
+test("running Codex input defaults to Queue and exposes explicit bounded Steer controls", async () => {
+  const app = await readFile(new URL("../client/src/App.tsx", import.meta.url), "utf8");
+  const css = await readFile(new URL("../client/src/styles.css", import.meta.url), "utf8");
+  const mode = css.match(/\.run-input-mode \{([^}]+)\}/)?.[1] ?? "";
+  assert.match(app, /useState<"queue" \| "steer">\("queue"\)/);
+  assert.match(app, /지금 방향 수정/);
+  assert.match(app, /\/api\/runs\/\$\{encodeURIComponent\(current\.id\)\}\/steer/);
+  assert.match(app, /current\.providerId === "codex"/);
+  assert.match(app, /capabilities\.steering === true/);
+  assert.match(app, /setComposerRunMode\("queue"\)/);
+  assert.match(mode, /repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(mode, /min-width:\s*0/);
+  assert.match(css, /\.run-input-mode > small[^}]*overflow-wrap:\s*anywhere/);
+});
+
 test("workspace recovery stays fail-closed and requires a second touch", async () => {
   const app = await readFile(new URL("../client/src/App.tsx", import.meta.url), "utf8");
   const dashboard = await readFile(new URL("../client/src/OperationsDashboard.tsx", import.meta.url), "utf8");

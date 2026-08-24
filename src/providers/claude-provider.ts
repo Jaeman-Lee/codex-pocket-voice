@@ -41,6 +41,7 @@ export class ClaudeProviderAdapter implements ModelProviderAdapter {
         workspaceWrite: false,
         commandExecution: false,
         usageAccounting: false,
+        steering: false,
       },
       installGuide: {
         summary: "PC에 Claude Code를 설치한 뒤 이 화면에서 연결하세요.",

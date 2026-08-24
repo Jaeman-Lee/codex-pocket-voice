@@ -8,6 +8,7 @@ import type {
   AppServerNotification,
   BeginTurnResult,
   RunTurnOptions,
+  SteerTurnOptions,
 } from "../../../src/app-server-client.js";
 import { InMemoryApprovalBroker } from "../../../src/approval-broker.js";
 import { GatewayAuth } from "../../../src/gateway-auth.js";
@@ -164,6 +165,22 @@ class MobileAcceptanceClient implements WebCodexClient {
 
   async interrupt(_threadId: string, turnId: string): Promise<void> {
     this.finish(turnId, "interrupted");
+  }
+
+  async steerTurn(options: SteerTurnOptions): Promise<void> {
+    const pending = this.pending.get(options.turnId);
+    if (!pending || pending.threadId !== options.threadId) {
+      throw new Error("synthetic active turn does not match the steer request");
+    }
+    this.emit({
+      method: "item/agentMessage/delta",
+      params: {
+        threadId: options.threadId,
+        turnId: options.turnId,
+        itemId: `message-${options.turnId}`,
+        delta: ` 방향 수정 반영: ${options.prompt.slice(0, 80)}`,
+      },
+    });
   }
 
   async unsubscribeThread() {

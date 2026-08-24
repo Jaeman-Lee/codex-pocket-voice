@@ -1,6 +1,11 @@
 import type { InitializeResponse } from "../../generated/app-server/InitializeResponse";
 import type { ModelListResponse } from "../../generated/app-server/v2/ModelListResponse";
-import type { AppServerNotification, BeginTurnResult, RunTurnOptions } from "../app-server-client.js";
+import type {
+  AppServerNotification,
+  BeginTurnResult,
+  RunTurnOptions,
+  SteerTurnOptions,
+} from "../app-server-client.js";
 import { summarizeTurn } from "../result.js";
 import {
   ProviderError,
@@ -20,6 +25,7 @@ export interface CodexProviderClient {
   start(): Promise<InitializeResponse>;
   listModels(): Promise<ModelListResponse>;
   beginTurn(options: RunTurnOptions): Promise<BeginTurnResult>;
+  steerTurn?(options: SteerTurnOptions): Promise<void>;
   interrupt(threadId: string, turnId: string): Promise<void>;
   subscribe(listener: (notification: AppServerNotification) => void): () => void;
 }
@@ -62,6 +68,7 @@ export class CodexProviderAdapter implements ModelProviderAdapter, ProviderRunti
         workspaceWrite: true,
         commandExecution: true,
         usageAccounting: false,
+        steering: typeof this.client.steerTurn === "function",
       },
       installGuide: {
         summary: "Linux 공식 설치 스크립트",
@@ -133,6 +140,20 @@ export class CodexProviderAdapter implements ModelProviderAdapter, ProviderRunti
 
   cancelRun(conversationId: string, runId: string): Promise<void> {
     return this.client.interrupt(conversationId, runId);
+  }
+
+  async steerRun(
+    conversationId: string,
+    runId: string,
+    input: { prompt: string; imagePaths?: string[] },
+  ): Promise<void> {
+    if (!this.client.steerTurn) throw new ProviderError(409, "이 Codex runtime은 실행 중 방향 수정을 지원하지 않습니다.");
+    await this.client.steerTurn({
+      threadId: conversationId,
+      turnId: runId,
+      prompt: input.prompt,
+      imagePaths: input.imagePaths,
+    });
   }
 
   subscribe(listener: (event: ProviderEvent) => void): () => void {

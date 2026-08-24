@@ -14,6 +14,7 @@ import type {
   ProviderRun,
   ProviderRunCompletion,
   ProviderRunInput,
+  ProviderSteerInput,
 } from "../src/providers/types.js";
 
 test("encrypted event journal restores running work as unknown and preserves idempotency", async (t) => {
@@ -51,6 +52,11 @@ test("encrypted event journal restores running work as unknown and preserves ide
     idempotencyKey: "paired-client:request-1",
   };
   const running = await firstCoordinator.start(command);
+  await firstCoordinator.steer(running.id, {
+    requestId: "steer-durable-1",
+    prompt: "super-private-steer",
+    input: { prompt: "super-private-steer" },
+  });
   const streamed = firstJournal.appendEvent(running.id, running.cwd, {
     type: "provider",
     kind: "output.delta",
@@ -67,7 +73,7 @@ test("encrypted event journal restores running work as unknown and preserves ide
   assert.equal((await stat(`${databaseFile}.key`)).mode & 0o777, 0o600);
   const rawDatabase = await readFile(databaseFile, "utf8");
   const rawKey = await readFile(`${databaseFile}.key`, "utf8");
-  for (const secret of ["super-private-prompt", "/private/workspace", "feature/private-identity", "secret-output", "paired-client:request-1"]) {
+  for (const secret of ["super-private-prompt", "super-private-steer", "/private/workspace", "feature/private-identity", "secret-output", "paired-client:request-1"]) {
     assert.doesNotMatch(rawDatabase, new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.doesNotMatch(rawKey, new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
@@ -83,6 +89,7 @@ test("encrypted event journal restores running work as unknown and preserves ide
   assert.equal(recovered?.status, "unknown");
   assert.equal(recovered?.workspaceIdentity?.branch, "feature/private-identity");
   assert.deepEqual(recovered?.routing, { upstreams: ["strict-primary", "strict-backup"], allowFallbacks: true });
+  assert.equal(recovered?.steers?.[0]?.prompt, "super-private-steer");
   assert.match(recovered?.error ?? "", /최종 상태/);
   assert.equal((await restoredCoordinator.start(command)).id, running.id);
   assert.equal(restoredProviders.starts.length, 0);
@@ -355,6 +362,7 @@ test("event journal authenticates the complete server-authored run policy", asyn
 
 class JournalFakeProviders implements RunProviderRegistry {
   readonly starts: ProviderRunInput[] = [];
+  readonly steers: ProviderSteerInput[] = [];
   private readonly listeners = new Set<(event: ProviderEvent) => void>();
 
   async startRun(providerId: unknown, _accountId: unknown, input: ProviderRunInput): Promise<ProviderRun> {
@@ -370,6 +378,10 @@ class JournalFakeProviders implements RunProviderRegistry {
   }
 
   async cancelRun(): Promise<void> {}
+
+  async steerRun(_providerId: unknown, _conversationId: string, _runId: string, input: ProviderSteerInput): Promise<void> {
+    this.steers.push(input);
+  }
 
   subscribe(listener: (event: ProviderEvent) => void): () => void {
     this.listeners.add(listener);

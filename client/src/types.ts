@@ -219,6 +219,7 @@ export interface ProviderOption {
     workspaceWrite?: boolean;
     commandExecution?: boolean;
     usageAccounting?: boolean;
+    steering?: boolean;
   };
   installGuide: {
     summary: string;
@@ -330,6 +331,12 @@ export interface Operation {
   turnId?: string;
   cwd: string;
   prompt: string;
+  steers?: Array<{
+    prompt: string;
+    attachmentCount: number;
+    requestedAt: string;
+    acceptedAt: string;
+  }>;
   accountId?: string;
   model?: string;
   effort?: string;

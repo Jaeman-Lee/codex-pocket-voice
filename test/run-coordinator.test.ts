@@ -11,6 +11,7 @@ import type {
   ProviderRun,
   ProviderRunCompletion,
   ProviderRunInput,
+  ProviderSteerInput,
 } from "../src/providers/types.js";
 import { CostAndPolicyGuard, DEFAULT_RUN_POLICY_CONFIG } from "../src/run-policy.js";
 
@@ -80,6 +81,127 @@ test("RunCoordinator deduplicates retried requests and rejects conflicting reuse
     (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
   );
   assert.equal(providers.starts.length, 1);
+  coordinator.close();
+});
+
+test("RunCoordinator steers only the exact active run and durably deduplicates retries", async () => {
+  const providers = new FakeRunProviders();
+  const coordinator = new RunCoordinator(providers, { createId: () => "operation-steer" });
+  const events: RunCoordinatorEvent[] = [];
+  coordinator.subscribe((event) => events.push(event));
+  const started = await coordinator.start({
+    providerId: "fake",
+    prompt: "initial direction",
+    input: { cwd: process.cwd(), prompt: "initial direction" },
+  });
+  const command = {
+    requestId: "steer-request-1",
+    prompt: "focus on the mobile overflow",
+    input: { prompt: "focus on the mobile overflow", imagePaths: ["review.png"] },
+  };
+
+  const steered = await coordinator.steer(started.id, command);
+  assert.equal(providers.steers.length, 1);
+  assert.deepEqual(providers.steers[0], {
+    providerId: "fake",
+    conversationId: "conversation-1",
+    runId: "run-1",
+    input: command.input,
+  });
+  assert.equal(steered.steers?.[0]?.prompt, command.prompt);
+  assert.equal(steered.steers?.[0]?.attachmentCount, 1);
+  assert.match(steered.steers?.[0]?.requestFingerprint ?? "", /^[a-f0-9]{64}$/);
+  assert.equal(events.filter((event) => event.type === "operation" && event.action === "steered").length, 1);
+
+  const retried = await coordinator.steer(started.id, command);
+  assert.equal(retried.steers?.length, 1);
+  assert.equal(providers.steers.length, 1);
+  await assert.rejects(
+    coordinator.steer(started.id, { ...command, input: { prompt: "different direction" } }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+
+  providers.complete(0, { status: "completed", result: { finalResponse: "done" } });
+  await waitFor(() => coordinator.get(started.id)?.status === "completed");
+  await assert.rejects(
+    coordinator.steer(started.id, { requestId: "late-steer", prompt: "too late", input: { prompt: "too late" } }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  coordinator.close();
+});
+
+test("RunCoordinator rejects a second distinct steer while one is still pending", async () => {
+  const providers = new FakeRunProviders();
+  let releaseSteer: () => void = () => undefined;
+  providers.steerGate = new Promise<void>((resolve) => {
+    releaseSteer = resolve;
+  });
+  const coordinator = new RunCoordinator(providers, { createId: () => "operation-pending-steer" });
+  const started = await coordinator.start({
+    providerId: "fake",
+    prompt: "initial direction",
+    input: { cwd: process.cwd(), prompt: "initial direction" },
+  });
+
+  const first = coordinator.steer(started.id, {
+    requestId: "steer-pending-1",
+    prompt: "first direction change",
+    input: { prompt: "first direction change" },
+  });
+  await waitFor(() => providers.steers.length === 1);
+  await assert.rejects(
+    coordinator.steer(started.id, {
+      requestId: "steer-pending-2",
+      prompt: "second direction change",
+      input: { prompt: "second direction change" },
+    }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  assert.equal(providers.steers.length, 1);
+
+  releaseSteer();
+  await first;
+  coordinator.close();
+});
+
+test("RunCoordinator retries journal persistence without steering the Provider twice", async () => {
+  const providers = new FakeRunProviders();
+  let failSteerSave = true;
+  const coordinator = new RunCoordinator(providers, {
+    createId: () => "operation-steer-save-retry",
+    stateStore: {
+      load: () => ({ operations: [], idempotency: [] }),
+      saveOperation: (operation) => {
+        if (operation.steers?.length && failSteerSave) {
+          failSteerSave = false;
+          throw new Error("synthetic journal failure");
+        }
+      },
+      deleteOperation: () => undefined,
+      deleteOperations: () => undefined,
+    },
+  });
+  const events: RunCoordinatorEvent[] = [];
+  coordinator.subscribe((event) => events.push(event));
+  const started = await coordinator.start({
+    providerId: "fake",
+    prompt: "initial direction",
+    input: { cwd: process.cwd(), prompt: "initial direction" },
+  });
+  const command = {
+    requestId: "steer-save-retry-1",
+    prompt: "persist this accepted direction",
+    input: { prompt: "persist this accepted direction" },
+  };
+
+  await assert.rejects(coordinator.steer(started.id, command), /synthetic journal failure/);
+  assert.equal(providers.steers.length, 1);
+  assert.equal(coordinator.get(started.id)?.steers?.length, 1);
+
+  const recovered = await coordinator.steer(started.id, command);
+  assert.equal(recovered.steers?.length, 1);
+  assert.equal(providers.steers.length, 1);
+  assert.equal(events.filter((event) => event.type === "operation" && event.action === "steered").length, 1);
   coordinator.close();
 });
 
@@ -521,7 +643,14 @@ test("RunCoordinator applies a changed retention policy to its in-memory snapsho
 class FakeRunProviders implements RunProviderRegistry {
   readonly starts: Array<{ providerId: unknown; accountId: unknown; input: ProviderRunInput }> = [];
   readonly cancellations: Array<[unknown, string, string]> = [];
+  readonly steers: Array<{
+    providerId: unknown;
+    conversationId: string;
+    runId: string;
+    input: ProviderSteerInput;
+  }> = [];
   cwd = process.cwd();
+  steerGate?: Promise<void>;
   private readonly listeners = new Set<(event: ProviderEvent) => void>();
   private readonly deferred: Array<{
     resolve(value: ProviderRunCompletion): void;
@@ -545,6 +674,16 @@ class FakeRunProviders implements RunProviderRegistry {
 
   async cancelRun(providerId: unknown, conversationId: string, runId: string): Promise<void> {
     this.cancellations.push([providerId, conversationId, runId]);
+  }
+
+  async steerRun(
+    providerId: unknown,
+    conversationId: string,
+    runId: string,
+    input: ProviderSteerInput,
+  ): Promise<void> {
+    this.steers.push({ providerId, conversationId, runId, input });
+    await this.steerGate;
   }
 
   subscribe(listener: (event: ProviderEvent) => void): () => void {

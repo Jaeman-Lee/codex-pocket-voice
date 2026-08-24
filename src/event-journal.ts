@@ -791,6 +791,7 @@ function assertStoredOperation(value: StoredOperationPayload, expectedId: string
     || !boundedString(operation.runId, 500)
     || !boundedString(operation.cwd, 4_096)
     || typeof operation.prompt !== "string" || operation.prompt.length > 100_000
+    || !validSteerRecords(operation.steers)
     || (operation.accountId !== undefined && !boundedString(operation.accountId, 100))
     || (operation.model !== undefined && !boundedString(operation.model, 200))
     || (operation.effort !== undefined && !boundedString(operation.effort, 40))
@@ -817,6 +818,26 @@ function assertStoredOperation(value: StoredOperationPayload, expectedId: string
     || !/^[a-f0-9]{64}$/.test(value.idempotency.fingerprint)
     || value.idempotency.operationId !== expectedId
   )) throw new Error("Encrypted event journal idempotency record is invalid");
+}
+
+function validSteerRecords(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!Array.isArray(value) || value.length > 32) return false;
+  let promptLength = 0;
+  const requestIds = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const record = item as Record<string, unknown>;
+    if (!boundedString(record.requestId, 200) || requestIds.has(record.requestId)
+        || typeof record.requestFingerprint !== "string" || !/^[a-f0-9]{64}$/.test(record.requestFingerprint)
+        || typeof record.prompt !== "string" || record.prompt.length === 0 || record.prompt.length > 100_000
+        || !safeBoundedInteger(record.attachmentCount, 0, 4)
+        || !boundedTimestamp(record.requestedAt) || !boundedTimestamp(record.acceptedAt)) return false;
+    requestIds.add(record.requestId);
+    promptLength += record.prompt.length;
+    if (promptLength > 1_000_000) return false;
+  }
+  return true;
 }
 
 function validRoutingSelection(value: unknown): boolean {

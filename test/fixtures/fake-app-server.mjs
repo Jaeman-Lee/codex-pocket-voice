@@ -35,6 +35,8 @@ const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity 
 const write = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let pendingTurn = false;
 let imageChecked = false;
+let approvalResolved = false;
+let steerChecked = false;
 
 rl.on("line", (line) => {
   const message = JSON.parse(line);
@@ -45,7 +47,8 @@ rl.on("line", (line) => {
       process.stderr.write("unsafe approval response\n");
       process.exit(2);
     }
-    if (pendingTurn) completeTurn();
+    approvalResolved = true;
+    if (pendingTurn && (process.env.FAKE_REQUIRE_STEER !== "1" || steerChecked)) completeTurn();
     return;
   }
 
@@ -91,8 +94,26 @@ rl.on("line", (line) => {
       }
       write({ id: message.id, result: { turn: turn("inProgress", []) } });
       pendingTurn = true;
+      approvalResolved = false;
+      steerChecked = false;
       write({ method: "item/agentMessage/delta", params: { threadId: thread.id, turnId: "turn-1", itemId: "message-1", delta: "working" } });
       write({ id: "approval-1", method: "item/commandExecution/requestApproval", params: {} });
+      break;
+    case "turn/steer":
+      if (!pendingTurn || message.params?.threadId !== thread.id || message.params?.expectedTurnId !== "turn-1"
+          || !message.params.input?.some((item) => item.type === "text" && item.text === "change direction safely")) {
+        write({ id: message.id, error: { code: -1, message: "invalid steer precondition" } });
+        break;
+      }
+      if (process.env.FAKE_EXPECT_STEER_IMAGE === "1"
+          && !message.params.input.some((item) => item.type === "localImage" && item.detail === "auto")) {
+        write({ id: message.id, error: { code: -1, message: "missing steer image input" } });
+        break;
+      }
+      steerChecked = true;
+      write({ id: message.id, result: { turnId: "turn-1" } });
+      write({ method: "item/agentMessage/delta", params: { threadId: thread.id, turnId: "turn-1", itemId: "message-1", delta: " steered" } });
+      if (approvalResolved) completeTurn();
       break;
     case "turn/interrupt":
       write({ id: message.id, result: {} });

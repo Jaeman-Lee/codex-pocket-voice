@@ -15,6 +15,7 @@ import {
   type ProviderRun,
   type ProviderRunInput,
   type ProviderRuntime,
+  type ProviderSteerInput,
 } from "./types.js";
 export { ProviderError } from "./types.js";
 
@@ -65,6 +66,17 @@ export class ProviderRegistry {
 
   async cancelRun(providerId: unknown, conversationId: string, runId: string): Promise<void> {
     return this.runtimeOnly(providerId).cancelRun(conversationId, runId);
+  }
+
+  async steerRun(
+    providerId: unknown,
+    conversationId: string,
+    runId: string,
+    input: ProviderSteerInput,
+  ): Promise<void> {
+    const runtime = this.runtimeOnly(providerId);
+    if (!runtime.steerRun) throw new ProviderError(409, "선택한 AI 제공자는 실행 중 방향 수정을 지원하지 않습니다.");
+    await runtime.steerRun(conversationId, runId, input);
   }
 
   subscribe(listener: (event: ProviderEvent) => void): () => void {

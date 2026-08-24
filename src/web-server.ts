@@ -126,6 +126,12 @@ interface RunBody {
   policyConfirmation?: unknown;
 }
 
+interface SteerBody {
+  requestId?: unknown;
+  prompt?: unknown;
+  attachments?: unknown;
+}
+
 interface CreateProjectBody {
   name?: unknown;
   parent?: unknown;
@@ -1161,6 +1167,33 @@ async function handleApi(
     return;
   }
 
+  const steerMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/steer$/);
+  if (request.method === "POST" && steerMatch) {
+    assertSameOrigin(request);
+    const body = await readJson(request) as SteerBody;
+    if (!isRecord(body) || Object.keys(body).some((key) => !["requestId", "prompt", "attachments"].includes(key))) {
+      throw new HttpError(400, "Run steer body contains an unsupported field");
+    }
+    const operationId = decodeURIComponent(steerMatch[1]!);
+    const operation = runs.get(operationId);
+    if (!operation) throw new HttpError(404, "Operation not found");
+    options.paths.assertAllowed(operation.cwd);
+    const requestId = requiredString(body.requestId, "requestId", 200);
+    const prompt = requiredString(body.prompt, "prompt", 100_000);
+    const attachmentIds = optionalStringArray(body.attachments, "attachments", 4, 200);
+    const attachmentInput = media.resolveForTurn(attachmentIds);
+    const updated = await runs.steer(operationId, {
+      requestId: `${authenticatedClient.id}:${requestId}`,
+      prompt,
+      input: {
+        prompt: `${prompt}${attachmentInput.promptContext}`,
+        imagePaths: attachmentInput.imagePaths,
+      },
+    });
+    sendJson(response, 200, { operation: publicOperation(updated) });
+    return;
+  }
+
   const interruptMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/interrupt$/);
   if (request.method === "POST" && interruptMatch) {
     assertSameOrigin(request);
@@ -1594,9 +1627,16 @@ function safeInternalError(error: unknown): string {
 }
 
 function publicOperation(operation: RunOperation): Record<string, unknown> {
-  const { resumeState, ...visible } = operation;
+  const { resumeState, steers, ...visible } = operation;
   return {
     ...visible,
+    ...(steers ? {
+      steers: steers.map(({
+        requestFingerprint: _requestFingerprint,
+        requestId: _requestId,
+        ...steer
+      }) => steer),
+    } : {}),
     resumable: resumeState !== undefined,
     ...(operation.providerId === "codex"
       ? { threadId: operation.conversationId, turnId: operation.runId }
