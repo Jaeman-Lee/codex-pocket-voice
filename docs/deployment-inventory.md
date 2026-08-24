@@ -7,6 +7,15 @@ Last verified: 2026-08-24 KST
 
 ## Current candidate and deployed baseline
 
+External writer scope hotfix decision: 1.8.3의 반납 성공 안내가 Companion app-server writer와
+독립 Codex CLI/TMUX writer를 구분하지 않는 UI·응답 버그이므로 `patch`/`1.8.4`, Android
+`versionCode 10804`로 분류한다. 대상 브랜치는
+`hotfix/1.8.4-external-writer-clarity`이다. 1.8.4 검증 전에는 1.8.3 staged APK를
+보존하고, 검증 뒤에는 1.8.4가 staged 자리를 대체하며 1.8.3은 복구 가능한 archive로
+이동한다. Android current 1.8.2와 rollback 1.8.1은 변경하지 않는다. Linux Companion은
+계속 1.8.3을 실행하며, 활성 Codex turn과 별도 TUI를 명시적 확인 없이 종료하거나
+Companion을 재시작하지 않는다.
+
 Writer-release hotfix decision: 세션 반납 후에도 Companion app-server가 exact Codex thread의
 writer lock을 유지해 PC의 resume를 막는 연결 장애이므로 `patch`/`1.8.3`, Android
 `versionCode 10803`으로 분류한다. 대상 브랜치는 `hotfix/1.8.3-writer-release`이다.
@@ -59,10 +68,12 @@ candidate로 분류한다. 실행 중인 Codex turn을 끊지 않기 위해 Linu
 | Component | Version / revision | State |
 | --- | --- | --- |
 | Runtime code baseline | `e0f6ea1` on `hotfix/1.8.3-writer-release` | pushed; local release gate and CI passing |
+| Hotfix source candidate | `814dd10` on `hotfix/1.8.4-external-writer-clarity` | local release gate and Node 20/22/Android CI passing |
 | Primary development workspace | Linux PC Git clone; v2 worktree active | 1.8.3 hotfix runtime is isolated in a separate versioned PC worktree |
 | Termux workspace | lightweight Git mirror at `f08d9e7` | reproducible dependencies and build output scheduled for removal |
 | Pull request | Draft PR #5 into `hotfix/1.8.2-session-scope` | Linux Node 20/22 and Android checks passing; stacked until the 1.8.2 base is merged |
 | Android staged APK | 1.8.3 signed candidate | Actions run `32671707088`; checksum-verified in separate PC candidate folder; not installed |
+| Android CI-only APK | 1.8.4 signed candidate | Actions run `32707398520`; signed APK, checksum and SBOM passed CI but were not downloaded or installed |
 | Android current APK | 1.8.2 signed candidate | current installer set preserved unchanged |
 | Android rollback APK | 1.8.1 signed candidate | rollback set prepared from Actions run `32645200906`; already field-tested by the user |
 | Linux Companion | 1.8.3 at `e0f6ea1` | active from the separate hotfix runtime; target writer released and loopback listener healthy |
@@ -85,11 +96,13 @@ release gate에 포함한다. 1.8.2 APK와 Companion에는 이 바인딩이나 w
 없으므로 1.8.3 APK 설치만으로는 충분하지 않고, 활성 turn이 없을 때 Linux Companion도
 검증된 1.8.3 source로 전환해야 한다.
 
-`1.8.3`은 아직 정식 Release가 아니다. 사용자 현장 테스트가 끝난 뒤 선행 hotfix와 PR을
-병합하고 최종 병합 커밋에 `v1.8.3` 태그와 GitHub Release를 만들어야 한다. 2026-08-24 PC
+`1.8.3`은 아직 정식 Release가 아니며 1.8.4가 검증되면 staged 후보에서 내려간다. 사용자
+현장 테스트가 끝난 뒤 선행 hotfix와 PR을 병합하고 최종 승인 버전에만 Git tag와 GitHub
+Release를 만들어야 한다. 2026-08-24 PC
 Companion 전환에서는 마지막 이벤트가 `task_complete`인 target thread 하나만 기존 app-server가
-열고 있음을 확인했다. 전환 후 해당 session file의 writer holder가 0이고 1.8.3 loopback listener가
-정상임을 검증했다. 이후 Companion 재배포도 활성 작업이 없을 때만 수행한다.
+열고 있음을 확인했다. 전환 후 해당 session file을 연 Linux 파일 descriptor가 없고 1.8.3
+loopback listener가 정상임을 검증했지만, 이 검사는 독립 Codex TUI의 논리 writer 소유권까지
+증명하지 않는다. 이후 Companion 재배포도 활성 작업이 없을 때만 수행한다.
 
 ## Artifact classes
 
@@ -104,7 +117,7 @@ Companion 전환에서는 마지막 이벤트가 `task_complete`인 target threa
 
 ## Cleanup gates
 
-1. 현장 테스트 중에는 `v1.8.3` 태그를 만들거나 PR을 병합하지 않는다.
+1. 현장 테스트 중에는 1.8.x Git tag를 만들거나 PR을 병합하지 않는다.
 2. 프로젝트 생성, AI 연결 센터 스크롤, 재연결, 음성 입력, 기존 대화 복구와 기기 간 세션 인계를 확인한다.
 3. 승인 후 정식 Release를 만들고 APK 체크섬을 Release asset과 다시 대조한다.
 4. 정식 Release 확인 후 PC의 0.2.0 rollback snapshot을 제거한다.
