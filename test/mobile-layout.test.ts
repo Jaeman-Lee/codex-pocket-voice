@@ -3,14 +3,25 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("AI connection center stays inside the mobile viewport and scrolls internally", async () => {
-  const css = await readFile(new URL("../client/src/styles.css", import.meta.url), "utf8");
+  const [css, app] = await Promise.all([
+    readFile(new URL("../client/src/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../client/src/App.tsx", import.meta.url), "utf8"),
+  ]);
   const overlay = css.match(/\.connection-center \{([^}]+)\}/)?.[1] ?? "";
   const sheet = css.match(/\.connection-center-sheet \{([^}]+)\}/)?.[1] ?? "";
+  const diagnosticExport = css.match(/\.diagnostic-export \{([^}]+)\}/)?.[1] ?? "";
+  const diagnosticButton = css.match(/\.diagnostic-export button \{([^}]+)\}/)?.[1] ?? "";
 
   assert.match(overlay, /grid-template-rows:\s*minmax\(0,\s*1fr\)/);
   assert.match(overlay, /overflow:\s*hidden/);
   assert.match(sheet, /max-height:\s*100%/);
   assert.match(sheet, /overflow-y:\s*auto/);
+  assert.match(diagnosticExport, /minmax\(0,\s*1fr\)/);
+  assert.match(diagnosticExport, /max-width:\s*100%/);
+  assert.match(diagnosticButton, /white-space:\s*normal/);
+  assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.diagnostic-export \{[^}]*minmax\(0,\s*1fr\)/);
+  assert.match(app, /health\.gateway\?\.capabilities\?\.diagnosticSupportBundle === true/);
+  assert.match(app, /diagnosticSupportBundleSupported && \(/);
 });
 
 test("OpenRouter routing controls collapse to one bounded column on phones", async () => {

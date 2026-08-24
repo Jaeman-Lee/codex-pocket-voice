@@ -25,4 +25,5 @@ export const GATEWAY_CAPABILITIES = {
   fleetSummary: true,
   runSteering: true,
   runForks: true,
+  diagnosticSupportBundle: true,
 } as const;

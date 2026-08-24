@@ -41,7 +41,7 @@
 - v2 opt-in PocketLink LAN TLS listener, 10분 QR bootstrap, bounded DNS-SD/Android Wi-Fi Direct discovery, 별도 fail-closed Linux P2P group-owner CLI, Android Keystore device-certificate/SPKI-pin mTLS foreground tunnel과 명시적 direct/P2P/opaque outbound relay 및 fail-closed LAN→P2P→relay 자동 경로 (실제 P2P group·실기기 검증 전 CI 전용)
 - 선택적으로 사용할 수 있는 안전 범위 MCP 서버
 - 만료되는 코드와 Android Keystore를 사용하는 장치 페어링
-- 여러 Linux Companion 등록과 앱 내 Linux 도구 진단
+- 여러 Linux Companion 등록, 앱 내 Linux 도구 진단과 개인 경로·작업 내용을 제외한 support bundle
 
 v2 저널의 저장 범위, 암호화 키와 재연결 동작은 [Event journal](docs/event-journal.md), API Provider의
 변경·검증 경계는 [Approved API tools](docs/approved-tools.md), 비용·token 경계는
@@ -214,7 +214,7 @@ F-Droid/GitHub판 Termux는 설치 후 Android의 앱 정보 → 권한(또는 �
 
 앱의 **실행 단말**에서 연결된 Linux PC를 선택할 수 있습니다. 프로젝트 옆 `＋`는 선택한 PC의 허용된 생성 위치에 폴더를 만들고 `git init --initial-branch=main`을 수행합니다. 모델과 성능 선택지는 PC의 Codex 카탈로그에서 읽으므로, 계정이나 CLI 버전에서 실제 지원하는 항목만 표시됩니다.
 
-상단 `◎` 버튼의 **AI 연결 센터**는 선택한 단말에서 Codex·Claude Code CLI 설치와 로그인 상태를 확인하고, 공식 설치 안내·브라우저 로그인·비용 없는 연결 테스트를 한 화면에 표시합니다. 계정 별명만 선택적으로 이 스마트폰에 저장하며 비밀번호나 API 키는 앱에 입력하거나 저장하지 않습니다. 연결 테스트는 로그인 상태와 모델 카탈로그만 읽고 AI 프롬프트를 전송하지 않습니다.
+상단 `◎` 버튼의 **AI 연결 센터**는 선택한 단말에서 Codex·Claude Code CLI 설치와 로그인 상태를 확인하고, 공식 설치 안내·브라우저 로그인·비용 없는 연결 테스트를 한 화면에 표시합니다. 계정 별명만 선택적으로 이 스마트폰에 저장하며 비밀번호나 API 키는 앱에 입력하거나 저장하지 않습니다. 연결 테스트는 로그인 상태와 모델 카탈로그만 읽고 AI 프롬프트를 전송하지 않습니다. v2 Companion에서는 **안전한 진단 묶음 받기**로 앱·protocol·도구 가용성만 담은 JSON을 받을 수 있습니다. 장치·네트워크 식별값, 프로젝트 경로, 작업·오류 원문과 credential은 포함하지 않습니다. 정확한 범위는 [Diagnostic support bundle](docs/support-bundle.md)을 참고하세요.
 
 현재 Codex 어댑터는 실행·대화·모델 조회까지 지원합니다. Claude Code 어댑터는 CLI 설치 및 계정 연결 상태를 감지하지만 실행 어댑터가 완성되기 전에는 대화 제공자로 선택할 수 없게 표시됩니다.
 

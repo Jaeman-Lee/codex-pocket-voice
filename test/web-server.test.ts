@@ -246,6 +246,25 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const health = await jsonFetch(`${base}/api/health`, { headers: authorized() });
   assert.equal(health.ok, true);
   assert.deepEqual(health.allowedWorkspaceRoots, [cwd]);
+  assert.equal(health.gateway.capabilities.diagnosticSupportBundle, true);
+
+  const unauthenticatedSupportBundle = await fetch(`${base}/api/diagnostics/support-bundle`);
+  assert.equal(unauthenticatedSupportBundle.status, 401);
+  const supportBundleResponse = await fetch(`${base}/api/diagnostics/support-bundle`, { headers: authorized() });
+  assert.equal(supportBundleResponse.status, 200);
+  assert.equal(supportBundleResponse.headers.get("cache-control"), "no-store");
+  assert.equal(supportBundleResponse.headers.get("x-content-type-options"), "nosniff");
+  assert.match(supportBundleResponse.headers.get("content-disposition") ?? "", /^attachment; filename="codex-pocket-support-/);
+  const supportBundleText = await supportBundleResponse.text();
+  const supportBundle = JSON.parse(supportBundleText);
+  assert.equal(supportBundle.schemaVersion, 1);
+  assert.equal(supportBundle.companion.appVersion, "2.0.0");
+  assert.equal(supportBundle.companion.protocol.capabilities.diagnosticSupportBundle, true);
+  assert.equal(supportBundle.privacy.mode, "allowlist-only");
+  assert.equal(supportBundle.system.workspaceCount, 1);
+  assert.doesNotMatch(supportBundleText, new RegExp(cwd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(supportBundleText, new RegExp(authHome.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(supportBundleText, new RegExp(paired.token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 
   const startupRecovery = await jsonFetch(`${base}/api/workspace-changes/recovery`, { headers: authorized() });
   assert.equal(startupRecovery.supported, true);

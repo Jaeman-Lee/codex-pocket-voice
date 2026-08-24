@@ -24,7 +24,7 @@
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Codex exact-turn Steer와 durable idempotency, terminal operation 기반 명시적 Provider context Fork와 redacted provenance, Tool/Approval 계약, 세 Provider 공용 contract·stream failure fixture, protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신, 프로젝트별 음성 용어 사전 및 strict 설정 말하기→터치 검토 구현; production build·실제 pairing/Gateway/SSE/run/approval 기반 Playwright 모바일 회귀 통과, 새 설정 음성 Chromium CI·실기기 음성 회귀 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only systemd encrypted credential, 암호화 durable multi-turn, server-authored output/total token·비용 hard limit과 실제/추정 비용 accounting, model-grade 기반 read/coding tool gate, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구, 격리 npm 검증, 보호된 2-call smoke와 단계별 합성 프로젝트 grade harness 구현; 실제 모델 workflow 실행·현장 프로젝트 acceptance 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가장 비싼 승인 route 기준 사전 비용검사, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker, 보호된 synthetic smoke와 단계별 합성 프로젝트 grade harness 및 exact model/upstream grade enforcement 구현; 실제 model/upstream workflow 실행·현장 acceptance 잔여 |
-| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror와 schema 2 glossary, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, bounded syntax-highlighted old/new-line diff와 최대 8개 touch-decline same-run feedback, two-touch workspace 복구, 최대 8대의 redacted read-only Multi-Companion Fleet와 명시적 PC 전환, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, 모바일 기본 Queue·명시적 Codex Steer, Provider 전환의 기본 빈 대화와 touch-reviewed bounded Fork, durable 기록, bounded retention 및 API 비용 정책 설정, touch-only 월 비용 확인, opt-in process-death native 알림·retained run 열기, API 30 token-gated notification Intent 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed 구현; artifact 다운로드와 실기기 multi-PC/background/tray-tap deep-link/voice acceptance 잔여 |
+| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror와 schema 2 glossary, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, bounded syntax-highlighted old/new-line diff와 최대 8개 touch-decline same-run feedback, two-touch workspace 복구, 최대 8대의 redacted read-only Multi-Companion Fleet와 명시적 PC 전환, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, 모바일 기본 Queue·명시적 Codex Steer, Provider 전환의 기본 빈 대화와 touch-reviewed bounded Fork, durable 기록, bounded retention 및 API 비용 정책 설정, touch-only 월 비용 확인, opt-in process-death native 알림·retained run 열기, API 30 token-gated notification Intent 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed, run artifact 검토/download와 allowlist-only diagnostic support bundle 구현; 실기기 multi-PC/artifact/background/tray-tap deep-link/voice acceptance 잔여 |
 | Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; API 30 ATD에서 Keystore config/identity/background state와 notification Intent 계측 회귀 추가, 실제 P2P group formation·external edge DDoS/실부하·tray-tap/reconnect/voice 실기기 release gate 잔여 |
 
 ## 2. 제품 정의
@@ -471,6 +471,11 @@ symlink·민감 경로·경로 이탈·변경 중 파일은 fail closed이고 jo
 ahead/behind와 linked worktree를 수집한다. 대시보드와 세션 반납 검토 화면은 전체 경로와 이 identity를
 표시하고 run 시작 시점 snapshot은 암호화 event journal에 함께 보존한다. Gateway는 run/release/claim의
 thread cwd가 선택한 workspace와 다르면 409로 차단한다.
+연결 센터의 진단 묶음은 인증된 additive Gateway capability로만 노출한다. 앱·protocol/capability,
+architecture·Node, 알려진 Linux 도구의 가용성과 정규화된 version token, workspace/생성 위치 개수만
+allowlist JSON으로 조립한다. 장치 ID·IP/port·경로·Git metadata·환경 변수·credential·prompt/response·
+명령/오류 원문·journal/approval/artifact content는 넣지 않는다. 구형 Companion이 capability를 광고하지
+않으면 앱은 download 버튼을 숨긴다.
 idle handoff는 exact thread를 해제한 뒤에만 모바일 상태를 분리하고, running handoff는 terminal event 뒤
 같은 thread의 중복 release를 하나로 합쳐 bounded backoff로 `thread/unsubscribe`를 재시도한다. 모든
 idle release 시도가 실패하면 handoff를 기록하지 않아 CLI writer와 모바일 표시가 어긋나지 않는다.
@@ -574,6 +579,8 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
   429, 5xx와 timeout 재현 — 자동 검사 구현
 - malformed tool argument, symlink 탈출, root 밖 경로, 명령 timeout과 출력 폭주 차단
 - 로그·journal·SSE·diagnostics에 API key와 Authorization 헤더가 없는지 검사
+- diagnostic support bundle의 exact allowlist schema, 인증·attachment/no-store 응답, 경로·token 비노출과
+  capability 없는 Companion의 UI 비노출 및 320px 다운로드 검사 — Node/Chromium CI 자동 검사 구현
 - OpenRouter model capability 변화와 fallback 정책 fixture
 - OpenRouter 가격 단위·endpoint 성능 상한·quota redaction fixture와 수동 smoke harness loopback 검사
 - OpenAI `store: false` 요청·로컬 상태 replay와 보호된 2-call smoke harness loopback 검사

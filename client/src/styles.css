@@ -243,6 +243,10 @@ select {
 .diagnostic-tools span { padding: 0.3rem 0.45rem; border-radius: 999px; color: var(--muted); background: rgba(146, 165, 168, 0.1); font-size: 0.59rem; }
 .diagnostic-tools span.available { color: var(--accent); background: rgba(62, 213, 165, 0.08); }
 .diagnostic-tools span.missing { color: var(--warm); background: rgba(255, 203, 136, 0.08); }
+.diagnostic-export { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-width: 0; max-width: 100%; align-items: center; gap: 0.55rem; margin-top: 0.6rem; padding-top: 0.55rem; border-top: 1px solid var(--line); }
+.diagnostic-export small { min-width: 0; color: var(--muted); font-size: 0.57rem; line-height: 1.4; overflow-wrap: anywhere; }
+.diagnostic-export button { min-width: 8.5rem; min-height: 2.15rem; padding: 0.35rem 0.55rem; border: 1px solid var(--line); border-radius: 0.55rem; color: var(--accent); background: var(--surface); cursor: pointer; font-size: 0.61rem; font-weight: 750; white-space: normal; }
+.diagnostic-export button:disabled { opacity: 0.4; cursor: wait; }
 .device-manager { margin-top: 0.75rem; padding: 0.72rem; border: 1px solid var(--line); border-radius: 0.8rem; background: rgba(5, 10, 14, 0.3); }
 .device-manager-head { display: flex; align-items: center; gap: 0.7rem; }
 .device-manager-head > div:first-child { flex: 1; min-width: 0; }
@@ -896,6 +900,8 @@ textarea::placeholder { color: #6f8285; }
   .connection-center { padding: max(0.4rem, env(safe-area-inset-top)) 0.4rem max(0.4rem, env(safe-area-inset-bottom)); }
   .connection-center-sheet { align-self: stretch; padding: 0.8rem; border-radius: 0.9rem; }
   .connection-center-head { top: -0.8rem; margin: -0.8rem -0.8rem 0; padding: 0.8rem; }
+  .diagnostic-export { grid-template-columns: minmax(0, 1fr); }
+  .diagnostic-export button { width: 100%; min-width: 0; }
   .operations-dashboard { padding: max(0.4rem, env(safe-area-inset-top)) 0.4rem max(0.4rem, env(safe-area-inset-bottom)); }
   .run-policy-review { padding: max(0.4rem, env(safe-area-inset-top)) 0.4rem max(0.4rem, env(safe-area-inset-bottom)); }
   .run-policy-review-card { align-self: stretch; padding: 0.8rem; border-radius: 0.9rem; }

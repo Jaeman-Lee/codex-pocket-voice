@@ -29,4 +29,5 @@ test("application version has one package source of truth", async () => {
   assert.equal(GATEWAY_CAPABILITIES.fleetSummary, true);
   assert.equal(GATEWAY_CAPABILITIES.runSteering, true);
   assert.equal(GATEWAY_CAPABILITIES.runForks, true);
+  assert.equal(GATEWAY_CAPABILITIES.diagnosticSupportBundle, true);
 });

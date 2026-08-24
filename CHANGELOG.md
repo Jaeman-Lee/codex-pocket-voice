@@ -10,6 +10,18 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Privacy-safe diagnostic support bundle은 현장 문제를 사용자가 내려받아 전달하는 새 user-visible
+  workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서
+  `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
+  대체한다. APK 전달·설치, 실제 Provider 호출과 실행 중 Companion 재시작은 하지 않으며 current v1
+  후보 1.8.2, staged v1.8.4와 검증된 v1.8.1 rollback을 그대로 보존한다.
+- 인증된 `/api/diagnostics/support-bundle`은 앱·Gateway protocol/capability, Linux architecture·Node,
+  필수/선택 도구의 가용성과 정규화된 version token, workspace/생성 위치 개수만 allowlist JSON으로
+  내려준다. 환경 변수·credential, 장치 ID·주소/port, 프로젝트 경로·Git 정보, prompt/response·명령/
+  오류 원문, journal·approval·artifact content는 구조적으로 포함하지 않는다.
+- 임의 executable의 `--version` 원문은 더 이상 diagnostics로 전달하지 않고 알려진 도구 prefix 뒤의
+  bounded version token만 남긴다. export는 bearer/mTLS 인증, `no-store`/`nosniff` attachment를 사용하고
+  Gateway `diagnosticSupportBundle` capability가 없는 구형 Companion에서는 모바일 버튼을 숨긴다.
 - Approval diff line feedback은 모바일 승인함에서 변경 줄을 검토하고 Provider에 수정 의견을 돌려보내는
   새 user-visible workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위
   안에서 `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only

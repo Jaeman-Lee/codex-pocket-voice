@@ -24,7 +24,7 @@ import {
 import { ProviderLoginManager } from "./provider-login-manager.js";
 import { GatewayAuth, GatewayAuthError } from "./gateway-auth.js";
 import { APP_VERSION, GATEWAY_CAPABILITIES, GATEWAY_PROTOCOL_MINIMUM, GATEWAY_PROTOCOL_VERSION } from "./version.js";
-import { collectSystemDiagnostics } from "./system-diagnostics.js";
+import { collectSystemDiagnostics, createDiagnosticSupportBundle } from "./system-diagnostics.js";
 import { SessionHandoffStore, type SessionHandoff } from "./session-handoff-store.js";
 import { inspectWorkspaceIdentity } from "./workspace-identity.js";
 import {
@@ -668,6 +668,19 @@ async function handleApi(
     sendJson(response, 200, {
       diagnostics: await collectSystemDiagnostics(projects.list().length, projects.creationLocations().length),
     });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/diagnostics/support-bundle") {
+    const diagnostics = await collectSystemDiagnostics(projects.list().length, projects.creationLocations().length);
+    const bundle = createDiagnosticSupportBundle(diagnostics, {
+      appVersion: APP_VERSION,
+      minimumProtocol: GATEWAY_PROTOCOL_MINIMUM,
+      maximumProtocol: GATEWAY_PROTOCOL_VERSION,
+      capabilities: GATEWAY_CAPABILITIES,
+    });
+    const timestamp = diagnostics.checkedAt.replace(/[:.]/g, "-");
+    sendJsonDownload(response, bundle, `codex-pocket-support-${timestamp}.json`);
     return;
   }
 

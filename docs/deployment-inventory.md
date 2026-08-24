@@ -42,10 +42,24 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Android work notifications | opt-in connectedDevice service | maximum 8 encrypted loopback subscriptions, notification-only authenticated SSE, durable cursor/replay freshness and generic retained-operation navigation implemented; API 30 token/bounds/consume/extra-scrub Intent path automated, field tray-tap/process-kill acceptance pending |
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Run artifact boundary | maximum 8 / 256 MiB per operation | redacted verifier/Codex logs plus allowlisted run-reported test/image/APK regular-file snapshots; authenticated opaque download, symlink/sensitive/path escape rejection and history-delete cleanup implemented; physical Android download acceptance pending |
+| Diagnostic support bundle | schema 1 allowlist JSON | authenticated app/protocol/tool/count aggregate download, normalized version tokens and capability-gated 320px UI implemented; no device/network/workspace/request/error content, physical share acceptance pending |
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
 | PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, standalone Linux GO/PBC + memory-only DHCP cleanup lifecycle, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; actual P2P field validation pending |
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+Diagnostic support bundle checkpoint decision: AI 연결 센터에서 field diagnostics JSON을 내려받는 기능은 새
+user-visible v2 workflow이므로 `feature`로 분류한다. 아직 전달하지 않은 incompatible v2 안에서 SemVer
+`2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
+대체한다. bundle schema 1은 app/protocol/capability, architecture·Node, 알려진 도구의 availability와
+정규화된 version token, workspace/생성 위치 count만 allowlist로 조립한다. credential·환경 변수,
+device/network 값, 경로·Git metadata, prompt/response·command/error 원문과 journal/approval/artifact
+content는 넣지 않는다. authenticated no-store attachment와 additive capability negotiation을 사용하고
+구형 Companion에서는 버튼을 숨긴다. APK 전달·설치, 실제 Provider 호출과 Companion 재시작은 하지 않으며
+current v1 후보 1.8.2, staged v1.8.4와 검증된 rollback 1.8.1을 그대로 보존한다. `release:check`의
+단위 테스트 268개, 실제 app-server 통합 3개, production build·schema 일치와 SBOM 생성은 통과했다.
+production 320px download 회귀는 Chromium CI에 추가했으며 로컬 host의 `libatk-1.0.so.0` 부재 때문에
+PR CI를 최종 browser gate로 사용한다.
 
 Approval diff line-feedback checkpoint decision: 모바일 승인함에서 변경 줄별 의견을 같은 Provider run에
 돌려보내는 새 user-visible v2 workflow이므로 `feature`로 분류한다. 아직 전달하지 않은 incompatible v2

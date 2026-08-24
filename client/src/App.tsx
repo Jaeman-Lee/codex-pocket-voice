@@ -347,6 +347,8 @@ export function App() {
   const [uiLanguage, setUiLanguage] = useState<UiLanguage>(initialUiLanguage);
   const [speechLanguage, setSpeechLanguage] = useState(initialSpeechLanguage);
   const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null);
+  const [diagnosticSupportBundleSupported, setDiagnosticSupportBundleSupported] = useState(false);
+  const [supportBundleBusy, setSupportBundleBusy] = useState(false);
   const [handoff, setHandoff] = useState<SessionHandoff | null>(null);
   const [showHandoffDialog, setShowHandoffDialog] = useState(false);
   const [handoffBusy, setHandoffBusy] = useState(false);
@@ -563,6 +565,7 @@ export function App() {
       codex: localStorage.getItem(providerAliasKey(device, "codex")) ?? "",
       claude: localStorage.getItem(providerAliasKey(device, "claude")) ?? "",
     });
+    setDiagnosticSupportBundleSupported(false);
     setConnectionTest({});
     setLoginSession(null);
   }, [device]);
@@ -848,7 +851,11 @@ export function App() {
     initializingAttemptRef.current = attempt;
     try {
       const [health, workspaceData, providerData, codexModelData, runData, approvalData, journalData, runPolicyData, recoveryData] = await Promise.all([
-        api<{ userAgent: string; device: { name: string } }>("/api/health"),
+        api<{
+          userAgent: string;
+          device: { name: string };
+          gateway?: { capabilities?: { diagnosticSupportBundle?: boolean } };
+        }>("/api/health"),
         api<WorkspaceResponse>("/api/workspaces"),
         api<ProviderResponse>("/api/providers"),
         api<ModelResponse>("/api/models?provider=codex"),
@@ -870,6 +877,7 @@ export function App() {
         device: selectedDevice,
         text: `${health.device.name} · ${health.userAgent}`,
       });
+      setDiagnosticSupportBundleSupported(health.gateway?.capabilities?.diagnosticSupportBundle === true);
       setWorkspaces(workspaceData.workspaces);
       setCreationLocations(workspaceData.creationLocations);
       setProviders(providerData.providers);
@@ -3098,6 +3106,28 @@ export function App() {
     }
   }
 
+  async function downloadDiagnosticSupportBundle() {
+    if (supportBundleBusy) return;
+    setSupportBundleBusy(true);
+    let objectUrl = "";
+    try {
+      const blob = await apiBlob("/api/diagnostics/support-bundle");
+      objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `codex-pocket-support-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      showToast("개인 경로와 작업 내용을 제외한 진단 묶음을 내려받았습니다.");
+    } catch (error) {
+      showToast(errorMessage(error));
+    } finally {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      setSupportBundleBusy(false);
+    }
+  }
+
   async function testProviderConnection(providerId: ProviderId) {
     if (testingProvider) return;
     setTestingProvider(providerId);
@@ -4933,6 +4963,16 @@ export function App() {
                     </span>
                   ))}
                 </div>
+                {diagnosticSupportBundleSupported && (
+                  <div className="diagnostic-export">
+                    <small>경로·IP·장치 ID·작업 내용·오류 원문·자격 증명은 포함하지 않습니다.</small>
+                    <button
+                      type="button"
+                      disabled={supportBundleBusy}
+                      onClick={() => void downloadDiagnosticSupportBundle()}
+                    >{supportBundleBusy ? "묶음 생성 중…" : "안전한 진단 묶음 받기"}</button>
+                  </div>
+                )}
               </section>
             )}
 

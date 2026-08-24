@@ -81,6 +81,81 @@ test("run test logs and APK artifacts stay reviewable and downloadable at 320px"
   await expectShellContained(page);
 });
 
+test("privacy-safe support diagnostics stay contained and download at 320px", async ({ page }) => {
+  await page.route("**/api/diagnostics", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    json: {
+      diagnostics: {
+        ok: true,
+        platform: "linux",
+        architecture: "x64",
+        nodeVersion: "v22.20.0",
+        tools: [
+          { id: "codex", label: "Codex CLI", required: true, available: true, version: "0.149.0" },
+          { id: "git", label: "Git", required: true, available: true, version: "2.43.0" },
+        ],
+        workspaceCount: 2,
+        creationLocationCount: 1,
+        checkedAt: new Date().toISOString(),
+      },
+    },
+  }));
+  await page.route("**/api/diagnostics/support-bundle", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ schemaVersion: 1, privacy: { mode: "allowlist-only" } }),
+  }));
+
+  await bootPairedApp(page, { width: 320, height: 740 });
+  await page.getByRole("button", { name: "AI 연결 센터 열기" }).click();
+  const connectionCenter = page.getByRole("dialog", { name: "AI 연결 센터" });
+  const diagnostics = connectionCenter.locator(".diagnostics");
+  await expect(diagnostics).toContainText("Linux 진단");
+  await expect(diagnostics).toContainText("경로·IP·장치 ID");
+  await expectElementContained(page, diagnostics);
+  await expectElementContained(page, diagnostics.locator(".diagnostic-export"));
+  const downloadEvent = page.waitForEvent("download");
+  await diagnostics.getByRole("button", { name: "안전한 진단 묶음 받기" }).click();
+  expect((await downloadEvent).suggestedFilename()).toMatch(/^codex-pocket-support-.*\.json$/);
+  await expectShellContained(page);
+});
+
+test("a Companion without support-bundle capability never exposes the download action", async ({ page }) => {
+  await page.route("**/api/health", async (route) => {
+    const response = await route.fetch();
+    const health = await response.json() as {
+      gateway?: { capabilities?: Record<string, boolean> };
+      [key: string]: unknown;
+    };
+    if (health.gateway?.capabilities) delete health.gateway.capabilities.diagnosticSupportBundle;
+    await route.fulfill({ response, json: health });
+  });
+  await page.route("**/api/diagnostics", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    json: {
+      diagnostics: {
+        ok: true,
+        platform: "linux",
+        architecture: "x64",
+        nodeVersion: "v20.0.0",
+        tools: [],
+        workspaceCount: 1,
+        creationLocationCount: 1,
+        checkedAt: new Date().toISOString(),
+      },
+    },
+  }));
+
+  await bootPairedApp(page, { width: 320, height: 740 });
+  await page.getByRole("button", { name: "AI 연결 센터 열기" }).click();
+  const connectionCenter = page.getByRole("dialog", { name: "AI 연결 센터" });
+  await expect(connectionCenter.locator(".diagnostics")).toBeVisible();
+  await expect(connectionCenter.getByRole("button", { name: "안전한 진단 묶음 받기" })).toHaveCount(0);
+  await expectShellContained(page);
+});
+
 test("project speech terms stay encrypted, persist across reload, and fit a 320px composer", async ({ page }) => {
   await bootPairedApp(page, { width: 320, height: 740 });
 
