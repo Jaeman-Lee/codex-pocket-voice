@@ -38,6 +38,15 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | explicit direct/relay selection, Keystore-encrypted endpoint/slot/secret, public-CA+hostname+SPKI outer TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
 
+Android managed-device checkpoint decision: 기존 v2 native 보안 경로의 실제 AndroidKeyStore 자동 회귀가
+비어 있던 문제를 수정하는 internal compatibility `patch`다. 아직 현장 전달하지 않은 incompatible v2
+범위 안에서 SemVer `2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전
+CI-only candidate를 대체한다. API 30 ATD에서 합성 host·pin·relay secret·device/token만 사용해 설정과
+background state의 AES-GCM 비노출·변조 거부, port AAD binding과 P-256 A/B private key 비추출성을 검사한다.
+APK 전달·설치와 실행 중 Companion 재시작은 하지 않고 current v1 후보 1.8.2, 별도 staged v1.8.3과
+검증된 rollback 1.8.1을 그대로 보존한다. 알림 deep link·background reconnect·음성은 실기기 gate에
+남긴다.
+
 PocketLink relay foundation checkpoint decision: 외부 relay로 나가는 Companion tunnel과 별도 broker는 새 v2
 network capability이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안이어서
 SemVer `2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only

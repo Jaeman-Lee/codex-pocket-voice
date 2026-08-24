@@ -25,7 +25,7 @@
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker와 보호된 synthetic smoke harness 구현; 실제 model eval 실행·현장 등급 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in process-death native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed 구현; 실기기 background/deep-link acceptance 잔여 |
-| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, source별 relay admission/new-slot 제한과 logless aggregate stats, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; Wi-Fi Direct 등 P2P·external edge DDoS/부하·background/field release gate 잔여 |
+| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, source별 relay admission/new-slot 제한과 logless aggregate stats, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; API 30 ATD에서 Keystore config/identity/background state 계측 회귀 추가, Wi-Fi Direct 등 P2P·external edge DDoS/부하·deep-link/reconnect/voice 실기기 release gate 잔여 |
 
 ## 2. 제품 정의
 
@@ -495,7 +495,8 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - API Provider replay 상태의 journal 암호화, API/SSE/export 비노출, 이미지 data URL 제거 검사
 - Playwright에서 production client와 실제 pairing·Gateway·SSE·run·approval 경로로 320/360/412px,
   150% 글자, 키보드 축소, 회전과 긴 prompt·diff·승인 상세 검증 — Chromium CI 자동 검사 구현
-- Android instrumentation에서 Keystore, 알림 deep link, background reconnect와 음성 확인 검증
+- Android API 30 managed-device instrumentation에서 Keystore config/identity, background encrypted cursor와
+  변조 거부 검증 — CI 자동 검사 구현; 알림 deep link, background reconnect와 음성 확인은 실기기 gate 잔여
 - update manifest 서명·APK signer binding, artifact 변조, unsigned 기본 거부와 versionCode downgrade 차단
 - Android ZIP importer의 path/duplicate/size 상한, current signer/package binding, 10분 재검토와 설치 전 rehash
 - 공식 Release의 잘못된 repo/tag/중복 asset/digest/content-type, oversized JSON/ZIP, HTTP·외부-host redirect와 조회 token 만료 차단

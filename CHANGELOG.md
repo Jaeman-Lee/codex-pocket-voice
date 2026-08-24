@@ -10,6 +10,15 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Android managed-device 검증 강화는 기존 v2 native 보안 경로의 자동 회귀 누락을 고치는 internal
+  compatibility `patch`다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
+  `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. APK
+  전달·설치와 실행 중 Companion 재시작은 하지 않으며 v1.8.2 current 후보, 별도 staged v1.8.3과
+  검증된 v1.8.1 rollback을 그대로 보존한다.
+- Android API 30 Automated Test Device가 PocketLink 설정·relay secret의 Keystore AES-GCM 암호화와
+  port AAD binding, 서로 다른 non-exportable P-256 A/B identity, background subscription 암호화·cursor
+  지속성·변조 거부를 실제 AndroidKeyStore provider 위에서 검사한다. 앱 ID가 고정값이라고 잘못 가정한
+  기본 샘플 계측 테스트는 제거했다.
 - Session writer release 재시도는 handoff 완료 뒤 일시적인 app-server 오류가 CLI의 `active writer`를
   남기는 v2 internal compatibility `patch`다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서
   `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를

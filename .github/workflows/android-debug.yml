@@ -21,7 +21,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     steps:
       - name: Check out source
@@ -44,7 +44,13 @@ jobs:
         uses: android-actions/setup-android@v4
 
       - name: Install Android platform
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "emulator" "system-images;android-30;aosp_atd;x86_64"
+
+      - name: Enable Android emulator acceleration
+        run: |
+          if [ -e /dev/kvm ]; then
+            sudo chmod a+rw /dev/kvm
+          fi
 
       - name: Install dependencies
         run: npm ci
@@ -64,6 +70,20 @@ jobs:
 
       - name: Test native release policy
         run: cd android && ./gradlew testReleaseUnitTest
+
+      - name: Test Android Keystore and durable native state
+        run: cd android && ./gradlew pocketphoneapi30DebugAndroidTest -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect
+
+      - name: Upload Android instrumentation test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-instrumentation-report-${{ github.run_attempt }}
+          path: |
+            android/app/build/reports/androidTests/managedDevice/
+            android/app/build/outputs/androidTest-results/managedDevice/
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Detect signing configuration
         id: signing
