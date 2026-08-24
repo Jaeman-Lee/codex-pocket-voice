@@ -12,13 +12,14 @@ systemd_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/systemd/user
 environment_file=$config_dir/companion.env
 service_file=$systemd_dir/codex-pocket-companion.service
 encrypted_credential_dir=$config_dir/credentials.encrypted
+provider_grade_dir=$config_dir/provider-grades
 openai_credential_file=$encrypted_credential_dir/openai-api-key.cred
 openrouter_credential_file=$encrypted_credential_dir/openrouter-api-key.cred
 openai_state_file=$encrypted_credential_dir/openai-api-key.state
 openrouter_state_file=$encrypted_credential_dir/openrouter-api-key.state
 projects_home=${CODEX_PROJECTS_HOME:-"$HOME/workspace"}
 
-if LC_ALL=C printf '%s' "$repo_dir$config_dir$systemd_dir$projects_home" | grep -q '[[:cntrl:]]'; then
+if LC_ALL=C printf '%s' "$repo_dir$config_dir$systemd_dir$projects_home$provider_grade_dir" | grep -q '[[:cntrl:]]'; then
   printf '%s\n' 'Installation paths must not contain control characters.' >&2
   exit 1
 fi
@@ -44,8 +45,9 @@ if ! command -v codex >/dev/null 2>&1 && [ ! -x "${CODEX_BIN:-}" ]; then
   exit 1
 fi
 
-mkdir -p "$config_dir" "$systemd_dir" "$projects_home"
+mkdir -p "$config_dir" "$systemd_dir" "$projects_home" "$provider_grade_dir"
 chmod 700 "$config_dir"
+chmod 700 "$provider_grade_dir"
 if [ ! -f "$environment_file" ]; then
   umask 077
   {
@@ -177,6 +179,7 @@ umask 077
   printf 'WorkingDirectory=%s\n' "$repo_dir"
   printf 'EnvironmentFile=%s\n' "$environment_file"
   printf 'Environment=CODEX_POCKET_PROVIDER_CREDENTIAL_STATE_DIR=%s\n' "$encrypted_credential_dir"
+  printf 'Environment=CODEX_POCKET_PROVIDER_GRADE_DIR=%s\n' "$provider_grade_dir"
   if [ -n "$openai_state" ]; then
     printf 'Environment=CODEX_POCKET_OPENAI_CREDENTIAL_GENERATION=%s\n' "${openai_state#*:}"
   fi

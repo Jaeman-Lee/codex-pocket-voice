@@ -24,6 +24,15 @@ import {
   type ProviderRuntime,
   type ProviderUsage,
 } from "./types.js";
+import {
+  combinedModelVerification,
+  modelToolAccess,
+  modelVerification,
+  ProtectedProviderModelGradeSource,
+  safeLoadModelGrades,
+  type ProviderModelGradeSource,
+} from "./model-grades.js";
+import type { ProviderModelVerification } from "./types.js";
 
 const OPENROUTER_API_BASE = "https://openrouter.ai/api/v1";
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -170,6 +179,7 @@ export interface OpenRouterProviderOptions {
   maxToolCallsPerRun?: number;
   toolBroker?: ToolBroker;
   now?: () => number;
+  modelGrades?: ProviderModelGradeSource;
 }
 
 interface ActiveOpenRouterRun {
@@ -210,6 +220,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
   private readonly hasWriteTools: boolean;
   private readonly hasCommandTools: boolean;
   private readonly now: () => number;
+  private readonly modelGrades: ProviderModelGradeSource;
   private modelCache?: {
     credentialFingerprint: string;
     loadedAt: number;
@@ -236,6 +247,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     this.hasWriteTools = definitions.some((definition) => definition.risk === "change");
     this.hasCommandTools = definitions.some((definition) => definition.risk === "execution" || definition.risk === "high_risk");
     this.now = options.now ?? Date.now;
+    this.modelGrades = options.modelGrades ?? new ProtectedProviderModelGradeSource(process.env, this.now);
   }
 
   async describe(): Promise<ProviderDescriptor> {
@@ -258,6 +270,15 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     if (configured && !runnable) {
       detail = "API key를 확인했습니다. CODEX_POCKET_OPENROUTER_MODELS에 검증할 모델을 지정해 주세요.";
     }
+    const gradeState = await safeLoadModelGrades(this.modelGrades, this.id);
+    const allowedGrades = gradeState.records.filter((record) => this.modelAllowlist.has(record.modelId));
+    const verifiedRead = allowedGrades.some((record) => modelToolAccess(record.verification) !== "none");
+    const verifiedCoding = allowedGrades.some((record) => modelToolAccess(record.verification) === "coding");
+    if (runnable && gradeState.invalid) {
+      detail += " 모델 검증 보고서가 잘못되어 프로젝트 도구를 차단했습니다.";
+    } else if (runnable && !verifiedRead && (this.hasReadTools || this.hasApprovalTools)) {
+      detail += " exact upstream 모델 eval 전에는 chat-only로 실행합니다.";
+    }
     return {
       id: this.id,
       name: "OpenRouter",
@@ -275,11 +296,11 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
         models: configured,
         attachments: true,
         streaming: true,
-        toolCalling: this.hasReadTools || this.hasApprovalTools,
-        approvals: this.hasApprovalTools,
-        workspaceRead: this.hasReadTools,
-        workspaceWrite: this.hasWriteTools,
-        commandExecution: this.hasCommandTools,
+        toolCalling: (verifiedRead && this.hasReadTools) || (verifiedCoding && this.hasApprovalTools),
+        approvals: verifiedCoding && this.hasApprovalTools,
+        workspaceRead: verifiedRead && this.hasReadTools,
+        workspaceWrite: verifiedCoding && this.hasWriteTools,
+        commandExecution: verifiedCoding && this.hasCommandTools,
         usageAccounting: true,
       },
       installGuide: {
@@ -293,25 +314,49 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
   async listModels(): Promise<ProviderModel[]> {
     const credential = await this.requireCredential();
     const models = await this.loadModels(credential.apiKey);
+    const gradeState = await safeLoadModelGrades(this.modelGrades, this.id);
     return models.map((model, index) => {
-      const toolCapable = supportsTools(model) && (this.hasReadTools || this.hasApprovalTools);
+      const toolCapable = supportsTools(model);
+      const routeVerifications = (model.upstreams ?? []).map((upstream) => ({
+        upstream,
+        verification: modelVerification(gradeState.records, model.id, upstream.id, gradeState.invalid),
+      }));
+      const bestAccess = routeVerifications.reduce<"none" | "read" | "coding">((best, item) => {
+        const access = item.upstream.supportsTools === true ? modelToolAccess(item.verification) : "none";
+        if (access === "coding" || (access === "read" && best === "none")) return access;
+        return best;
+      }, "none");
       const imageCapable = model.inputModalities.includes("image");
       return {
         id: model.id,
         displayName: model.name || model.id,
         description: [
-          toolCapable ? (this.hasApprovalTools ? "approved project tools" : "read-only project tools") : "chat-only",
+          bestAccess === "coding" ? "verified coding tools on selected upstream"
+            : bestAccess === "read" ? "verified read-only tools on selected upstream"
+              : toolCapable ? "tool metadata only · eval required" : "chat-only",
           imageCapable ? "image input" : "text input",
           model.contextLength ? `${model.contextLength.toLocaleString()} context` : null,
         ].filter(Boolean).join(" · "),
         isDefault: this.defaultModel ? model.id === this.defaultModel : index === 0,
         defaultEffort: "",
         efforts: [],
-        capabilities: { tools: toolCapable, imageInput: imageCapable },
+        capabilities: {
+          tools: toolCapable,
+          imageInput: imageCapable,
+          workspaceRead: bestAccess !== "none" && this.hasReadTools,
+          workspaceWrite: bestAccess === "coding" && this.hasWriteTools,
+          commandExecution: bestAccess === "coding" && this.hasCommandTools,
+        },
+        verification: {
+          scope: "model",
+          conversation: "not_tested",
+          projectRead: "not_tested",
+          coding: "not_tested",
+        },
         ...(model.pricing ? { pricing: structuredClone(model.pricing) } : {}),
         ...(model.expiresAt ? { expiresAt: model.expiresAt } : {}),
         ...(model.upstreams?.length ? {
-          routingOptions: model.upstreams.map((upstream) => ({
+          routingOptions: routeVerifications.map(({ upstream, verification }) => ({
             id: upstream.id,
             displayName: upstream.name,
             ...(upstream.pricing ? { pricing: structuredClone(upstream.pricing) } : {}),
@@ -320,6 +365,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
             ...(upstream.uptime30m !== undefined ? { uptime30m: upstream.uptime30m } : {}),
             ...(upstream.quantization ? { quantization: upstream.quantization } : {}),
             ...(upstream.supportsTools !== undefined ? { supportsTools: upstream.supportsTools } : {}),
+            verification,
           })),
         } : {}),
       };
@@ -363,12 +409,22 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
       throw new ProviderError(409, "선택한 모델은 현재 계정의 strict ZDR routing에서 사용할 수 없습니다.");
     }
     const routing = validateOpenRouterRouting(input.routing, model.upstreams ?? []);
-    const toolEnabled = (this.hasReadTools || this.hasApprovalTools) && supportsTools(model);
+    const gradeState = await safeLoadModelGrades(this.modelGrades, this.id);
+    const selectedUpstreams = routing?.upstreams ?? [];
+    const verification = combinedModelVerification(selectedUpstreams.map((upstreamId) => (
+      modelVerification(gradeState.records, model.id, upstreamId, gradeState.invalid)
+    )));
+    const selectedSupportTools = selectedUpstreams.length > 0 && selectedUpstreams.every((upstreamId) => (
+      model.upstreams?.find((upstream) => upstream.id === upstreamId)?.supportsTools === true
+    ));
+    const toolAccess = supportsTools(model) && selectedSupportTools
+      ? modelToolAccess(verification)
+      : "none";
     const currentMessages = await buildInitialMessages(
       input.prompt,
       input.imagePaths ?? [],
       model.inputModalities.includes("image"),
-      toolEnabled,
+      toolAccess !== "none",
       this.maxImageBytes,
     );
     const priorMessages = readOpenRouterResumeState(input.resumeState, modelId, Boolean(input.conversationId));
@@ -389,7 +445,8 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
           model,
           messages,
           historyTruncated: input.resumeState?.truncated === true,
-          toolEnabled,
+          toolAccess,
+          modelVerification: verification,
           routing,
           timeoutMs: input.timeoutMs,
           active,
@@ -419,7 +476,8 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     model: OpenRouterModelRecord;
     messages: OpenRouterChatMessage[];
     historyTruncated: boolean;
-    toolEnabled: boolean;
+    toolAccess: "none" | "read" | "coding";
+    modelVerification: ProviderModelVerification;
     routing?: ProviderRoutingSelection;
     timeoutMs?: number;
     active: ActiveOpenRouterRun;
@@ -431,12 +489,15 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     let totalUsage: ProviderUsage | undefined;
     let toolCallCount = 0;
     const completedTools: Array<{ name: string; status: string; paths?: string[] }> = [];
-    const failure = (message: string): ProviderRunCompletion => ({
+    const failure = (message: string, statusCode?: number): ProviderRunCompletion => ({
       status: "failed",
       result: {
         providerId: this.id,
         model: options.model.id,
+        modelVerification: options.modelVerification,
         error: message,
+        ...(statusCode !== undefined ? { errorStatus: statusCode } : {}),
+        ...(finalResponse ? { finalResponse } : {}),
         routing: routingResult(options.routing, routedProvider, options.model.upstreams),
       },
     });
@@ -461,7 +522,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     try {
       emit({ kind: "run.started", status: "in_progress" });
       const client = this.clientFactory(options.credential);
-      const tools = options.toolEnabled ? providerTools(this.toolBroker) : [];
+      const tools = providerTools(this.toolBroker, options.toolAccess);
       const allowedToolNames = new Set(tools.map((tool) => tool.function.name));
       while (true) {
         const request: OpenRouterChatRequest = {
@@ -555,6 +616,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
               runId: options.runId,
               remoteResponseId,
               model: options.model.id,
+              modelVerification: options.modelVerification,
               finalResponse,
               resumeAvailable: resumeState !== undefined,
               ...(resumeState?.truncated ? { resumeTruncated: true } : {}),
@@ -566,7 +628,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
             ...(resumeState ? { resumeState } : {}),
           };
         }
-        if (!options.toolEnabled || !this.toolBroker || tools.length === 0) {
+        if (options.toolAccess === "none" || !this.toolBroker || tools.length === 0) {
           const message = "선택한 OpenRouter 모델에는 로컬 도구가 활성화되지 않았습니다.";
           emit({ kind: "run.failed", message });
           return failure(message);
@@ -620,6 +682,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
           result: {
             providerId: this.id,
             model: options.model.id,
+            modelVerification: options.modelVerification,
             finalResponse,
             routing: routingResult(options.routing, routedProvider, options.model.upstreams),
           },
@@ -632,17 +695,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
       }
       const classified = classifyOpenRouterError(error);
       emit({ kind: "run.failed", message: classified.message });
-      return {
-        status: "failed",
-        result: {
-          providerId: this.id,
-          model: options.model.id,
-          error: classified.message,
-          errorStatus: classified.statusCode,
-          finalResponse,
-          routing: routingResult(options.routing, routedProvider, options.model.upstreams),
-        },
-      };
+      return failure(classified.message, classified.statusCode);
     } finally {
       if (timer) clearTimeout(timer);
       this.toolBroker?.clearRun(this.id, options.runId);
@@ -996,8 +1049,14 @@ function cloneJson(value: unknown): unknown {
   return JSON.parse(JSON.stringify(value)) as unknown;
 }
 
-function providerTools(broker: ToolBroker | undefined): NonNullable<OpenRouterChatRequest["tools"]> {
-  return broker?.definitions().map((definition) => ({
+function providerTools(
+  broker: ToolBroker | undefined,
+  access: "none" | "read" | "coding",
+): NonNullable<OpenRouterChatRequest["tools"]> {
+  if (!broker || access === "none") return [];
+  return broker.definitions().filter((definition) => (
+    access === "coding" || definition.risk === "observation"
+  )).map((definition) => ({
     type: "function",
     function: {
       name: definition.name,
@@ -1005,7 +1064,7 @@ function providerTools(broker: ToolBroker | undefined): NonNullable<OpenRouterCh
       parameters: definition.inputSchema,
       strict: true,
     },
-  })) ?? [];
+  }));
 }
 
 async function executeToolCall(

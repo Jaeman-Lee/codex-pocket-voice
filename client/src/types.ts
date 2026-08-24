@@ -88,7 +88,11 @@ export interface ModelOption {
   capabilities?: {
     tools: boolean;
     imageInput: boolean;
+    workspaceRead?: boolean;
+    workspaceWrite?: boolean;
+    commandExecution?: boolean;
   };
+  verification?: ProviderModelVerification;
   pricing?: ProviderCatalogPricing;
   expiresAt?: string;
   routingOptions?: ProviderRoutingOption[];
@@ -110,6 +114,18 @@ export interface ProviderRoutingOption {
   uptime30m?: number;
   quantization?: string;
   supportsTools?: boolean;
+  verification?: ProviderModelVerification;
+}
+
+export type ProviderModelGrade = "pass" | "not_tested" | "fail" | "expired" | "invalid";
+
+export interface ProviderModelVerification {
+  scope: "model" | "upstream";
+  conversation: ProviderModelGrade;
+  projectRead: ProviderModelGrade;
+  coding: ProviderModelGrade;
+  checkedAt?: string;
+  expiresAt?: string;
 }
 
 export interface ProviderRoutingSelection {
@@ -230,6 +246,7 @@ export interface RunResult {
     costCredits?: number;
   };
   routedProvider?: string;
+  modelVerification?: ProviderModelVerification;
   routing?: {
     profile: "strict-zdr";
     requestedUpstreams: string[];

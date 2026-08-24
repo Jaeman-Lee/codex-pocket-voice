@@ -17,7 +17,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | V2 development component | Version / revision | State |
 | --- | --- | --- |
 | Source version | `2.0.0` / Android `versionCode 20000` | development only; not field installed |
-| Target branch | `feature/v2-control-plane` | common Provider contract/failure suite, user-approved strict-ZDR OpenRouter routing, approved crash-recoverable text change tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, process-death notifications, connection/run/journal/voice/media state machines, live branch/worktree identity, staged PocketLink rotations, reviewed same-LAN/P2P discovery, Android outbound Wi-Fi Direct, fail-closed LAN→P2P→relay policy and standalone Linux P2P group-owner lifecycle implemented; real P2P/mobile field acceptance and model eval next |
+| Target branch | `feature/v2-control-plane` | common Provider contract/failure suite, fail-closed model/upstream grade gate, user-approved strict-ZDR OpenRouter routing, approved crash-recoverable text change tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, process-death notifications, connection/run/journal/voice/media state machines, live branch/worktree identity, staged PocketLink rotations, reviewed same-LAN/P2P discovery, Android outbound Wi-Fi Direct, fail-closed LAN→P2P→relay policy and standalone Linux P2P group-owner lifecycle implemented; real P2P/mobile field acceptance and protected model eval execution next |
 | Gateway protocol | maximum 3, minimum 2 | v1 rollout compatibility retained |
 | Codex app-server schema | `codex-cli 0.149.0` | generated bindings and no-model real integration verified |
 | Current v1 APK | 1.8.2 candidate | signed APK/checksum/SBOM prepared from hotfix PR #4; install not performed |
@@ -27,6 +27,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | OpenAI API milestone | official SDK 6.49.0 | encrypted bounded `store:false` multi-turn replay, fake tool-loop/SSE/Models tests and protected 2-call smoke harness; no API key configured and no paid request sent |
 | OpenRouter milestone | Chat Completions + user/ZDR model, endpoint and key APIs | encrypted bounded multi-turn replay, exact upstream lock/approved backup, bounded price/performance/quota UI, fake routing/tool-loop/SSE and protected 2-call smoke harness; no API key configured and no paid request sent |
 | Provider credential boundary | systemd 256+ encrypted user credential | fixed-name runtime files, generation-bound activation, immediate new-run revoke, no-follow/owner/mode/size validation and recoverable ciphertext rotation/removal implemented; legacy 0600 file retained |
+| Provider model grade boundary | owner-only redacted report, maximum age 30 days | OpenAI exact model and OpenRouter exact model+every selected upstream gate read/coding tool exposure; invalid, stale or absent reports remain chat-only; real project grades not issued |
 | Provider runtime contract | exact run ownership + ordered single-terminal events | Codex/OpenAI/OpenRouter shared success/partial-failure/cancel/timeout suite and fake 401/403/429/5xx/malformed SSE fixtures passing |
 | Android journal milestone | app-owned SQLite schema 1 | encrypted snapshot migration and rollback mirror implemented; CI-only, no device migration performed |
 | Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, HMAC-authenticated bounded user retention, workspace JSON export and protected delete implemented in v2; not field deployed |
@@ -38,6 +39,17 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, standalone Linux GO/PBC + memory-only DHCP cleanup lifecycle, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; actual P2P field validation pending |
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+Provider model grade checkpoint decision: protected eval 결과를 실제 API tool 권한과 모바일 표시에 연결하는 새
+user-visible v2 workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서
+SemVer `2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only
+candidate를 대체한다. Companion은 owner-only directory의 최대 64개·파일당 64 KiB redacted report를
+no-follow로 읽고 30일 뒤 만료한다. OpenAI exact model 또는 OpenRouter exact model+모든 선택 upstream 중
+하나라도 미검사·실패·만료·invalid이거나 endpoint가 tool parameter를 지원하지 않으면 실제 inference
+요청에서 project tool 정의를 제거한다. `projectRead`는 observation만, `coding`은 touch-approved change와
+execution까지 허용한다. 현재 보호된 smoke report는 project 등급을 `not_tested`로 남기므로 실제 등급을
+발급하지 않았고 API key·유료 inference·APK 전달/설치·Companion 재시작도 수행하지 않았다. current v1
+후보 1.8.2, 별도 staged v1.8.3과 검증된 rollback 1.8.1을 그대로 보존한다.
 
 Provider credential activation checkpoint decision: 이전 systemd runtime credential이 rotate/remove 뒤 새 run에
 재사용될 수 있던 결함을 고치는 internal compatibility `patch`다. 아직 현장 전달하지 않은 incompatible v2

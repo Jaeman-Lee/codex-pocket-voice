@@ -13,6 +13,7 @@ import type {
   JournalPolicyLimits,
   Operation,
   OperationMetadataPatch,
+  ProviderModelVerification,
   Workspace,
   WorkspaceChangeRecoveryStatus,
   WorkspaceIdentity,
@@ -534,6 +535,7 @@ function OperationCard({
   const routedProvider = operation.result?.routing?.actualUpstream
     ? `${operation.result.routing.actualUpstream}${operation.result.routing.actualProvider ? ` (${operation.result.routing.actualProvider})` : ""}`
     : operation.result?.routing?.actualProvider ?? operation.result?.routedProvider;
+  const modelVerification = operation.result?.modelVerification;
   const status = waiting ? "waiting" : operation.status;
   const archiveBlocked = waiting || operation.status === "running"
     || (operation.status === "unknown" && !operation.acknowledgedAt);
@@ -553,6 +555,7 @@ function OperationCard({
         <span>{model}</span>
         {routedProvider && <span>실제 {routedProvider}</span>}
         {operation.routing?.allowFallbacks && <span>승인 fallback {operation.routing.upstreams.length}개</span>}
+        {modelVerification && <span>{operationVerificationLabel(modelVerification)}</span>}
         <span>{workspaceIdentityLabel(identity)}</span>
         {usage?.totalTokens !== undefined && <span>{usage.totalTokens.toLocaleString()} tokens</span>}
         {usage?.costCredits !== undefined && <span>{usage.costCredits.toFixed(6)} credits</span>}
@@ -592,6 +595,15 @@ function OperationCard({
       </div>
     </article>
   );
+}
+
+function operationVerificationLabel(verification: ProviderModelVerification): string {
+  if (verification.coding === "pass" && verification.projectRead === "pass") return "코딩 eval 통과";
+  if (verification.projectRead === "pass") return "읽기 eval 통과";
+  if (verification.projectRead === "expired" || verification.coding === "expired") return "eval 만료 · 도구 차단";
+  if (verification.projectRead === "invalid" || verification.coding === "invalid") return "eval 오류 · 도구 차단";
+  if (verification.projectRead === "fail" || verification.coding === "fail") return "eval 미통과 · 도구 차단";
+  return "project eval 미실행 · chat-only";
 }
 
 function elapsed(operation: Operation, now: number): string {

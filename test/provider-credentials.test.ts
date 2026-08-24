@@ -250,6 +250,8 @@ test("Linux installer binds encrypted credentials on systemd 256 and rejects the
   assert.match(service, new RegExp(`LoadCredentialEncrypted=openai-api-key:${escapeRegex(join(credentialDirectory, "openai-api-key.cred"))}`));
   assert.doesNotMatch(service, /LoadCredentialEncrypted=openrouter-api-key/);
   assert.match(service, new RegExp(`Environment=CODEX_POCKET_PROVIDER_CREDENTIAL_STATE_DIR=${escapeRegex(credentialDirectory)}`));
+  assert.match(service, new RegExp(`Environment=CODEX_POCKET_PROVIDER_GRADE_DIR=${escapeRegex(join(configHome, "codex-pocket-voice", "provider-grades"))}`));
+  assert.equal((await stat(join(configHome, "codex-pocket-voice", "provider-grades"))).mode & 0o777, 0o700);
   assert.match(service, new RegExp(`Environment=CODEX_POCKET_OPENAI_CREDENTIAL_GENERATION=${openaiGeneration}`));
   assert.match(service, new RegExp(`Environment=CODEX_POCKET_OPENROUTER_CREDENTIAL_GENERATION=${openrouterGeneration}`));
   assert.doesNotMatch(service, new RegExp(encrypted));

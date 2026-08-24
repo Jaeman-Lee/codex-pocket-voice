@@ -2,6 +2,7 @@ import { ClaudeProviderAdapter } from "./claude-provider.js";
 import { CodexProviderAdapter, type CodexProviderClient } from "./codex-provider.js";
 import { OpenAIProviderAdapter } from "./openai-provider.js";
 import { OpenRouterProviderAdapter } from "./openrouter-provider.js";
+import type { ProviderModelGradeSource } from "./model-grades.js";
 import type { ToolBroker } from "../tool-broker.js";
 import {
   ProviderError,
@@ -23,12 +24,12 @@ export class ProviderRegistry {
   constructor(
     codex: CodexProviderClient,
     adapters?: readonly ModelProviderAdapter[],
-    options: { toolBroker?: ToolBroker } = {},
+    options: { toolBroker?: ToolBroker; modelGrades?: ProviderModelGradeSource } = {},
   ) {
     this.adapters = adapters ?? [
       new CodexProviderAdapter(codex),
-      new OpenAIProviderAdapter({ toolBroker: options.toolBroker }),
-      new OpenRouterProviderAdapter({ toolBroker: options.toolBroker }),
+      new OpenAIProviderAdapter({ toolBroker: options.toolBroker, modelGrades: options.modelGrades }),
+      new OpenRouterProviderAdapter({ toolBroker: options.toolBroker, modelGrades: options.modelGrades }),
       new ClaudeProviderAdapter(),
     ];
   }

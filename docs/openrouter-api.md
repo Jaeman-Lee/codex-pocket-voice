@@ -33,7 +33,8 @@ export CODEX_POCKET_OPENROUTER_DEFAULT_MODEL=vendor/model-a
 Companion은 인증된 `/models/user`, `/models?zdr=true`와 `/endpoints/zdr` 결과의 교집합에서만 허용
 목록 모델을 노출한다. ZDR endpoint가 보고한 exact `tag`만 모바일 upstream 선택지로 사용하며 임의로
 입력한 tag는 실행 직전에 최신 cache와 다시 대조한다. catalog의 `supported_parameters`에 `tools`가
-있는 모델만 공통 ToolBroker를 받고, 나머지는 chat-only로 제한한다. 이미지 입력도 catalog의
+있는 것은 필요조건일 뿐 권한 등급이 아니다. [Provider model grade reports](provider-model-grades.md)의
+exact model+upstream 등급을 함께 통과한 선택지만 공통 ToolBroker를 받고, 나머지는 chat-only로 제한한다. 이미지 입력도 catalog의
 `image` modality가 확인된 모델에만 보낸다.
 
 모델 catalog의 lowest prompt/completion 가격은 USD/1M token으로 변환하고, ZDR endpoint가 제공하는
@@ -78,7 +79,7 @@ OpenRouter의 ZDR와 data-collection 설정은 upstream 내용 보존을 제한�
 - 모델/upstream 가격·성능 snapshot, key quota·만료 가시성
 - 원시 OpenRouter chunk와 도구 결과를 제거한 공통 ProviderEvent
 
-대화 재개와 승인형 파일 변경·검증 도구는 공통 암호화 journal/ToolBroker 계약으로 활성화되어 있다.
+대화 재개와 등급을 통과한 승인형 파일 변경·검증 도구는 공통 암호화 journal/ToolBroker 계약으로 활성화된다.
 임의 명령, network 도구, 개인정보 조건 완화와 모델 fallback은 비활성화되어 있다. 모델별 실제 저비용
 contract/eval과 현장 검증 전에는 이 범위를 넓히지 않는다.
 
@@ -98,6 +99,8 @@ credit도 확인하며, `order`/`only`, fallback 차단, ZDR와 data collection 
 provider가 일치해야 통과한다. 결과 artifact에는 모델·upstream, USD catalog estimate, USD 기준 credit
 비용, token과 통과/미검사 등급만 남기고 prompt, 응답 text, tool token과 API key는 남기지 않는다.
 `projectRead`와 `coding`은 실제 승인형 프로젝트 현장 시나리오 전까지 `not_tested`로 유지한다.
+OpenRouter는 자동 routing에 project tool을 주지 않는다. 사용자가 고른 primary와 backup 각각의 report가
+모두 통과하고 현재 ZDR endpoint가 tools parameter를 지원할 때만 공통 최소 권한을 API 요청에 넣는다.
 
 ## 공식 기준
 

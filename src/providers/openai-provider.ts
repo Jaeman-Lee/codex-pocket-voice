@@ -34,6 +34,14 @@ import {
   type ProviderRuntime,
   type ProviderUsage,
 } from "./types.js";
+import {
+  modelToolAccess,
+  modelVerification,
+  ProtectedProviderModelGradeSource,
+  safeLoadModelGrades,
+  type ProviderModelGradeSource,
+} from "./model-grades.js";
+import type { ProviderModelVerification } from "./types.js";
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_TOOL_CALLS_PER_RUN = 8;
@@ -65,6 +73,7 @@ export interface OpenAIProviderOptions {
   maxImageBytes?: number;
   toolBroker?: ToolBroker;
   maxToolCallsPerRun?: number;
+  modelGrades?: ProviderModelGradeSource;
 }
 
 interface ActiveOpenAIRun {
@@ -102,6 +111,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
   private readonly hasWriteTools: boolean;
   private readonly hasCommandTools: boolean;
   private readonly maxToolCallsPerRun: number;
+  private readonly modelGrades: ProviderModelGradeSource;
 
   constructor(options: OpenAIProviderOptions = {}) {
     this.credentials = options.credentials ?? new EnvironmentOpenAICredentialSource();
@@ -122,6 +132,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
     this.hasWriteTools = definitions.some((definition) => definition.risk === "change");
     this.hasCommandTools = definitions.some((definition) => definition.risk === "execution" || definition.risk === "high_risk");
     this.maxToolCallsPerRun = options.maxToolCallsPerRun ?? MAX_TOOL_CALLS_PER_RUN;
+    this.modelGrades = options.modelGrades ?? new ProtectedProviderModelGradeSource();
   }
 
   async describe(): Promise<ProviderDescriptor> {
@@ -146,6 +157,15 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
     if (configured && !runnable) {
       detail = "API key를 확인했습니다. CODEX_POCKET_OPENAI_MODELS에 검증할 모델을 지정해 주세요.";
     }
+    const gradeState = await safeLoadModelGrades(this.modelGrades, this.id);
+    const allowedGrades = gradeState.records.filter((record) => this.modelAllowlist.has(record.modelId));
+    const verifiedRead = allowedGrades.some((record) => modelToolAccess(record.verification) !== "none");
+    const verifiedCoding = allowedGrades.some((record) => modelToolAccess(record.verification) === "coding");
+    if (runnable && gradeState.invalid) {
+      detail += " 모델 검증 보고서가 잘못되어 프로젝트 도구를 차단했습니다.";
+    } else if (runnable && !verifiedRead && (this.hasReadTools || this.hasApprovalTools)) {
+      detail += " 유효한 모델 eval 전에는 chat-only로 실행합니다.";
+    }
     return {
       id: this.id,
       name: "OpenAI API",
@@ -163,11 +183,11 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
         models: configured,
         attachments: true,
         streaming: true,
-        toolCalling: this.hasReadTools || this.hasApprovalTools,
-        approvals: this.hasApprovalTools,
-        workspaceRead: this.hasReadTools,
-        workspaceWrite: this.hasWriteTools,
-        commandExecution: this.hasCommandTools,
+        toolCalling: (verifiedRead && this.hasReadTools) || (verifiedCoding && this.hasApprovalTools),
+        approvals: verifiedCoding && this.hasApprovalTools,
+        workspaceRead: verifiedRead && this.hasReadTools,
+        workspaceWrite: verifiedCoding && this.hasWriteTools,
+        commandExecution: verifiedCoding && this.hasCommandTools,
         usageAccounting: true,
       },
       installGuide: {
@@ -188,14 +208,31 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
       .filter((id) => this.modelAllowlist.has(id))
       .filter((id, index, all) => all.indexOf(id) === index)
       .sort((left, right) => left.localeCompare(right));
-    return eligible.map((id, index) => ({
-      id,
-      displayName: id,
-      description: "OpenAI Responses API text model",
-      isDefault: this.defaultModel ? id === this.defaultModel : index === 0,
-      defaultEffort: "",
-      efforts: [],
-    }));
+    const gradeState = await safeLoadModelGrades(this.modelGrades, this.id);
+    return eligible.map((id, index) => {
+      const verification = modelVerification(gradeState.records, id, undefined, gradeState.invalid);
+      const access = modelToolAccess(verification);
+      return {
+        id,
+        displayName: id,
+        description: access === "coding"
+          ? "OpenAI Responses API · verified coding tools"
+          : access === "read"
+            ? "OpenAI Responses API · verified read-only tools"
+            : "OpenAI Responses API · chat-only until model eval",
+        isDefault: this.defaultModel ? id === this.defaultModel : index === 0,
+        defaultEffort: "",
+        efforts: [],
+        capabilities: {
+          tools: access !== "none",
+          imageInput: true,
+          workspaceRead: access !== "none" && this.hasReadTools,
+          workspaceWrite: access === "coding" && this.hasWriteTools,
+          commandExecution: access === "coding" && this.hasCommandTools,
+        },
+        verification,
+      };
+    });
   }
 
   assertAccount(accountId: unknown): void {
@@ -225,6 +262,9 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
       throw new ProviderError(400, "허용 목록에 없는 OpenAI API 모델입니다.");
     }
     const credential = await this.requireCredential();
+    const gradeState = await safeLoadModelGrades(this.modelGrades, this.id);
+    const verification = modelVerification(gradeState.records, model, undefined, gradeState.invalid);
+    const toolAccess = modelToolAccess(verification);
     const currentInput = await buildResponseInput(input.prompt, input.imagePaths ?? [], this.maxImageBytes);
     const priorTurns = readOpenAIResumeState(input.resumeState, model, Boolean(input.conversationId));
     const conversationId = input.conversationId ?? `openai-conversation-${this.createId()}`;
@@ -242,6 +282,8 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
           currentInput,
           priorTurns,
           historyTruncated: input.resumeState?.truncated === true,
+          toolAccess,
+          modelVerification: verification,
           timeoutMs: input.timeoutMs,
           active,
         }).then(resolve, reject);
@@ -273,6 +315,8 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
     currentInput: ResponseInput;
     priorTurns: OpenAIResumeTurn[];
     historyTruncated: boolean;
+    toolAccess: "none" | "read" | "coding";
+    modelVerification: ProviderModelVerification;
     timeoutMs?: number;
     active: ActiveOpenAIRun;
   }): Promise<ProviderRunCompletion> {
@@ -282,6 +326,17 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
     let totalUsage: ProviderUsage | undefined;
     let toolCallCount = 0;
     const completedTools: Array<{ name: string; status: string; paths?: string[] }> = [];
+    const failure = (message: string, statusCode?: number): ProviderRunCompletion => ({
+      status: "failed",
+      result: {
+        providerId: this.id,
+        model: options.model,
+        modelVerification: options.modelVerification,
+        error: message,
+        ...(statusCode !== undefined ? { errorStatus: statusCode } : {}),
+        ...(finalResponse ? { finalResponse } : {}),
+      },
+    });
     const emit = (event: ProviderEventPayload) => {
       sequence += 1;
       this.emit({
@@ -303,7 +358,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
     try {
       emit({ kind: "run.started", status: "in_progress" });
       const client = this.clientFactory(options.credential);
-      const tools = providerTools(this.toolBroker);
+      const tools = providerTools(this.toolBroker, options.toolAccess);
       const allowedToolNames = new Set(tools.map((tool) => tool.name));
       const responseInput: ResponseInput = [
         ...flattenOpenAIResumeTurns(options.priorTurns),
@@ -352,11 +407,11 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
               ? safeResponseFailure(event.response.error?.code)
               : "OpenAI 응답이 완성되기 전에 종료되었습니다.";
             emit({ kind: "run.failed", message });
-            return { status: "failed", result: { providerId: this.id, model: options.model, error: message } };
+            return failure(message);
           } else if (event.type === "error") {
             const message = safeResponseFailure(event.code);
             emit({ kind: "run.failed", message });
-            return { status: "failed", result: { providerId: this.id, model: options.model, error: message } };
+            return failure(message);
           }
         }
         if (!completedResponse) {
@@ -385,6 +440,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
               runId: options.runId,
               remoteResponseId,
               model: options.model,
+              modelVerification: options.modelVerification,
               finalResponse,
               resumeAvailable: resumeState !== undefined,
               ...(resumeState?.truncated ? { resumeTruncated: true } : {}),
@@ -397,12 +453,12 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
         if (!this.toolBroker || tools.length === 0) {
           const message = "OpenAI가 활성화되지 않은 로컬 도구를 요청했습니다.";
           emit({ kind: "run.failed", message });
-          return { status: "failed", result: { providerId: this.id, model: options.model, error: message } };
+          return failure(message);
         }
         if (toolCalls.length > 1 || toolCallCount + toolCalls.length > this.maxToolCallsPerRun) {
           const message = "OpenAI 프로젝트 도구 호출이 안전 상한을 초과했습니다.";
           emit({ kind: "run.failed", message });
-          return { status: "failed", result: { providerId: this.id, model: options.model, error: message } };
+          return failure(message);
         }
         const continued = cloneResponseItems(continuationItems(responseOutput));
         responseInput.push(...continued);
@@ -438,25 +494,24 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
     } catch (error) {
       if (options.active.cancelled) {
         emit({ kind: "run.completed", status: "interrupted" });
-        return { status: "interrupted", result: { providerId: this.id, model: options.model, finalResponse } };
+        return {
+          status: "interrupted",
+          result: {
+            providerId: this.id,
+            model: options.model,
+            modelVerification: options.modelVerification,
+            finalResponse,
+          },
+        };
       }
       if (options.active.timedOut) {
         const message = "OpenAI 응답 시간이 초과되었습니다.";
         emit({ kind: "run.failed", message });
-        return { status: "failed", result: { providerId: this.id, model: options.model, error: message } };
+        return failure(message);
       }
       const classified = classifyApiError(error);
       emit({ kind: "run.failed", message: classified.message });
-      return {
-        status: "failed",
-        result: {
-          providerId: this.id,
-          model: options.model,
-          error: classified.message,
-          errorStatus: classified.statusCode,
-          finalResponse,
-        },
-      };
+      return failure(classified.message, classified.statusCode);
     } finally {
       if (timer) clearTimeout(timer);
       this.toolBroker?.clearRun(this.id, options.runId);
@@ -558,14 +613,20 @@ function addUsage(current: ProviderUsage | undefined, next: ProviderUsage | unde
   };
 }
 
-function providerTools(broker: ToolBroker | undefined): FunctionTool[] {
-  return broker?.definitions().map((definition) => ({
+function providerTools(
+  broker: ToolBroker | undefined,
+  access: "none" | "read" | "coding",
+): FunctionTool[] {
+  if (!broker || access === "none") return [];
+  return broker.definitions().filter((definition) => (
+    access === "coding" || definition.risk === "observation"
+  )).map((definition) => ({
     type: "function",
     name: definition.name,
     description: definition.description,
     parameters: definition.inputSchema,
     strict: true,
-  })) ?? [];
+  }));
 }
 
 function isFunctionCall(item: ResponseOutputItem): item is ResponseFunctionToolCall {

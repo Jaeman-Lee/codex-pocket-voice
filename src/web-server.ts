@@ -9,6 +9,7 @@ import type { ThreadListResponse } from "../generated/app-server/v2/ThreadListRe
 import type { ThreadReadResponse } from "../generated/app-server/v2/ThreadReadResponse";
 import type { ThreadUnsubscribeResponse } from "../generated/app-server/v2/ThreadUnsubscribeResponse";
 import type { CodexProviderClient } from "./providers/codex-provider.js";
+import type { ProviderModelGradeSource } from "./providers/model-grades.js";
 import type { ProviderEvent, ProviderRoutingSelection } from "./providers/types.js";
 import { PathPolicy } from "./path-policy.js";
 import { compactThread, presentThread } from "./result.js";
@@ -78,6 +79,7 @@ export interface WebServerOptions {
   auth?: GatewayAuth;
   handoffs?: SessionHandoffStore;
   providers?: ProviderRegistry;
+  modelGrades?: ProviderModelGradeSource;
   journal?: EventJournal;
   approvals?: ApprovalBroker;
   pocketLink?: PocketLinkTlsConfig;
@@ -163,7 +165,10 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
         ...changeTools,
         ...executionTools,
       ], approvals, options.paths);
-  const providers = options.providers ?? new ProviderRegistry(options.client, undefined, { toolBroker });
+  const providers = options.providers ?? new ProviderRegistry(options.client, undefined, {
+    toolBroker,
+    modelGrades: options.modelGrades,
+  });
   const providerLogins = new ProviderLoginManager(providers);
   const journalPolicy = journal.policy();
   const runs = new RunCoordinator(providers, {

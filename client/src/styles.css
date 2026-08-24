@@ -586,6 +586,8 @@ select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shad
 .model-bar select { height: 2rem; padding-left: 0.55rem; border-radius: 0.58rem; font-size: 0.69rem; }
 .model-insight { display: flex; min-width: 0; flex-wrap: wrap; gap: 0.3rem; padding: 0 0.5rem 0.42rem; }
 .model-insight > span, .routing-facts > span { max-width: 100%; padding: 0.27rem 0.4rem; border-radius: 999px; color: var(--muted); background: rgba(146, 165, 168, 0.1); font-size: 0.57rem; line-height: 1.15; overflow-wrap: anywhere; }
+.model-insight > span.verified { color: var(--accent); background: rgba(62, 213, 165, 0.1); }
+.model-insight > span.restricted { color: var(--warm); background: rgba(255, 203, 136, 0.1); }
 .model-insight > small { flex: 1 0 100%; min-width: 0; color: var(--muted); font-size: 0.57rem; line-height: 1.35; overflow-wrap: anywhere; }
 .routing-bar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.38rem; min-width: 0; padding: 0 0.15rem 0.45rem; }
 .routing-bar label { min-width: 0; }

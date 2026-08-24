@@ -1,0 +1,43 @@
+# Provider model grade reports
+
+Codex Pocket Voice는 model catalog의 이름이나 `tools` metadata만으로 프로젝트 읽기·변경 권한을 주지
+않는다. Linux Companion이 보호된 eval report를 확인한 경우에만 해당 모델의 API 요청에 로컬 tool
+정의를 포함한다.
+
+## 저장 경계
+
+기본 위치는 `${XDG_CONFIG_HOME:-$HOME/.config}/codex-pocket-voice/provider-grades`이며
+`install-linux-companion.sh`가 0700 디렉터리를 만들고 systemd unit에
+`CODEX_POCKET_PROVIDER_GRADE_DIR`을 고정한다. 다른 경로를 직접 실행 환경에서 쓸 때도 절대 경로만
+허용한다.
+
+디렉터리는 Companion 사용자 소유 0700/0500, report는 0600/0400 regular non-symlink 파일이어야 한다.
+파일명은 소문자·숫자·점·밑줄·하이픈과 `.json`만 사용하며 최대 64개, 각 64 KiB다. 하나라도 권한,
+소유자, UTF-8, JSON 또는 schema 검사를 통과하지 못하면 해당 Provider의 모든 project tool을
+fail-closed로 차단한다. report 원문과 비용·usage는 Gateway, SSE와 journal export에 보내지 않는다.
+
+보호된 workflow artifact를 검토한 뒤 설치하는 예시는 다음과 같다.
+
+```sh
+grade_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/codex-pocket-voice/provider-grades
+install -d -m 700 "$grade_dir"
+install -m 600 /reviewed/path/openai-smoke-report.json "$grade_dir/openai-reviewed.json"
+```
+
+활성 run은 시작 시 고정한 권한을 유지한다. report 추가·교체·제거는 진행 중인 turn을 중단하지 않고
+다음 run부터 다시 평가된다. 별도 Companion 재시작은 필요하지 않다.
+
+## 등급 해석
+
+- report는 `checkedAt`부터 최대 30일만 유효하고 5분을 넘는 미래 시각은 거절한다.
+- `conversation`과 Provider별 contract 항목이 모두 `pass`여야 project 등급을 검토한다.
+- `projectRead: pass`는 observation 도구만 허용한다.
+- `coding: pass`는 `projectRead: pass`를 전제로 touch-approved change/execution 도구까지 허용한다.
+- `not_tested`, `fail`, `expired`, `invalid`는 권한을 올리지 않는다.
+- OpenAI는 `requestedModel`과 허용된 actual snapshot을 exact model 등급에 묶는다.
+- OpenRouter는 exact model과 `requestedUpstream` tag에 묶는다. 사용자가 고른 primary/backup이 모두
+  등급과 현재 endpoint `tools` 지원을 통과해야 그 교집합을 허용한다. 자동 routing은 chat-only다.
+
+현재 `openai-smoke.mjs`와 `openrouter-smoke.mjs`의 synthetic 2-call report는 conversation/tool contract만
+검증하고 `projectRead`와 `coding`을 `not_tested`로 기록한다. 따라서 이 artifact를 설치해도 project
+권한이 생기지 않는다. 실제 project read/coding grade는 승인형 현장 eval이 끝난 뒤에만 발급한다.

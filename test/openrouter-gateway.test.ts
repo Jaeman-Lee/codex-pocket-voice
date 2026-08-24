@@ -18,6 +18,7 @@ import {
 import { ProviderRegistry } from "../src/providers/registry.js";
 import { createReadOnlyWorkspaceTools } from "../src/read-only-tools.js";
 import { LocalToolBroker } from "../src/tool-broker.js";
+import { passingModelGrade, StaticProviderModelGradeSource } from "../src/providers/model-grades.js";
 import { startWebServer, type WebCodexClient } from "../src/web-server.js";
 
 const cwd = process.cwd();
@@ -44,6 +45,10 @@ test("gateway exposes OpenRouter only through safe common events and strict rout
     modelAllowlist: ["vendor/gateway-tool"],
     defaultModel: "vendor/gateway-tool",
     toolBroker,
+    modelGrades: new StaticProviderModelGradeSource([
+      passingModelGrade("openrouter", "vendor/gateway-tool", "strict-primary"),
+      passingModelGrade("openrouter", "vendor/gateway-tool", "strict-backup"),
+    ]),
   });
   const codex = unusedCodexClient();
   const providers = new ProviderRegistry(codex, [adapter]);
@@ -74,7 +79,14 @@ test("gateway exposes OpenRouter only through safe common events and strict rout
   assert.equal(apiClient.chatCalls, 0);
   const modelCatalog = await jsonFetch(`${base}/api/models?provider=openrouter`, { headers });
   assert.deepEqual(modelCatalog.models[0].pricing, { inputPerMillionUsd: 2, outputPerMillionUsd: 6 });
-  assert.deepEqual(modelCatalog.models[0].capabilities, { tools: true, imageInput: false });
+  assert.deepEqual(modelCatalog.models[0].capabilities, {
+    tools: true,
+    imageInput: false,
+    workspaceRead: true,
+    workspaceWrite: false,
+    commandExecution: false,
+  });
+  assert.equal(modelCatalog.models[0].routingOptions[0].verification.coding, "pass");
   assert.equal(modelCatalog.models[0].routingOptions[0].latencyP50Ms, 180);
   assert.equal(modelCatalog.models[0].routingOptions[0].supportsTools, true);
 
@@ -229,7 +241,7 @@ class GatewayOpenRouterClient implements OpenRouterClient {
           quantization: "fp16",
           supportsTools: true,
         },
-        { id: "strict-backup", name: "Strict Backup" },
+        { id: "strict-backup", name: "Strict Backup", supportsTools: true },
       ],
     }];
   }

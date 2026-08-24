@@ -10,6 +10,16 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Provider model grade gate는 모델·upstream별 검증 결과를 모바일 권한과 실제 API tool 목록에 연결하는
+  새 v2 workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서
+  `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
+  대체한다. APK 전달·설치, 실제 API key·유료 inference와 실행 중 Companion 재시작은 하지 않으며
+  v1.8.2 current 후보, 별도 staged v1.8.3과 검증된 v1.8.1 rollback을 그대로 보존한다.
+- Linux owner-only grade directory의 bounded redacted report만 최대 30일 인정한다. OpenAI는 exact model,
+  OpenRouter는 exact model+사용자가 고른 모든 upstream의 contract/project 등급이 일치해야 하며 자동
+  routing, 미검사·실패·만료·malformed·symlink·broad-mode report는 프로젝트 도구를 받지 않는다.
+  `projectRead` 통과는 observation 도구만, `coding`까지 통과해야 터치 승인 변경·검증 도구를 API 요청에
+  넣는다. 적용 등급은 모델 선택 UI와 암호화 operation 결과에 남지만 report 원문은 Gateway로 보내지 않는다.
 - Provider credential activation gate는 교체·해제 후 이전 systemd runtime key로 새 run이 열릴 수 있던
   결함을 고치는 internal compatibility `patch`다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서
   `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를

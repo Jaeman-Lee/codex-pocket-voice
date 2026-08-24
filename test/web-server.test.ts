@@ -16,6 +16,7 @@ import { startWebServer, type WebCodexClient } from "../src/web-server.js";
 import { GatewayAuth } from "../src/gateway-auth.js";
 import { EventJournal } from "../src/event-journal.js";
 import { InMemoryApprovalBroker } from "../src/approval-broker.js";
+import { StaticProviderModelGradeSource } from "../src/providers/model-grades.js";
 import { loadPocketLinkTlsConfig, publicKeyPin } from "../src/pocket-link.js";
 import { createTestCertificate } from "./helpers/tls-certificate.js";
 
@@ -74,6 +75,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
     projects,
     auth,
     approvals,
+    modelGrades: new StaticProviderModelGradeSource([]),
     pocketLink: { ...pocketLink, port: 0 },
     workspaceTransactionDirectory,
     port: 0,
@@ -295,11 +297,11 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(providerData.providers[0].capabilities.approvals, false);
   const openAIProvider = providerData.providers.find((item: any) => item.id === "openai");
   const openRouterProvider = providerData.providers.find((item: any) => item.id === "openrouter");
-  assert.equal(openAIProvider.capabilities.approvals, true);
-  assert.equal(openAIProvider.capabilities.workspaceWrite, true);
+  assert.equal(openAIProvider.capabilities.approvals, false);
+  assert.equal(openAIProvider.capabilities.workspaceWrite, false);
   assert.equal(typeof openAIProvider.capabilities.commandExecution, "boolean");
-  assert.equal(openRouterProvider.capabilities.approvals, true);
-  assert.equal(openRouterProvider.capabilities.workspaceWrite, true);
+  assert.equal(openRouterProvider.capabilities.approvals, false);
+  assert.equal(openRouterProvider.capabilities.workspaceWrite, false);
   const providerTest = await jsonFetch(`${base}/api/providers/codex/test`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),

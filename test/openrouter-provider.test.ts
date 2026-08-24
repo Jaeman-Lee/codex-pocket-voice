@@ -19,6 +19,7 @@ import {
 } from "../src/providers/openrouter-provider.js";
 import type { ProviderEvent } from "../src/providers/types.js";
 import { LocalToolBroker, type RegisteredTool } from "../src/tool-broker.js";
+import { passingModelGrade, StaticProviderModelGradeSource } from "../src/providers/model-grades.js";
 
 const secret = "sk-or-v1-test-super-secret-value";
 
@@ -175,6 +176,12 @@ test("OpenRouter runs strict ZDR project tools and keeps unsupported models chat
       choices: [{ delta: { content: "대화 전용" }, finish_reason: "stop" }],
       usage: usage(2, 2, 0, 0.0005),
     })],
+    [chunk({
+      id: "generation-unverified-backup",
+      provider: "Provider A",
+      choices: [{ delta: { content: "백업 검증 필요" }, finish_reason: "stop" }],
+      usage: usage(2, 2, 0, 0.0005),
+    })],
   ], models());
   const adapter = new OpenRouterProviderAdapter({
     credentials: staticCredentials(secret),
@@ -186,6 +193,7 @@ test("OpenRouter runs strict ZDR project tools and keeps unsupported models chat
     modelAllowlist: ["vendor/tool-model", "vendor/chat-model"],
     defaultModel: "vendor/tool-model",
     toolBroker: broker,
+    modelGrades: openRouterGrades("vendor/tool-model", "provider-a"),
     now: () => Date.parse("2026-08-24T00:00:00.000Z"),
   });
   const events: ProviderEvent[] = [];
@@ -204,18 +212,20 @@ test("OpenRouter runs strict ZDR project tools and keeps unsupported models chat
   assert.equal(client.keyCalls, 1);
   assert.equal(client.chatCalls, 0);
   const listed = await adapter.listModels();
-  assert.match(listed.find((model) => model.id === "vendor/tool-model")!.description, /approved/);
+  assert.match(listed.find((model) => model.id === "vendor/tool-model")!.description, /verified coding/);
   assert.match(listed.find((model) => model.id === "vendor/chat-model")!.description, /chat-only/);
   assert.deepEqual(listed.find((model) => model.id === "vendor/tool-model")!.pricing, {
     inputPerMillionUsd: 1,
     outputPerMillionUsd: 2,
   });
   assert.equal(listed.find((model) => model.id === "vendor/tool-model")!.capabilities?.tools, true);
+  assert.equal(listed.find((model) => model.id === "vendor/tool-model")!.routingOptions?.[0]?.verification?.coding, "pass");
 
   const run = await adapter.startRun({
     cwd: process.cwd(),
     prompt: "Inspect the project",
     model: "vendor/tool-model",
+    routing: { upstreams: ["provider-a"], allowFallbacks: false },
   });
   const completion = await run.completion;
   assert.equal(completion.status, "completed");
@@ -248,6 +258,8 @@ test("OpenRouter runs strict ZDR project tools and keeps unsupported models chat
     require_parameters: true,
     data_collection: "deny",
     zdr: true,
+    order: ["provider-a"],
+    only: ["provider-a"],
   });
   assert.equal(first.model, "vendor/tool-model");
   assert.equal(first.parallel_tool_calls, false);
@@ -270,6 +282,16 @@ test("OpenRouter runs strict ZDR project tools and keeps unsupported models chat
   const chatRequest = client.requests[2]!;
   assert.equal(chatRequest.tools, undefined);
   assert.deepEqual(chatRequest.messages, [{ role: "user", content: "Just chat" }]);
+
+  const mixedGradeRun = await adapter.startRun({
+    cwd: process.cwd(),
+    prompt: "Do not expose tools to an unverified backup",
+    model: "vendor/tool-model",
+    routing: { upstreams: ["provider-a", "provider-b"], allowFallbacks: true },
+  });
+  assert.equal((await mixedGradeRun.completion).result.finalResponse, "백업 검증 필요");
+  assert.equal(client.requests[3]?.tools, undefined);
+  assert.equal(client.requests[3]?.parallel_tool_calls, undefined);
 });
 
 test("OpenRouter pauses a change tool until touch approval and reports the result to the same model", async (t) => {
@@ -320,11 +342,13 @@ test("OpenRouter pauses a change tool until touch approval and reports the resul
     createId: sequentialIds("router-change-conversation", "router-change-run"),
     modelAllowlist: ["vendor/tool-model"],
     toolBroker: broker,
+    modelGrades: openRouterGrades("vendor/tool-model", "provider-a"),
   });
   const run = await adapter.startRun({
     cwd: process.cwd(),
     prompt: "Apply the reviewed change",
     model: "vendor/tool-model",
+    routing: { upstreams: ["provider-a"], allowFallbacks: false },
   });
   await waitFor(() => approvals.listPending().length === 1);
   assert.equal(changes, 0);
@@ -708,6 +732,12 @@ function models(): OpenRouterModelRecord[] {
 
 function staticCredentials(apiKey: string): OpenRouterCredentialSource {
   return { async load() { return { apiKey, source: "environment" }; } };
+}
+
+function openRouterGrades(model: string, ...upstreams: string[]): StaticProviderModelGradeSource {
+  return new StaticProviderModelGradeSource(upstreams.map((upstream) => (
+    passingModelGrade("openrouter", model, upstream)
+  )));
 }
 
 function sequentialIds(...ids: string[]): () => string {

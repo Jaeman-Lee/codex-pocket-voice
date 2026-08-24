@@ -27,6 +27,8 @@ test("OpenRouter routing controls collapse to one bounded column on phones", asy
   assert.match(insight, /min-width:\s*0/);
   assert.match(facts, /min-width:\s*0/);
   assert.match(css, /\.model-insight > small[^}]*overflow-wrap:\s*anywhere/);
+  assert.match(css, /\.model-insight > span\.verified \{[^}]*color:\s*var\(--accent\)/);
+  assert.match(css, /\.model-insight > span\.restricted \{[^}]*color:\s*var\(--warm\)/);
   assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.routing-bar \{[^}]*minmax\(0,\s*1fr\)/);
 });
 

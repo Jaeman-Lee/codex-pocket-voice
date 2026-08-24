@@ -19,6 +19,7 @@ import {
   OpenAIProviderAdapter,
   type OpenAIResponsesClient,
 } from "../src/providers/openai-provider.js";
+import { passingModelGrade, StaticProviderModelGradeSource } from "../src/providers/model-grades.js";
 import { ProviderRegistry } from "../src/providers/registry.js";
 import type { CodexProviderClient } from "../src/providers/codex-provider.js";
 import type { ProviderEvent } from "../src/providers/types.js";
@@ -247,6 +248,7 @@ test("OpenAI provider executes a stateless project-tool loop through LocalToolBr
     createId: sequentialIds("tool-conversation", "tool-run"),
     modelAllowlist: ["gpt-tool-test"],
     toolBroker: broker,
+    modelGrades: openAIGrades("gpt-tool-test"),
   });
   const events: ProviderEvent[] = [];
   adapter.subscribe((providerEvent) => events.push(providerEvent));
@@ -298,6 +300,26 @@ test("OpenAI provider executes a stateless project-tool loop through LocalToolBr
   assert.match(continuation, /function_call_output/);
   assert.match(continuation, /read-only context/);
   assert.doesNotMatch(continuation, /sk-test-tool-loop/);
+
+  const ungradedClient = new FakeOpenAIClient([completedEvent("대화 전용")], [{ id: "gpt-tool-test" }]);
+  const ungraded = new OpenAIProviderAdapter({
+    credentials: staticCredentials("sk-test-ungraded"),
+    clientFactory: () => ungradedClient,
+    modelAllowlist: ["gpt-tool-test"],
+    toolBroker: broker,
+    modelGrades: new StaticProviderModelGradeSource([]),
+  });
+  assert.equal((await ungraded.describe()).capabilities.toolCalling, false);
+  const ungradedModel = (await ungraded.listModels())[0]!;
+  assert.equal(ungradedModel.verification?.coding, "not_tested");
+  assert.equal(ungradedModel.capabilities?.workspaceRead, false);
+  const ungradedRun = await ungraded.startRun({
+    cwd: process.cwd(),
+    prompt: "Chat without verified project tools",
+    model: "gpt-tool-test",
+  });
+  assert.equal((await ungradedRun.completion).result.finalResponse, "대화 전용");
+  assert.equal(ungradedClient.requests[0]?.tools, undefined);
 });
 
 test("OpenAI pauses a change tool until the matching touch approval resolves", async (t) => {
@@ -350,6 +372,7 @@ test("OpenAI pauses a change tool until the matching touch approval resolves", a
     createId: sequentialIds("change-conversation", "change-run"),
     modelAllowlist: ["gpt-tool-test"],
     toolBroker: broker,
+    modelGrades: openAIGrades("gpt-tool-test"),
   });
   const run = await adapter.startRun({ cwd: process.cwd(), prompt: "Apply the reviewed change", model: "gpt-tool-test" });
   await waitFor(() => approvals.listPending().length === 1);
@@ -450,6 +473,7 @@ test("OpenAI provider cancellation aborts the stream and completes as interrupte
   await adapter.cancelRun(run.conversationId, run.runId);
   const completion = await run.completion;
   assert.equal(completion.status, "interrupted");
+  assert.equal((completion.result.modelVerification as { coding?: unknown } | undefined)?.coding, "not_tested");
   assert.equal(client.aborted, true);
   assert.equal(events.at(-1)?.kind, "run.completed");
 });
@@ -595,6 +619,10 @@ function staticCredentials(apiKey: string): OpenAICredentialSource {
 
 function sequentialIds(...ids: string[]): () => string {
   return () => ids.shift() ?? "unexpected-id";
+}
+
+function openAIGrades(model: string): StaticProviderModelGradeSource {
+  return new StaticProviderModelGradeSource([passingModelGrade("openai", model)]);
 }
 
 function abortError(): Error {

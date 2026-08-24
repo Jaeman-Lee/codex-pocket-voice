@@ -125,6 +125,8 @@ import type {
   ProviderConnectionTest,
   ProviderCatalogPricing,
   ProviderLoginSession,
+  ProviderModelGrade,
+  ProviderModelVerification,
   ProviderOption,
   ProviderRoutingSelection,
   ProviderRoutingOption,
@@ -3420,6 +3422,11 @@ export function App() {
   const selectedModelOption = activeModel(models, model);
   const selectedPrimaryRoute = selectedModelOption?.routingOptions?.find((item) => item.id === routingPrimary);
   const selectedBackupRoute = selectedModelOption?.routingOptions?.find((item) => item.id === routingBackup);
+  const selectedModelVerification = provider === "openrouter"
+    ? combinedRouteVerification([selectedPrimaryRoute, selectedBackupRoute].filter(
+        (item): item is ProviderRoutingOption => item !== undefined,
+      ))
+    : selectedModelOption?.verification;
   const updateInstallBlockedReason = prompt.trim() || attachments.length > 0
     ? "전송하지 않은 입력·첨부를 먼저 보내거나 지워 주세요."
     : mediaBusy
@@ -4331,15 +4338,18 @@ export function App() {
               </label>
             </div>
           )}
-          {provider === "openrouter" && selectedModelOption && (
-            <div className="model-insight" aria-label="OpenRouter 모델 catalog 정보">
-              <span>{selectedModelOption.capabilities?.tools ? "프로젝트 도구 metadata 확인" : "chat-only"}</span>
+          {(provider === "openrouter" || provider === "openai") && selectedModelOption && (
+            <div className="model-insight" aria-label={`${provider === "openrouter" ? "OpenRouter" : "OpenAI"} 모델 검증 정보`}>
+              <span>{provider === "openrouter"
+                ? selectedModelOption.capabilities?.tools ? "함수 도구 metadata" : "chat-only metadata"
+                : selectedModelOption.capabilities?.tools ? "검증된 프로젝트 도구" : "chat-only"}</span>
               <span>{selectedModelOption.capabilities?.imageInput ? "이미지 입력" : "텍스트 입력"}</span>
-              {catalogPricingLabel(selectedModelOption.pricing) && (
+              {provider === "openrouter" && catalogPricingLabel(selectedModelOption.pricing) && (
                 <span>모델 최저 {catalogPricingLabel(selectedModelOption.pricing)}</span>
               )}
               {selectedModelOption.expiresAt && <span>만료 예정 {selectedModelOption.expiresAt.slice(0, 10)}</span>}
-              <small>{selectedModelOption.description} · catalog metadata이며 실제 모델 eval 등급은 아닙니다.</small>
+              <span className={modelVerificationClass(selectedModelVerification)}>{modelVerificationLabel(selectedModelVerification, provider)}</span>
+              <small>{selectedModelOption.description} · catalog metadata와 보호된 eval 등급은 별도로 적용됩니다.</small>
             </div>
           )}
           {provider === "openrouter" && (selectedModelOption?.routingOptions?.length ?? 0) > 0 && (
@@ -4738,7 +4748,58 @@ function routingRouteFacts(option: ProviderRoutingOption): string {
     option.uptime30m === undefined ? null : `30분 uptime ${catalogNumber(option.uptime30m)}%`,
     option.quantization || null,
     option.supportsTools === false ? "tool 미지원" : null,
+    option.verification ? modelVerificationLabel(option.verification, "openrouter") : null,
   ].filter(Boolean).join(" · ");
+}
+
+function combinedRouteVerification(
+  routes: readonly ProviderRoutingOption[],
+): ProviderModelVerification | undefined {
+  if (routes.length === 0) return undefined;
+  const verifications = routes.map((route) => route.verification).filter(
+    (item): item is ProviderModelVerification => item !== undefined,
+  );
+  if (verifications.length !== routes.length) {
+    return { scope: "upstream", conversation: "not_tested", projectRead: "not_tested", coding: "not_tested" };
+  }
+  return {
+    scope: "upstream",
+    conversation: combinedGrade(verifications.map((item) => item.conversation)),
+    projectRead: combinedGrade(verifications.map((item) => item.projectRead)),
+    coding: combinedGrade(verifications.map((item) => item.coding)),
+    checkedAt: verifications.every((item) => item.checkedAt)
+      ? new Date(Math.min(...verifications.map((item) => Date.parse(item.checkedAt!)))).toISOString()
+      : undefined,
+    expiresAt: verifications.every((item) => item.expiresAt)
+      ? new Date(Math.min(...verifications.map((item) => Date.parse(item.expiresAt!)))).toISOString()
+      : undefined,
+  };
+}
+
+function combinedGrade(grades: readonly ProviderModelGrade[]): ProviderModelGrade {
+  if (grades.every((grade) => grade === "pass")) return "pass";
+  for (const grade of ["invalid", "expired", "fail", "not_tested"] as const) {
+    if (grades.includes(grade)) return grade;
+  }
+  return "not_tested";
+}
+
+function modelVerificationLabel(
+  verification: ProviderModelVerification | undefined,
+  provider: ProviderId,
+): string {
+  if (!verification) return provider === "openrouter" ? "upstream 미선택 · 프로젝트 도구 차단" : "eval 없음 · chat-only";
+  if (verification.coding === "pass" && verification.projectRead === "pass") return "코딩 eval 통과 · 터치 승인 필요";
+  if (verification.projectRead === "pass") return "읽기 eval 통과 · 변경 차단";
+  if (verification.coding === "invalid" || verification.projectRead === "invalid") return "eval report 오류 · 도구 차단";
+  if (verification.coding === "expired" || verification.projectRead === "expired") return "eval 만료 · 도구 차단";
+  if (verification.coding === "fail" || verification.projectRead === "fail") return "eval 미통과 · 도구 차단";
+  return "project eval 미실행 · chat-only";
+}
+
+function modelVerificationClass(verification: ProviderModelVerification | undefined): string {
+  if (verification?.coding === "pass" || verification?.projectRead === "pass") return "verified";
+  return "restricted";
 }
 
 function catalogNumber(value: number): string {

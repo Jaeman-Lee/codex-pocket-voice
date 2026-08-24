@@ -24,6 +24,8 @@ export CODEX_POCKET_OPENAI_DEFAULT_MODEL=gpt-example-verified
 `OPENAI_API_KEY` 환경변수도 지원하지만 프로세스 실행 환경과 셸 기록 관리가 가능한 경우에만 쓴다.
 `CODEX_POCKET_OPENAI_MODELS`는 쉼표로 구분한 명시적 허용 목록이다. Companion은 이름 패턴만 보고
 Responses·이미지·도구 capability를 추정하지 않으며, 허용 목록이 없으면 API 실행을 비활성화한다.
+허용 목록은 chat 실행 후보일 뿐 project 권한이 아니다. tool 권한은
+[Provider model grade reports](provider-model-grades.md)의 별도 protected report가 결정한다.
 
 설정을 바꾼 뒤에는 실행 중인 Codex turn이 없고 사용자가 확인한 시점에만 Companion을 재시작한다.
 암호문 교체·recoverable 해제, source 우선순위와 fail-closed 검사는
@@ -39,7 +41,8 @@ Responses·이미지·도구 capability를 추정하지 않으며, 허용 목록
 - Models API 인증·목록 확인만 수행하는 무료 연결 테스트
 - 공급자 원본 JSON과 Authorization 값을 제거한 오류 분류
 
-관찰 도구는 읽기 전용으로 자동 실행되고, 파일 교체·생성·rename과 격리 npm 검증은 SHA-bound diff와
+유효한 `projectRead` 등급의 관찰 도구는 읽기 전용으로 자동 실행되고, `coding` 등급까지 통과한
+파일 교체·생성·rename과 격리 npm 검증은 SHA-bound diff와
 터치 승인을 통과한 경우에만 실행된다. 프로젝트 밖 경로와 외부 symlink, `.git`, `.env`, 개인 키·keystore,
 credential 계열 파일을 거절하고 파일·검색·diff 결과에 크기와 시간 상한을 적용한다. Git 호출은 고정된
 `status`, `diff`, `rev-parse` 인자만 사용하며 외부 diff, textconv, fsmonitor와 외부 Git 환경 override를
@@ -47,7 +50,7 @@ credential 계열 파일을 거절하고 파일·검색·diff 결과에 크기�
 상한을 적용한 내장 검색으로 전환한다. 도구 원문 결과는 Gateway SSE로 보내지 않고 redacted
 summary만 전달한다.
 
-대화 재개와 승인된 bounded 파일 변경·검증은 durable journal과 공통 Tool Broker로 활성화되어 있다.
+대화 재개와 등급을 통과한 승인형 bounded 파일 변경·검증은 durable journal과 공통 Tool Broker로 활성화된다.
 삭제·chmod·binary, 임의 명령과 network 도구는 비활성화되어 있다.
 
 `store: false` 함수 호출은 각 응답의 message·function call·reasoning 항목과
@@ -82,3 +85,4 @@ summary만 전달한다.
 streaming·대화·함수 호출·stateless replay만 평가하고 실제 프로젝트 읽기나 코딩 등급을 부여하지 않는다.
 
 현재 checkpoint에서는 loopback fixture만 실행했으며 실제 key나 유료 요청은 사용하지 않았다.
+따라서 현재 smoke report만으로는 project tool이 활성화되지 않는다.

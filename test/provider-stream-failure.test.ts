@@ -161,6 +161,9 @@ function assertFailureContract(completion: ProviderRunCompletion, events: readon
       allowFallbacks: false,
     });
   }
+  if (completion.result.providerId === "openai" || completion.result.providerId === "openrouter") {
+    assert.equal((completion.result.modelVerification as { coding?: unknown } | undefined)?.coding, "not_tested");
+  }
   assert.doesNotMatch(JSON.stringify({ completion, events }), new RegExp(`${secret}|Authorization|Bearer`));
 }
 

@@ -16,6 +16,7 @@ import {
   type OpenAIResponsesClient,
 } from "../src/providers/openai-provider.js";
 import { ProviderRegistry } from "../src/providers/registry.js";
+import { passingModelGrade, StaticProviderModelGradeSource } from "../src/providers/model-grades.js";
 import { LocalToolBroker } from "../src/tool-broker.js";
 import { startWebServer, type WebCodexClient } from "../src/web-server.js";
 
@@ -43,6 +44,7 @@ test("gateway injects OpenAI runtime and exposes only common safe events", async
     modelAllowlist: ["gpt-gateway-test"],
     defaultModel: "gpt-gateway-test",
     toolBroker,
+    modelGrades: new StaticProviderModelGradeSource([passingModelGrade("openai", "gpt-gateway-test")]),
   });
   const codex = unusedCodexClient();
   const providers = new ProviderRegistry(codex, [adapter]);

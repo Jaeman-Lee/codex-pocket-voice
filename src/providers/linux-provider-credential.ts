@@ -99,7 +99,7 @@ function providerCredentialStatePath(
   return join(directory, `${credentialName}.state`);
 }
 
-async function readPrivateUtf8File(
+export async function readPrivateUtf8File(
   filePath: string,
   label: string,
   maximumBytes: number,
@@ -128,7 +128,8 @@ async function readPrivateUtf8File(
     if (info.size > maximumBytes) {
       throw new LinuxProviderCredentialError(`${label} 파일이 너무 큽니다.`);
     }
-    if ((info.mode & 0o077) !== 0) {
+    const privateMode = info.mode & 0o777;
+    if (privateMode !== 0o600 && privateMode !== 0o400) {
       throw new LinuxProviderCredentialError(`${label} 파일 권한을 0600 또는 0400으로 제한해 주세요.`);
     }
     if (typeof process.getuid === "function" && info.uid !== process.getuid()) {
