@@ -76,8 +76,9 @@ key를 유지하고 SSH로 자동 우회하지 않는다.
 같은 LAN 주소 discovery는 사용자가 누를 때만 Android `NsdManager`로 8초 동안 실행한다. native policy가
 service type과 TXT version을 exact-match하고 후보를 16개, private IPv4/IPv6 ULA로 제한한 뒤 2분짜리
 검토 hint만 WebView에 보낸다. 선택해도 pin은 비워 두므로 Companion 터미널의 SPKI pin을 수동으로
-대조해야 하며 자동 페어링·연결·SSH fallback은 없다. Wi-Fi Direct 같은 P2P와 relay는 아직 구현하지
-않았다.
+대조해야 하며 자동 페어링·연결·SSH fallback은 없다. TLS relay broker와 Linux Companion outbound
+connector 기반은 구현됐지만 Android relay 등록·nested TLS connector와 Wi-Fi Direct 같은 P2P는 아직
+구현하지 않았다.
 사용자가 연결 센터에서 명시적으로 켜고 Android runtime 권한을 허용하면 `connectedDevice` foreground
 service가 최대 8개의 paired loopback Companion에서 notification-only SSE를 구독한다. Companion은 완료·
 실패·새 승인에 대해 schema/kind/operation ID/시각과 승인 만료시각만 보내며 프롬프트·경로·응답·도구

@@ -25,7 +25,7 @@
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker와 보호된 synthetic smoke harness 구현; 실제 model eval 실행·현장 등급 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in process-death native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe 구현; 실기기 background/deep-link acceptance 잔여 |
-| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, user-triggered bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; Wi-Fi Direct 등 P2P·relay·background/field release gate 잔여 |
+| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux Companion outbound connector, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; Android relay client, Wi-Fi Direct 등 P2P·background/field release gate 잔여 |
 
 ## 2. 제품 정의
 
@@ -444,7 +444,12 @@ key를 모두 유지하고 자동 downgrade하지 않는다. Companion은 별도
 version만 DNS-SD로 광고한다. Android의 user-triggered 8초 검색은 service/TXT를 exact-match하고 최대
 16개의 private IPv4/IPv6 ULA 후보만 2분 동안 검토용으로 유지한다. discovery 결과는 인증이 아니므로
 선택 뒤에도 Companion 터미널의 SPKI pin을 직접 입력하며 자동 페어링·연결·SSH fallback은 없다.
-Wi-Fi Direct 등 P2P, relay fallback과 실기기 background release gate는 남아 있다.
+TLS-pinned protocol 1 relay broker와 Linux Companion outbound connector도 구현했다. relay는 최소
+128-bit opaque slot과 256-bit shared secret으로 대기 socket을 연결하되 값을 영속화·로그하지 않고,
+socket·slot·waiter·frame·timeout을 제한한다. tunnel payload는 별도 Android↔Companion PocketLink mTLS로
+다시 보호되어 relay가 Gateway HTTP를 복호화할 수 없다. 서로 다른 합성 relay/Companion/Android
+certificate를 사용한 nested TLS 통합 검사는 통과했다. Android Keystore relay 등록과 native connector,
+Wi-Fi Direct 등 P2P, public relay 운영 방어와 실기기 background release gate는 남아 있다.
 
 Android CI는 APK와 SBOM의 SHA-256·크기, package, SemVer/versionCode, commit을 담은 canonical
 `update-manifest.json`을 생성한다. official signed build는 APK release key로 manifest 원문에 RSA/ECDSA
@@ -485,6 +490,8 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - Android ZIP importer의 path/duplicate/size 상한, current signer/package binding, 10분 재검토와 설치 전 rehash
 - 공식 Release의 잘못된 repo/tag/중복 asset/digest/content-type, oversized JSON/ZIP, HTTP·외부-host redirect와 조회 token 만료 차단
 - DNS-SD의 wrong service/TXT, public·loopback 주소, 후보 flood·중복·만료·Unicode control과 pin/TXT smuggling 차단
+- relay의 private secret/key, TLS hostname+SPKI pin, 틀린 slot/secret 비소비, connection/slot/waiter/frame/
+  timeout 상한과 relay 안쪽 Android↔Companion mTLS 보존 검사 — Node 자동 검사 구현
 
 ### 실제 Provider 검사
 

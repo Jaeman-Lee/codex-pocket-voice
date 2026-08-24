@@ -11,6 +11,10 @@ import {
 } from "./pocket-link-discovery.js";
 import { renderPocketLinkTerminalQr } from "./pocket-link-terminal-qr.js";
 import { loadPocketLinkTlsConfig } from "./pocket-link.js";
+import {
+  loadPocketRelayCompanionConfig,
+  startPocketRelayCompanion,
+} from "./pocket-relay.js";
 import { startWebServer } from "./web-server.js";
 
 const paths = await PathPolicy.fromEnvironment();
@@ -27,9 +31,13 @@ if (!staticDir) throw new Error("Could not find client/dist; run npm run build:c
 const port = Number(process.env.CODEX_WEB_PORT ?? "8787");
 if (!Number.isInteger(port) || port < 0 || port > 65_535) throw new Error("CODEX_WEB_PORT is invalid");
 const pocketLink = await loadPocketLinkTlsConfig();
+const pocketRelay = await loadPocketRelayCompanionConfig();
 const discoveryEnabled = pocketLinkDiscoveryEnabled();
 if (discoveryEnabled && !pocketLink) {
   throw new Error("CODEX_POCKET_LINK_DISCOVERY requires a configured PocketLink TLS listener");
+}
+if (pocketRelay && !pocketLink) {
+  throw new Error("CODEX_POCKET_RELAY_HOST requires a configured PocketLink TLS listener");
 }
 const running = await startWebServer({
   client,
@@ -46,6 +54,13 @@ const discovery = discoveryEnabled && running.pocketLink
       onError: () => {
         process.stderr.write("[codex-web] PocketLink LAN discovery advertisement failed\n");
       },
+    })
+  : undefined;
+const relayCompanion = pocketRelay && running.pocketLink
+  ? startPocketRelayCompanion({
+      relay: pocketRelay,
+      targetHost: localPocketLinkHost(running.pocketLink.host),
+      targetPort: running.pocketLink.port,
     })
   : undefined;
 
@@ -79,14 +94,28 @@ if (running.pocketLink) {
     }
   }
 }
+if (relayCompanion && pocketRelay) {
+  process.stderr.write(`[codex-web] PocketLink outbound relay enabled with ${pocketRelay.standbyConnections} bounded tunnel slots\n`);
+  void relayCompanion.waitUntilReady(1, 15_000).then(
+    () => process.stderr.write("[codex-web] PocketLink outbound relay is ready\n"),
+    () => process.stderr.write("[codex-web] PocketLink outbound relay is not reachable; direct transport remains unchanged\n"),
+  );
+}
 
 let closing = false;
 async function close(): Promise<void> {
   if (closing) return;
   closing = true;
   discovery?.close();
+  await relayCompanion?.close();
   await running.close();
   await client.close();
+}
+
+function localPocketLinkHost(host: string): string {
+  if (host === "0.0.0.0") return "127.0.0.1";
+  if (host === "::") return "::1";
+  return host;
 }
 
 process.once("SIGINT", () => void close().finally(() => process.exit(0)));

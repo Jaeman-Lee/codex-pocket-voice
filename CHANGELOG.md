@@ -10,6 +10,18 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- PocketLink outbound relay foundation은 새 network transport capability이므로 `feature`로 분류한다.
+  아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`과
+  `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. APK 전달·설치와 실행 중
+  Companion 재시작은 수행하지 않으며 v1.8.2 current 후보, 별도 staged v1.8.3과 검증된 v1.8.1
+  rollback을 그대로 보존한다.
+- TLS 1.2/1.3 `codex-pocket-relay` broker와 Linux Companion outbound connector를 추가했다. 최소
+  128-bit opaque slot과 256-bit secret, relay SPKI pin, private secret/key file, bounded frame·socket·
+  slot·waiter·timeout을 요구하며 틀린 인증값은 기존 waiter를 소비하지 않는다.
+- relay는 outer TLS 안의 opaque PocketLink mTLS bytes만 전달한다. 서로 다른 합성 Android client와
+  Companion certificate를 사용한 통합 검사에서 relay 뒤에도 기존 server pin과 client-certificate
+  proof가 종단간 유지됨을 검증한다. Android relay 등록·native connector와 현장 network/battery
+  acceptance는 다음 Phase E 단계로 남긴다.
 - 모바일 browser acceptance checkpoint는 production client build와 실제 pairing·Gateway·SSE·run·approval
   경로를 사용하는 새 v2 검증 capability이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 v2 안의
   변경이므로 `2.0.0`/Android `versionCode 20000`과 `feature/v2-control-plane`을 유지하고 기존 CI-only

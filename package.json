@@ -6,7 +6,8 @@
   "description": "A mobile-first voice interface for controlling Codex CLI safely over SSH.",
   "bin": {
     "codex-voice-bridge": "dist/src/index.js",
-    "codex-pocket-web": "dist/src/web-index.js"
+    "codex-pocket-web": "dist/src/web-index.js",
+    "codex-pocket-relay": "dist/src/pocket-relay-index.js"
   },
   "scripts": {
     "build": "npm run build:server && npm run build:client",
@@ -20,6 +21,7 @@
     "client:dev": "vite",
     "test:browser": "npm run build:client && playwright test",
     "test:browser:server": "node --import tsx test/browser/fixtures/mobile-gateway.ts",
+    "relay": "node dist/src/pocket-relay-index.js",
     "start": "node dist/src/index.js",
     "web": "node dist/src/web-index.js",
     "web:dev": "node --import tsx src/web-index.ts",

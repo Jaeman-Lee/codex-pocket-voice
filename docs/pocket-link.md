@@ -161,7 +161,9 @@ Android에서 mDNS 수신을 위해 `CHANGE_WIFI_MULTICAST_STATE`와 검색 시�
 
 이 checkpoint는 검토형 같은-LAN 주소 discovery까지 포함하지만 PocketLink의 최종 완료판이 아니다.
 
-- DNS-SD 주소 discovery는 구현됐지만 Wi-Fi Direct 등 P2P와 outbound relay fallback은 미구현
+- DNS-SD 주소 discovery와 protocol 1 TLS relay broker·Linux Companion outbound connector는 구현됐다.
+  relay 안쪽 기존 PocketLink mTLS도 자동 검사했지만 Android Keystore relay 등록과 native connector,
+  direct/P2P/relay 선택 정책은 미구현
 - 서버 인증서 staged pin 교체와 Android client identity A/B 교체는 구현됐지만 실기기·실제 LAN 전환
   acceptance 미검증
 - 부팅 후 자동 복구, Android 계측 기반 CPU·메모리·배터리 release gate 미검증

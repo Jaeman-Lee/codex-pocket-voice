@@ -104,8 +104,9 @@ can stage a backup pin, requires an observed successful backup-pin handshake, an
 retires the prior pin. Android client-device identity rotation now uses a reviewed five-minute approval, durable
 Keystore A/B slots and actual new-key mTLS proof before the prior alias is retired; uncertain responses preserve both
 slots for recovery. User-triggered same-LAN DNS-SD address discovery is implemented with bounded private-address
-candidates and separate manual SPKI-pin review. Wi-Fi Direct-style P2P, relay fallback and field
-battery/background measurements remain open.
+candidates and separate manual SPKI-pin review. A bounded TLS relay broker and Linux Companion outbound connector
+now carry an inner end-to-end PocketLink mTLS stream without exposing Gateway plaintext. Android relay enrollment,
+the native nested-TLS connector, Wi-Fi Direct-style P2P and field battery/background measurements remain open.
 
 ## Final definition of done
 
