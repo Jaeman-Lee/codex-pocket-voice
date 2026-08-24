@@ -21,6 +21,9 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 - `App.tsx`의 음성 입력과 미디어 첨부 상태를 각각 순수 reducer로 분리했다. 연속 받아쓰기
   재시작·치명적 오류 transition, 동시 upload batch, 4개 상한과 임시 ID→서버 ID 교체를
   상태 머신 테스트로 고정했다.
+- 연결 lifecycle을 단조 증가 attempt ID에 묶인 reducer로 분리했다. 장치 전환·재페어링 뒤
+  이전 initialize/SSE/페어링/진단 응답이 새 PC 상태를 덮지 못하고, 새 attempt는 이전
+  초기화가 진행 중이어도 독립적으로 시작한다. Android tunnel 전환도 직렬화한다.
 - 세션 인계를 프로젝트·대화별로 격리하고, 다른 프로젝트의 인계 세션이 현재 프로젝트처럼 보이던
   문제를 수정했다. v1 단일 handoff 상태는 손실 없이 다중 상태로 마이그레이션한다.
 - Codex 원본 notification과 OpenAI SSE를 `output.delta`, `tool.started`, `workspace.diff`,

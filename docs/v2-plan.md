@@ -21,7 +21,7 @@
 
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
-| Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환, operation UI, PocketLink bootstrap과 voice/media 상태 머신 모듈 구현; 나머지 App 연결·run·journal 상태 분리 잔여 |
+| Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환, operation UI, PocketLink bootstrap, connection attempt과 voice/media 상태 머신 모듈 구현; 나머지 App run·journal 상태 분리 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in process-death native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe 구현; 실기기 background/deep-link acceptance 잔여 |
@@ -300,6 +300,11 @@ reducer가 관리한다. 연속 recognizer의 일시 idle은 mode를 유지하�
 dictation과 hands-free를 함께 종료해 UI 고착을 막는다. 미디어 composer는 최대 4개 attachment,
 동시 upload batch count, progress, 임시 upload ID와 server media ID 교체를 `media-composer-state`
 reducer로 직렬화한다.
+연결 lifecycle은 `connection-state` reducer의 단조 증가 attempt ID에 device를 묶는다. App은
+initialize, model/thread/handoff 추가 조회, SSE event, pairing, notification action과 diagnostics 응답을 적용하기
+전에 현재 attempt/device를 다시 확인한다. 새 장치·auth revision은 이전 초기화를 기다리지 않고
+독립적으로 시작하며, Android native tunnel start는 직렬화해 최종 선택 장치가 마지막에
+적용되게 한다.
 
 완료 조건: Codex CLI의 기존 run·queue·handoff가 동일하게 동작하고 새 Provider를 fake runtime으로
 끝까지 실행할 수 있다.

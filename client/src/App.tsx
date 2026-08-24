@@ -40,6 +40,7 @@ import {
   type PocketLinkStatus,
 } from "./native";
 import { mergeSpeechSegments } from "./speech-utils";
+import { initialConnectionState, reduceConnection } from "./connection-state";
 import { initialVoiceInputState, reduceVoiceInput } from "./voice-input-state";
 import {
   initialMediaComposerState,
@@ -84,7 +85,6 @@ import type {
   ApprovalItem,
   ApprovalResolution,
   CodexEvent,
-  ConnectionStatus,
   DeviceId,
   DeviceTarget,
   HistoryItem,
@@ -165,8 +165,11 @@ const newId = (prefix: string) => `${prefix}-${Date.now()}-${localId++}`;
 export function App() {
   const [device, setDevice] = useState<DeviceId>(() => activeDeviceTarget().id);
   const [deviceTargets, setDeviceTargets] = useState<DeviceTarget[]>(listDeviceTargets);
-  const [connection, setConnection] = useState<ConnectionStatus>("pending");
-  const [connectionText, setConnectionText] = useState("PC에 연결 중…");
+  const [connectionState, dispatchConnection] = useReducer(
+    reduceConnection,
+    initialConnectionState(device, deviceLabel(device)),
+  );
+  const { status: connection, text: connectionText } = connectionState;
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [workspace, setWorkspace] = useState("");
@@ -297,7 +300,9 @@ export function App() {
   const voiceWasActiveRef = useRef(false);
   const initializedRef = useRef(false);
   const onboardingShownRef = useRef(false);
-  const initializingRef = useRef(false);
+  const connectionAttemptRef = useRef(0);
+  const initializingAttemptRef = useRef<number | null>(null);
+  const nativeTunnelStartRef = useRef<Promise<void>>(Promise.resolve());
   const handleEventRef = useRef<(event: CodexEvent) => void>(() => undefined);
   const initializeRef = useRef<() => Promise<void>>(async () => undefined);
   const replayingEventsRef = useRef(false);
@@ -459,10 +464,15 @@ export function App() {
   }, [authRevision, deviceTargets, notificationsEnabled, showToast]);
 
   const requestPairing = useCallback(async () => {
+    const attempt = connectionAttemptRef.current;
+    const selectedDevice = deviceRef.current;
     try {
-      setPairing(await pairingStatus());
+      const status = await pairingStatus();
+      if (attempt === connectionAttemptRef.current && selectedDevice === deviceRef.current) setPairing(status);
     } catch (error) {
-      showToast(errorMessage(error));
+      if (attempt === connectionAttemptRef.current && selectedDevice === deviceRef.current) {
+        showToast(errorMessage(error));
+      }
     }
   }, [showToast]);
 
@@ -519,9 +529,11 @@ export function App() {
     selectedWorkspace: string,
     preserveSelection: boolean,
     preferredThreadId?: string,
+    attempt?: number,
   ) => {
     try {
       const data = await api<{ threads: ThreadSummary[] }>("/api/threads?limit=30");
+      if (attempt !== undefined && attempt !== connectionAttemptRef.current) return;
       const prefix = selectedWorkspace.endsWith("/") ? selectedWorkspace : `${selectedWorkspace}/`;
       const filtered = data.threads.filter(
         (thread) => !selectedWorkspace || thread.cwd === selectedWorkspace || thread.cwd.startsWith(prefix),
@@ -532,29 +544,33 @@ export function App() {
       setThreadId(next);
       threadRef.current = next;
     } catch (error) {
+      if (attempt !== undefined && attempt !== connectionAttemptRef.current) return;
       showToast(errorMessage(error));
     }
   }, [showToast]);
 
-  const loadProjectHandoff = useCallback(async (selectedWorkspace: string) => {
+  const loadProjectHandoff = useCallback(async (selectedWorkspace: string, attempt?: number) => {
     const requestedDevice = deviceRef.current;
     try {
       const suffix = selectedWorkspace ? `?workspace=${encodeURIComponent(selectedWorkspace)}` : "";
       const data = await api<{ handoff: SessionHandoff | null }>(`/api/session/handoff${suffix}`);
-      if (deviceRef.current !== requestedDevice || workspaceRef.current !== selectedWorkspace) return;
+      if (deviceRef.current !== requestedDevice || workspaceRef.current !== selectedWorkspace
+          || (attempt !== undefined && attempt !== connectionAttemptRef.current)) return;
       setHandoffSupported(true);
       const dismissed = localStorage.getItem(handoffDismissedKey(requestedDevice));
       setHandoff(scopedHandoff(data.handoff, selectedWorkspace, dismissed));
     } catch {
-      if (deviceRef.current !== requestedDevice || workspaceRef.current !== selectedWorkspace) return;
+      if (deviceRef.current !== requestedDevice || workspaceRef.current !== selectedWorkspace
+          || (attempt !== undefined && attempt !== connectionAttemptRef.current)) return;
       setHandoffSupported(false);
       setHandoff(null);
     }
   }, []);
 
-  const initialize = useCallback(async () => {
-    if (initializingRef.current) return;
-    initializingRef.current = true;
+  const initialize = useCallback(async (attempt = connectionAttemptRef.current) => {
+    const selectedDevice = deviceRef.current;
+    if (attempt !== connectionAttemptRef.current || initializingAttemptRef.current === attempt) return;
+    initializingAttemptRef.current = attempt;
     try {
       const [health, workspaceData, providerData, codexModelData, runData, approvalData, journalData, recoveryData] = await Promise.all([
         api<{ userAgent: string; device: { name: string } }>("/api/health"),
@@ -570,8 +586,13 @@ export function App() {
         api<WorkspaceChangeRecoveryResponse>("/api/workspace-changes/recovery")
           .catch(() => ({ supported: false, status: null })),
       ]);
-      setConnectionText(`${health.device.name} · ${health.userAgent}`);
-      setConnection("online");
+      if (attempt !== connectionAttemptRef.current || deviceRef.current !== selectedDevice) return;
+      dispatchConnection({
+        type: "initialized",
+        attempt,
+        device: selectedDevice,
+        text: `${health.device.name} · ${health.userAgent}`,
+      });
       setWorkspaces(workspaceData.workspaces);
       setCreationLocations(workspaceData.creationLocations);
       setProviders(providerData.providers);
@@ -593,6 +614,7 @@ export function App() {
           selectedModelData = codexModelData;
         }
       }
+      if (attempt !== connectionAttemptRef.current || deviceRef.current !== selectedDevice) return;
       const selectedProviderId = selectedProvider?.id ?? "codex";
       setProvider(selectedProviderId);
       providerRef.current = selectedProviderId;
@@ -626,8 +648,13 @@ export function App() {
       setWorkspace(selected);
       workspaceRef.current = selected;
       if (selectedProviderId === "codex") {
-        await loadThreads(selected, true, localStorage.getItem(storageKey("thread", deviceRef.current)) ?? "");
-        await loadProjectHandoff(selected);
+        await loadThreads(
+          selected,
+          true,
+          localStorage.getItem(storageKey("thread", selectedDevice)) ?? "",
+          attempt,
+        );
+        await loadProjectHandoff(selected, attempt);
       } else {
         const availableConversations = providerConversationThreads(runData.operations, selectedProviderId, selected);
         const storedConversation = localStorage.getItem(
@@ -654,9 +681,11 @@ export function App() {
         }
         setHandoff(null);
       }
+      if (attempt !== connectionAttemptRef.current || deviceRef.current !== selectedDevice) return;
       if (selectedProviderId === "codex" && threadRef.current) {
         try {
           const data = await api<{ thread: ThreadDetail }>(`/api/threads/${encodeURIComponent(threadRef.current)}`);
+          if (attempt !== connectionAttemptRef.current || deviceRef.current !== selectedDevice) return;
           const restored = historyMessages(data.thread);
           messagesRef.current = restored;
           setMessages(restored);
@@ -665,6 +694,7 @@ export function App() {
           // The local work journal effect restores the last saved copy.
         }
       }
+      if (attempt !== connectionAttemptRef.current || deviceRef.current !== selectedDevice) return;
       const currentOperation = operationRef.current;
       const currentSnapshot = currentOperation
         ? runData.operations.find((item) => item.id === currentOperation.id)
@@ -715,10 +745,9 @@ export function App() {
         void refreshDiagnostics();
       }
     } catch (error) {
-      setConnection("error");
-      setConnectionText(`${deviceLabel(deviceRef.current)} 연결 실패`);
-      const cachedWorkspace = localStorage.getItem(storageKey("workspace", deviceRef.current)) ?? "";
-      const cachedThread = localStorage.getItem(storageKey("thread", deviceRef.current)) ?? "";
+      if (attempt !== connectionAttemptRef.current || deviceRef.current !== selectedDevice) return;
+      const cachedWorkspace = localStorage.getItem(storageKey("workspace", selectedDevice)) ?? "";
+      const cachedThread = localStorage.getItem(storageKey("thread", selectedDevice)) ?? "";
       if (cachedWorkspace) {
         setWorkspace(cachedWorkspace);
         workspaceRef.current = cachedWorkspace;
@@ -727,14 +756,23 @@ export function App() {
         threadRef.current = cachedThread;
       }
       if (error instanceof PocketLinkIdentityRotationRequiredError) {
+        dispatchConnection({ type: "identity_rotation_required", attempt, device: selectedDevice });
         setPairing(null);
         setShowConnectionCenter(true);
       } else if (error instanceof PairingRequiredError) {
+        dispatchConnection({ type: "pairing_required", attempt, device: selectedDevice });
         void requestPairing();
+      } else {
+        dispatchConnection({
+          type: "failed",
+          attempt,
+          device: selectedDevice,
+          label: deviceLabel(selectedDevice),
+        });
       }
       showToast(errorMessage(error));
     } finally {
-      initializingRef.current = false;
+      if (initializingAttemptRef.current === attempt) initializingAttemptRef.current = null;
     }
   }, [loadProjectHandoff, loadThreads, requestPairing, showToast]);
 
@@ -744,18 +782,25 @@ export function App() {
     deviceRef.current = device;
     setApiDevice(device);
     initializedRef.current = false;
-    setConnection("pending");
-    setConnectionText(`${deviceLabel(device)} 연결을 준비하는 중…`);
+    const attempt = connectionAttemptRef.current + 1;
+    connectionAttemptRef.current = attempt;
+    dispatchConnection({ type: "begin", attempt, device, label: deviceLabel(device) });
     void (async () => {
       if (isNativeApp()) {
-        try {
-          const tunnel = await NativeTunnel.start({ localPort: deviceTargetLocalPort(activeDeviceTarget()) });
-          if (tunnel.manual && tunnel.message) showToast(tunnel.message);
-        } catch (error) {
-          showToast(errorMessage(error));
-        }
+        nativeTunnelStartRef.current = nativeTunnelStartRef.current.then(async () => {
+          if (attempt !== connectionAttemptRef.current || deviceRef.current !== device) return;
+          try {
+            const tunnel = await NativeTunnel.start({ localPort: deviceTargetLocalPort(activeDeviceTarget()) });
+            if (attempt === connectionAttemptRef.current && tunnel.manual && tunnel.message) {
+              showToast(tunnel.message);
+            }
+          } catch (error) {
+            if (attempt === connectionAttemptRef.current) showToast(errorMessage(error));
+          }
+        });
+        await nativeTunnelStartRef.current;
       }
-      await initialize();
+      if (attempt === connectionAttemptRef.current && deviceRef.current === device) await initialize(attempt);
     })();
     const abort = new AbortController();
     void (async () => {
@@ -763,38 +808,40 @@ export function App() {
       while (!abort.signal.aborted) {
         try {
           await subscribeEvents(() => {
+            if (attempt !== connectionAttemptRef.current || deviceRef.current !== device) return;
             retry = 0;
-            setConnection("online");
-            setConnectionText((current) => current.includes("복구") || current.includes("실패")
-              ? `${deviceLabel(device)}와 안전하게 연결됨`
-              : current);
-            if (!initializedRef.current) void initializeRef.current();
-          }, (event) => handleEventRef.current(event), abort.signal);
+            dispatchConnection({ type: "stream_online", attempt, device, label: deviceLabel(device) });
+            if (!initializedRef.current) void initialize(attempt);
+          }, (event) => {
+            if (attempt === connectionAttemptRef.current && deviceRef.current === device) {
+              handleEventRef.current(event);
+            }
+          }, abort.signal);
           if (abort.signal.aborted) return;
           throw new Error("실시간 연결이 종료되었습니다.");
         } catch (error) {
-          if (abort.signal.aborted) return;
+          if (abort.signal.aborted || attempt !== connectionAttemptRef.current || deviceRef.current !== device) return;
           if (error instanceof PairingRequiredError) {
             void requestPairing();
-            setConnection("pending");
-            setConnectionText("페어링 필요");
+            dispatchConnection({ type: "pairing_required", attempt, device });
             return;
           }
           if (error instanceof PocketLinkIdentityRotationRequiredError) {
             setPairing(null);
             setShowConnectionCenter(true);
-            setConnection("pending");
-            setConnectionText("PocketLink 단말 key 교체 확인 필요");
+            dispatchConnection({ type: "identity_rotation_required", attempt, device });
             return;
           }
-          setConnection("pending");
-          setConnectionText("연결을 복구하는 중…");
+          dispatchConnection({ type: "reconnecting", attempt, device });
           retry += 1;
           await abortableDelay(Math.min(15_000, 500 * (2 ** Math.min(retry, 5))), abort.signal);
         }
       }
     })();
-    return () => abort.abort();
+    return () => {
+      abort.abort();
+      if (connectionAttemptRef.current === attempt) connectionAttemptRef.current = attempt + 1;
+    };
   }, [authRevision, device, initialize, requestPairing, showToast]);
 
   useEffect(() => {
@@ -1438,8 +1485,11 @@ export function App() {
         selectDevice(action.deviceId);
         return;
       }
-      if (initializingRef.current) return;
+      const attempt = connectionAttemptRef.current;
+      const selectedDevice = deviceRef.current;
+      if (initializingAttemptRef.current === attempt) return;
       const data = await api<{ operations: Operation[] }>("/api/runs");
+      if (attempt !== connectionAttemptRef.current || selectedDevice !== deviceRef.current) return;
       setOperationSnapshots(data.operations);
       resolvePendingNotificationAction(data.operations);
     } catch (error) {
@@ -1659,7 +1709,11 @@ export function App() {
       queueDispatchingRef.current = false;
       const message = errorMessage(error);
       if (message.includes("연결할 수 없습니다")) {
-        setConnection("pending");
+        dispatchConnection({
+          type: "reconnecting",
+          attempt: connectionAttemptRef.current,
+          device: deviceRef.current,
+        });
         updatePromptQueue([{ ...queued, displayed: true }, ...promptQueueRef.current]);
         finishLiveMessage("단말 연결이 끊겨 요청을 오프라인 대기열로 되돌렸습니다.", true);
         stopRunning();
@@ -2027,11 +2081,16 @@ export function App() {
   }
 
   async function refreshDiagnostics() {
+    const attempt = connectionAttemptRef.current;
+    const selectedDevice = deviceRef.current;
     try {
       const data = await api<{ diagnostics: SystemDiagnostics }>("/api/diagnostics");
+      if (attempt !== connectionAttemptRef.current || selectedDevice !== deviceRef.current) return;
       setDiagnostics(data.diagnostics);
     } catch (error) {
-      showToast(errorMessage(error));
+      if (attempt === connectionAttemptRef.current && selectedDevice === deviceRef.current) {
+        showToast(errorMessage(error));
+      }
     }
   }
 
