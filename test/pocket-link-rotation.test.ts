@@ -49,4 +49,9 @@ test("PocketLink status text distinguishes primary, fresh backup, and expired ba
     pocketLinkSecurityStatus(backupStatus(now - POCKET_LINK_PIN_PROMOTION_MAX_AGE_MS - 1), now),
     "PocketLink TLS · 새 인증서 확인 만료",
   );
+  assert.equal(pocketLinkSecurityStatus({
+    ...backupStatus(now),
+    route: "relay",
+    pinSlot: "primary",
+  }, now), "PocketLink relay · 기본 pin 확인");
 });

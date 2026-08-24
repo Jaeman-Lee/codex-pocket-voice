@@ -21,6 +21,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.security.cert.CertificateException;
@@ -42,6 +43,7 @@ import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
+import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
 
 public class PocketLinkService extends Service {
@@ -265,6 +267,7 @@ public class PocketLinkService extends Service {
 
     private static String safeError(Exception error) {
         if (error instanceof java.net.BindException) return "로컬 포트를 이미 사용 중입니다.";
+        if (error instanceof RelayConnectionException) return "PocketLink 릴레이를 사용할 수 없습니다.";
         if (error instanceof CertificateException) return "Companion 인증서 검증에 실패했습니다.";
         return "암호화 연결을 만들 수 없습니다.";
     }
@@ -350,8 +353,76 @@ public class PocketLinkService extends Service {
                 PocketLinkConfigStore.Config config,
                 PocketLinkIdentityStore.Identity identity
         ) throws Exception {
+            Socket transport = config.relay == null
+                    ? directTransport(config.host, config.remotePort)
+                    : relayTransport(config.relay);
+            try {
+                return companionTlsSocket(transport, config, identity);
+            } catch (Exception error) {
+                closeQuietly(transport);
+                throw error;
+            }
+        }
+
+        private static Socket directTransport(String host, int port) throws Exception {
             Socket transport = new Socket();
-            transport.connect(new InetSocketAddress(config.host, config.remotePort), 10_000);
+            try {
+                transport.connect(new InetSocketAddress(host, port), PocketRelayProtocol.CONNECT_TIMEOUT_MS);
+                return transport;
+            } catch (Exception error) {
+                closeQuietly(transport);
+                throw error;
+            }
+        }
+
+        private static Socket relayTransport(PocketLinkConfigStore.RelayConfig relay) throws Exception {
+            Socket transport = new Socket();
+            SSLSocket outer = null;
+            try {
+                transport.connect(
+                        new InetSocketAddress(relay.host, relay.port),
+                        PocketRelayProtocol.CONNECT_TIMEOUT_MS
+                );
+                SSLContext context = SSLContext.getInstance("TLS");
+                context.init(
+                        null,
+                        new TrustManager[] {
+                                new RelayPinnedTrustManager(platformTrustManager(), relay.serverPublicKeyPin)
+                        },
+                        new SecureRandom()
+                );
+                outer = (SSLSocket) context.getSocketFactory().createSocket(
+                        transport,
+                        relay.serverName,
+                        relay.port,
+                        true
+                );
+                outer.setSoTimeout(PocketRelayProtocol.RESPONSE_TIMEOUT_MS);
+                enableModernTls(outer);
+                SSLParameters parameters = outer.getSSLParameters();
+                parameters.setEndpointIdentificationAlgorithm("HTTPS");
+                outer.setSSLParameters(parameters);
+                outer.startHandshake();
+                PocketRelayProtocol.attach(
+                        outer.getInputStream(),
+                        outer.getOutputStream(),
+                        relay.slot,
+                        relay.secret
+                );
+                outer.setSoTimeout(0);
+                return outer;
+            } catch (Exception error) {
+                closeQuietly(outer);
+                if (outer == null) closeQuietly(transport);
+                throw new RelayConnectionException(error);
+            }
+        }
+
+        private static Socket companionTlsSocket(
+                Socket transport,
+                PocketLinkConfigStore.Config config,
+                PocketLinkIdentityStore.Identity identity
+        ) throws Exception {
             SSLContext context = SSLContext.getInstance("TLS");
             AtomicReference<String> matchedPinSlot = new AtomicReference<>();
             context.init(
@@ -362,6 +433,7 @@ public class PocketLinkService extends Service {
             SSLSocketFactory factory = context.getSocketFactory();
             SSLSocket socket = (SSLSocket) factory.createSocket(transport, config.host, config.remotePort, true);
             socket.setSoTimeout(10_000);
+            enableModernTls(socket);
             SSLParameters parameters = socket.getSSLParameters();
             parameters.setEndpointIdentificationAlgorithm("HTTPS");
             socket.setSSLParameters(parameters);
@@ -378,6 +450,24 @@ public class PocketLinkService extends Service {
             );
             socket.setSoTimeout(0);
             return socket;
+        }
+
+        private static X509TrustManager platformTrustManager() throws Exception {
+            TrustManagerFactory factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            factory.init((KeyStore) null);
+            for (TrustManager manager : factory.getTrustManagers()) {
+                if (manager instanceof X509TrustManager) return (X509TrustManager) manager;
+            }
+            throw new IllegalStateException("platform X509 trust manager is unavailable");
+        }
+
+        private static void enableModernTls(SSLSocket socket) {
+            List<String> enabled = new ArrayList<>();
+            for (String protocol : socket.getSupportedProtocols()) {
+                if ("TLSv1.2".equals(protocol) || "TLSv1.3".equals(protocol)) enabled.add(protocol);
+            }
+            if (enabled.isEmpty()) throw new IllegalStateException("TLS 1.2 or newer is unavailable");
+            socket.setEnabledProtocols(enabled.toArray(new String[0]));
         }
     }
 
@@ -451,8 +541,8 @@ public class PocketLinkService extends Service {
         private final AtomicReference<String> matchedPinSlot;
 
         PinnedTrustManager(String primaryPin, String backupPin, AtomicReference<String> matchedPinSlot) {
-            this.primaryPin = decodePin(primaryPin);
-            this.backupPin = backupPin == null || backupPin.isEmpty() ? null : decodePin(backupPin);
+            this.primaryPin = decodePublicKeyPin(primaryPin);
+            this.backupPin = backupPin == null || backupPin.isEmpty() ? null : decodePublicKeyPin(backupPin);
             this.matchedPinSlot = matchedPinSlot;
         }
 
@@ -486,12 +576,55 @@ public class PocketLinkService extends Service {
             return new X509Certificate[0];
         }
 
-        private static byte[] decodePin(String value) {
-            if (value == null || !value.matches("sha256/[A-Za-z0-9+/]{43}=")) {
-                throw new IllegalArgumentException("invalid SPKI pin");
-            }
-            return Base64.decode(value.substring("sha256/".length()), Base64.NO_WRAP);
+    }
+
+    private static final class RelayPinnedTrustManager implements X509TrustManager {
+        private final X509TrustManager platform;
+        private final byte[] publicKeyPin;
+
+        RelayPinnedTrustManager(X509TrustManager platform, String publicKeyPin) {
+            this.platform = platform;
+            this.publicKeyPin = decodePublicKeyPin(publicKeyPin);
         }
+
+        @Override
+        public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            throw new CertificateException("client certificates are not accepted");
+        }
+
+        @Override
+        public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            platform.checkServerTrusted(chain, authType);
+            if (chain == null || chain.length == 0) throw new CertificateException("missing relay certificate");
+            try {
+                byte[] actual = MessageDigest.getInstance("SHA-256").digest(chain[0].getPublicKey().getEncoded());
+                if (!MessageDigest.isEqual(actual, publicKeyPin)) {
+                    throw new CertificateException("relay public key pin mismatch");
+                }
+            } catch (CertificateException error) {
+                throw error;
+            } catch (Exception error) {
+                throw new CertificateException("cannot verify relay public key", error);
+            }
+        }
+
+        @Override
+        public X509Certificate[] getAcceptedIssuers() {
+            return platform.getAcceptedIssuers();
+        }
+    }
+
+    private static final class RelayConnectionException extends IOException {
+        RelayConnectionException(Exception cause) {
+            super("Pocket relay connection failed", cause);
+        }
+    }
+
+    private static byte[] decodePublicKeyPin(String value) {
+        if (value == null || !value.matches("sha256/[A-Za-z0-9+/]{43}=")) {
+            throw new IllegalArgumentException("invalid SPKI pin");
+        }
+        return Base64.decode(value.substring("sha256/".length()), Base64.NO_WRAP);
     }
 
     private static void closeQuietly(Socket socket) {

@@ -40,6 +40,16 @@ test("Pocket relay configuration requires private credentials and a pinned TLS e
   assert.equal(companion?.secret, secret);
   assert.equal(companion?.standbyConnections, 3);
   assert.deepEqual(companion?.certificateAuthority, certificate);
+  const defaultPool = await loadPocketRelayCompanionConfig({
+    CODEX_POCKET_RELAY_HOST: "127.0.0.1",
+    CODEX_POCKET_RELAY_PORT: "9443",
+    CODEX_POCKET_RELAY_SERVER_NAME: "localhost",
+    CODEX_POCKET_RELAY_SERVER_PIN: publicKeyPin(new X509Certificate(certificate)),
+    CODEX_POCKET_RELAY_CA_FILE: relayIdentity.certificateFile,
+    CODEX_POCKET_RELAY_SLOT: randomBytes(16).toString("base64url"),
+    CODEX_POCKET_RELAY_SECRET_FILE: secretFile,
+  });
+  assert.equal(defaultPool?.standbyConnections, 4);
   assert.throws(() => startPocketRelayCompanion({
     relay: companion!,
     targetHost: "0.0.0.0",

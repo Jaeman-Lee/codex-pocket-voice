@@ -36,6 +36,7 @@ export interface PocketLinkStatus {
   configured: boolean;
   running: boolean;
   transport: "termux" | "pocketlink";
+  route?: "direct" | "relay";
   error?: string;
   backupPinConfigured?: boolean;
   identityRotationPending?: boolean;
@@ -56,7 +57,19 @@ interface NativeTunnelPlugin {
     remotePort: number;
     primaryPin: string;
     backupPin?: string;
-  }): Promise<{ configured: boolean; transport: "pocketlink"; localPort: number }>;
+    route: "direct" | "relay";
+    relayHost?: string;
+    relayPort?: number;
+    relayServerName?: string;
+    relayServerPublicKeyPin?: string;
+    relaySlot?: string;
+    relaySecret?: string;
+  }): Promise<{
+    configured: boolean;
+    transport: "pocketlink";
+    route: "direct" | "relay";
+    localPort: number;
+  }>;
   removePocketLink(options: { localPort: number }): Promise<void>;
   preparePocketLinkIdentityRotation(options: { localPort: number }): Promise<{
     prepared: boolean;

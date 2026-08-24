@@ -19,7 +19,7 @@ import { publicKeyPin } from "./pocket-link.js";
 
 const RELAY_PROTOCOL_VERSION = 1;
 const DEFAULT_RELAY_PORT = 9443;
-const DEFAULT_POOL_SIZE = 2;
+const DEFAULT_POOL_SIZE = 4;
 const MAX_RELAY_FRAME_BYTES = 2_048;
 const MAX_SECRET_FILE_BYTES = 512;
 const MAX_TLS_FILE_BYTES = 64 * 1_024;

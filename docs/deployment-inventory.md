@@ -17,7 +17,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | V2 development component | Version / revision | State |
 | --- | --- | --- |
 | Source version | `2.0.0` / Android `versionCode 20000` | development only; not field installed |
-| Target branch | `feature/v2-control-plane` | common Provider contract/failure suite, user-approved strict-ZDR OpenRouter routing, approved crash-recoverable text change tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, process-death notifications, connection/run/journal/voice/media state machines, live branch/worktree identity, staged PocketLink rotations, reviewed same-LAN discovery and outbound relay server/Companion foundation implemented; Android relay/P2P, mobile field acceptance and model eval next |
+| Target branch | `feature/v2-control-plane` | common Provider contract/failure suite, user-approved strict-ZDR OpenRouter routing, approved crash-recoverable text change tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, process-death notifications, connection/run/journal/voice/media state machines, live branch/worktree identity, staged PocketLink rotations, reviewed same-LAN discovery and Android/Companion outbound relay implemented; P2P, mobile field acceptance and model eval next |
 | Gateway protocol | maximum 3, minimum 2 | v1 rollout compatibility retained |
 | Codex app-server schema | `codex-cli 0.149.0` | generated bindings and no-model real integration verified |
 | Current v1 APK | 1.8.2 candidate | signed APK/checksum/SBOM prepared from hotfix PR #4; install not performed |
@@ -35,7 +35,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
 | PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD address discovery, observed backup-pin server certificate promotion and recoverable Keystore A/B client identity rotation implemented; P2P and field validation pending |
-| PocketLink outbound relay | protocol 1 TLS broker + Companion connector | opaque nested PocketLink mTLS tunnel, private 256-bit shared secret, SPKI pin and bounded connection pool verified; Android enrollment/native connector and public-service acceptance pending |
+| PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | explicit direct/relay selection, Keystore-encrypted endpoint/slot/secret, public-CA+hostname+SPKI outer TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
 
 PocketLink relay foundation checkpoint decision: 외부 relay로 나가는 Companion tunnel과 별도 broker는 새 v2
@@ -46,6 +46,15 @@ slot·secret은 broker에 영속화하거나 로그로 남기지 않는다. 공�
 사용하며 실제 relay endpoint·개인 network 값·Provider key·유료 inference를 사용하지 않는다. APK
 전달·설치와 실행 중 Companion 재시작은 하지 않고 current v1 후보 1.8.2, 별도 staged 1.8.3과 검증된
 rollback 1.8.1을 그대로 보존한다.
+
+Android relay connector checkpoint decision: Android relay 등록과 nested-TLS는 새 v2 network workflow라
+`feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위이므로 SemVer `2.0.0`/Android
+`versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
+기존 direct 설정은 encrypted schema 1에서 2로 migration하고, 새 relay endpoint·hostname·pin·slot·secret은
+같은 Keystore AES-GCM envelope에만 저장한다. Android는 relay의 public CA/hostname/SPKI와 내부 Companion
+hostname/SPKI/client certificate를 별도로 검증하며 direct/SSH 자동 fallback은 하지 않는다. 공개 검사는
+합성 값만 사용하고 APK 전달·설치, Companion 재시작과 실제 공용 relay 접속은 수행하지 않는다. current
+v1 후보 1.8.2, staged 1.8.3과 검증된 rollback 1.8.1은 그대로 보존한다.
 
 Mobile browser acceptance checkpoint decision: production build·pairing·Gateway·SSE·run·approval를 함께 검증하고
 live diff를 모바일 진행 패널에 노출하는 새 v2 capability이므로 `feature`로 분류한다. 아직 현장 전달하지

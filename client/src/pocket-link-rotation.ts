@@ -19,9 +19,10 @@ export function pocketLinkSecurityStatus(
   now = Date.now(),
 ): string {
   if (!status) return "PocketLink TLS · 상태 확인 중";
-  if (status.error) return `PocketLink TLS · ${status.error}`;
-  if (isRecentBackupPinObservation(status, now)) return "PocketLink TLS · 새 인증서 확인됨";
-  if (status.pinSlot === "backup") return "PocketLink TLS · 새 인증서 확인 만료";
-  if (status.pinSlot === "primary") return "PocketLink TLS · 기본 pin 확인";
-  return status.running ? "PocketLink TLS · 연결 대기" : "PocketLink TLS · 중지됨";
+  const label = status.route === "relay" ? "PocketLink relay" : "PocketLink TLS";
+  if (status.error) return `${label} · ${status.error}`;
+  if (isRecentBackupPinObservation(status, now)) return `${label} · 새 인증서 확인됨`;
+  if (status.pinSlot === "backup") return `${label} · 새 인증서 확인 만료`;
+  if (status.pinSlot === "primary") return `${label} · 기본 pin 확인`;
+  return status.running ? `${label} · 연결 대기` : `${label} · 중지됨`;
 }

@@ -10,6 +10,21 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Android PocketLink relay enrollment와 native nested-TLS connector는 새 사용자 연결 workflow이므로
+  `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
+  `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
+  APK 전달·설치와 실행 중 Companion 재시작은 수행하지 않으며 v1.8.2 current 후보, 별도 staged
+  v1.8.3과 검증된 v1.8.1 rollback을 그대로 보존한다.
+- Android 연결 센터에서 직접 LAN 또는 relay를 명시적으로 선택한다. relay endpoint·TLS hostname·
+  SPKI pin·opaque slot·256-bit secret은 기존 Keystore AES-GCM PocketLink 설정 안에 저장하고 WebView
+  storage, status 응답과 로그로 다시 내보내지 않는다. 기존 schema 1 직접 연결 설정은 schema 2로
+  읽어 손실 없이 유지한다.
+- native forwarder는 platform CA, HTTPS hostname, 별도 relay SPKI pin으로 바깥 TLS 1.2/1.3을 확인하고
+  protocol 1의 2 KiB exact client frame을 교환한 뒤, 그 socket 위에서 기존 Companion hostname·SPKI와
+  Android Keystore P-256 client certificate를 사용하는 내부 mTLS를 다시 수행한다. relay 인증 실패는
+  slot·secret 존재 여부를 구분하지 않고 direct/SSH로 자동 fallback하지 않는다.
+- Companion relay pool은 UI SSE, opt-in background SSE와 API 요청이 겹치는 정상 모바일 동작을 위해
+  기존 상한 안에서 기본 4개 waiter를 유지한다.
 - PocketLink outbound relay foundation은 새 network transport capability이므로 `feature`로 분류한다.
   아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`과
   `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. APK 전달·설치와 실행 중
@@ -20,8 +35,8 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   slot·waiter·timeout을 요구하며 틀린 인증값은 기존 waiter를 소비하지 않는다.
 - relay는 outer TLS 안의 opaque PocketLink mTLS bytes만 전달한다. 서로 다른 합성 Android client와
   Companion certificate를 사용한 통합 검사에서 relay 뒤에도 기존 server pin과 client-certificate
-  proof가 종단간 유지됨을 검증한다. Android relay 등록·native connector와 현장 network/battery
-  acceptance는 다음 Phase E 단계로 남긴다.
+  proof가 종단간 유지됨을 검증한다. 공용 relay 운영 방어와 현장 network/battery acceptance는 다음
+  Phase E 단계로 남긴다.
 - 모바일 browser acceptance checkpoint는 production client build와 실제 pairing·Gateway·SSE·run·approval
   경로를 사용하는 새 v2 검증 capability이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 v2 안의
   변경이므로 `2.0.0`/Android `versionCode 20000`과 `feature/v2-control-plane`을 유지하고 기존 CI-only

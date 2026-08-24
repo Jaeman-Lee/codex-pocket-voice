@@ -166,6 +166,8 @@ public class PocketTunnelPlugin extends Plugin {
         String host = normalizedHost(call.getString("host"));
         String primaryPin = normalizedPin(call.getString("primaryPin"), false);
         String backupPin = normalizedPin(call.getString("backupPin"), true);
+        String route = call.getString("route");
+        if (route == null) route = "direct";
         int localPort = optionalPort(call, "localPort", -1);
         int remotePort = optionalPort(call, "remotePort", -1);
         if (label == null || host == null || primaryPin == null || backupPin == null || localPort < 0 || remotePort < 0) {
@@ -174,6 +176,26 @@ public class PocketTunnelPlugin extends Plugin {
         }
         if (!backupPin.isEmpty() && backupPin.equals(primaryPin)) {
             call.reject("교체용 SPKI pin은 기본 pin과 달라야 합니다.");
+            return;
+        }
+        PocketLinkConfigStore.RelayConfig relay = null;
+        if ("relay".equals(route)) {
+            String relayHost = normalizedHost(call.getString("relayHost"));
+            String relayServerName = normalizedHost(call.getString("relayServerName"));
+            String relayPin = normalizedPin(call.getString("relayServerPublicKeyPin"), false);
+            String relaySlot = normalizedRelaySlot(call.getString("relaySlot"));
+            String relaySecret = normalizedRelaySecret(call.getString("relaySecret"));
+            int relayPort = optionalPort(call, "relayPort", -1);
+            if (relayHost == null || relayServerName == null || relayPin == null
+                    || relaySlot == null || relaySecret == null || relayPort < 0) {
+                call.reject("PocketLink 릴레이 연결 정보가 올바르지 않습니다.");
+                return;
+            }
+            relay = new PocketLinkConfigStore.RelayConfig(
+                    relayHost, relayPort, relayServerName, relayPin, relaySlot, relaySecret
+            );
+        } else if (!"direct".equals(route)) {
+            call.reject("PocketLink 연결 경로가 올바르지 않습니다.");
             return;
         }
         boolean saved = false;
@@ -187,7 +209,8 @@ public class PocketTunnelPlugin extends Plugin {
             identityStore.ensure(localPort);
             createdIdentity = !hadIdentity;
             PocketLinkConfigStore.Config config = new PocketLinkConfigStore.Config(
-                    label, localPort, host, remotePort, primaryPin, backupPin, false
+                    label, localPort, host, remotePort, primaryPin, backupPin, false,
+                    PocketLinkIdentityStore.SLOT_A, "", relay
             );
             configStore.save(config);
             saved = true;
@@ -195,6 +218,7 @@ public class PocketTunnelPlugin extends Plugin {
             JSObject result = new JSObject();
             result.put("configured", true);
             result.put("transport", "pocketlink");
+            result.put("route", config.route());
             result.put("localPort", localPort);
             call.resolve(result);
         } catch (Exception error) {
@@ -442,6 +466,7 @@ public class PocketTunnelPlugin extends Plugin {
             result.put("running", configured && PocketLinkService.isRunning(localPort));
             result.put("transport", configured ? "pocketlink" : "termux");
             if (configured) {
+                result.put("route", config.route());
                 result.put("backupPinConfigured", config.backupPin != null && !config.backupPin.isEmpty());
                 result.put("identityRotationPending", !config.pendingIdentitySlot.isEmpty());
                 result.put("identityReady", PocketLinkService.identitySlotActive(
@@ -540,14 +565,34 @@ public class PocketTunnelPlugin extends Plugin {
     private String normalizedHost(String value) {
         if (value == null) return null;
         String host = value.trim();
-        if (host.isEmpty() || host.length() > 253 || host.equals("0.0.0.0") || host.equals("::")
-                || host.equalsIgnoreCase("localhost") || !host.matches("[A-Za-z0-9.:-]+")) return null;
-        return host;
+        return PocketRelayProtocol.isConnectionHost(host) ? host : null;
     }
 
     private String normalizedPin(String value, boolean optional) {
         if (value == null || value.trim().isEmpty()) return optional ? "" : null;
         String pin = value.trim();
         return pin.matches("sha256/[A-Za-z0-9+/]{43}=") ? pin : null;
+    }
+
+    private String normalizedRelaySlot(String value) {
+        if (value == null) return null;
+        String slot = value.trim();
+        try {
+            PocketRelayProtocol.validateSlot(slot);
+            return slot;
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private String normalizedRelaySecret(String value) {
+        if (value == null) return null;
+        String secret = value.trim();
+        try {
+            PocketRelayProtocol.validateSecret(secret);
+            return secret;
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 }

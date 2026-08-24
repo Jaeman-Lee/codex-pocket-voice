@@ -127,9 +127,13 @@ final class PocketLinkConfigStore {
         final boolean active;
         final String identitySlot;
         final String pendingIdentitySlot;
+        final RelayConfig relay;
 
         Config(String label, int localPort, String host, int remotePort, String primaryPin, String backupPin, boolean active) {
-            this(label, localPort, host, remotePort, primaryPin, backupPin, active, PocketLinkIdentityStore.SLOT_A, "");
+            this(
+                    label, localPort, host, remotePort, primaryPin, backupPin, active,
+                    PocketLinkIdentityStore.SLOT_A, "", null
+            );
         }
 
         Config(
@@ -142,6 +146,24 @@ final class PocketLinkConfigStore {
                 boolean active,
                 String identitySlot,
                 String pendingIdentitySlot
+        ) {
+            this(
+                    label, localPort, host, remotePort, primaryPin, backupPin, active,
+                    identitySlot, pendingIdentitySlot, null
+            );
+        }
+
+        Config(
+                String label,
+                int localPort,
+                String host,
+                int remotePort,
+                String primaryPin,
+                String backupPin,
+                boolean active,
+                String identitySlot,
+                String pendingIdentitySlot,
+                RelayConfig relay
         ) {
             if (!PocketLinkIdentityStore.SLOT_A.equals(identitySlot)
                     && !PocketLinkIdentityStore.SLOT_B.equals(identitySlot)) {
@@ -163,26 +185,27 @@ final class PocketLinkConfigStore {
             this.active = active;
             this.identitySlot = identitySlot;
             this.pendingIdentitySlot = pendingIdentitySlot;
+            this.relay = relay;
         }
 
         Config withActive(boolean nextActive) {
             return new Config(
                     label, localPort, host, remotePort, primaryPin, backupPin, nextActive,
-                    identitySlot, pendingIdentitySlot
+                    identitySlot, pendingIdentitySlot, relay
             );
         }
 
         Config withServerPins(String nextPrimaryPin, String nextBackupPin) {
             return new Config(
                     label, localPort, host, remotePort, nextPrimaryPin, nextBackupPin, active,
-                    identitySlot, pendingIdentitySlot
+                    identitySlot, pendingIdentitySlot, relay
             );
         }
 
         Config withPendingIdentitySlot(String nextPendingIdentitySlot) {
             return new Config(
                     label, localPort, host, remotePort, primaryPin, backupPin, active,
-                    identitySlot, nextPendingIdentitySlot
+                    identitySlot, nextPendingIdentitySlot, relay
             );
         }
 
@@ -190,7 +213,7 @@ final class PocketLinkConfigStore {
             if (pendingIdentitySlot.isEmpty()) throw new IllegalStateException("identity rotation is not pending");
             return new Config(
                     label, localPort, host, remotePort, primaryPin, backupPin, active,
-                    pendingIdentitySlot, ""
+                    pendingIdentitySlot, "", relay
             );
         }
 
@@ -198,9 +221,13 @@ final class PocketLinkConfigStore {
             return pendingIdentitySlot.isEmpty() ? identitySlot : pendingIdentitySlot;
         }
 
+        String route() {
+            return relay == null ? "direct" : "relay";
+        }
+
         JSONObject toJson() throws Exception {
             JSONObject value = new JSONObject();
-            value.put("version", 1);
+            value.put("version", 2);
             value.put("label", label);
             value.put("localPort", localPort);
             value.put("host", host);
@@ -210,11 +237,16 @@ final class PocketLinkConfigStore {
             value.put("active", active);
             value.put("identitySlot", identitySlot);
             value.put("pendingIdentitySlot", pendingIdentitySlot);
+            if (relay != null) value.put("relay", relay.toJson());
             return value;
         }
 
         static Config fromJson(JSONObject value) throws Exception {
-            if (value.getInt("version") != 1) throw new IllegalArgumentException("unsupported config version");
+            int version = value.getInt("version");
+            if (version != 1 && version != 2) throw new IllegalArgumentException("unsupported config version");
+            RelayConfig relay = version == 2 && value.has("relay")
+                    ? RelayConfig.fromJson(value.getJSONObject("relay"))
+                    : null;
             return new Config(
                     value.getString("label"),
                     value.getInt("localPort"),
@@ -224,7 +256,66 @@ final class PocketLinkConfigStore {
                     value.optString("backupPin", ""),
                     value.optBoolean("active", false),
                     value.optString("identitySlot", PocketLinkIdentityStore.SLOT_A),
-                    value.optString("pendingIdentitySlot", "")
+                    value.optString("pendingIdentitySlot", ""),
+                    relay
+            );
+        }
+    }
+
+    static final class RelayConfig {
+        final String host;
+        final int port;
+        final String serverName;
+        final String serverPublicKeyPin;
+        final String slot;
+        final String secret;
+
+        RelayConfig(
+                String host,
+                int port,
+                String serverName,
+                String serverPublicKeyPin,
+                String slot,
+                String secret
+        ) {
+            if (!PocketRelayProtocol.isConnectionHost(host)
+                    || !PocketRelayProtocol.isConnectionHost(serverName)
+                    || port < 1_024 || port > 65_535
+                    || serverPublicKeyPin == null
+                    || !serverPublicKeyPin.matches("sha256/[A-Za-z0-9+/]{43}=")) {
+                throw new IllegalArgumentException("invalid relay TLS configuration");
+            }
+            PocketRelayProtocol.validateSlot(slot);
+            PocketRelayProtocol.validateSecret(secret);
+            this.host = host;
+            this.port = port;
+            this.serverName = serverName;
+            this.serverPublicKeyPin = serverPublicKeyPin;
+            this.slot = slot;
+            this.secret = secret;
+        }
+
+        JSONObject toJson() throws Exception {
+            JSONObject value = new JSONObject();
+            value.put("version", 1);
+            value.put("host", host);
+            value.put("port", port);
+            value.put("serverName", serverName);
+            value.put("serverPublicKeyPin", serverPublicKeyPin);
+            value.put("slot", slot);
+            value.put("secret", secret);
+            return value;
+        }
+
+        static RelayConfig fromJson(JSONObject value) throws Exception {
+            if (value.getInt("version") != 1) throw new IllegalArgumentException("unsupported relay config version");
+            return new RelayConfig(
+                    value.getString("host"),
+                    value.getInt("port"),
+                    value.getString("serverName"),
+                    value.getString("serverPublicKeyPin"),
+                    value.getString("slot"),
+                    value.getString("secret")
             );
         }
     }

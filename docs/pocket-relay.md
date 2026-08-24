@@ -1,9 +1,10 @@
 # PocketLink outbound relay foundation
 
-이 문서는 v2의 **relay broker와 Linux Companion outbound connector checkpoint**를 설명한다.
+이 문서는 v2의 **relay broker와 Linux Companion/Android outbound connector checkpoint**를 설명한다.
 같은 LAN에 있지 않은 Android와 Companion이 모두 외부 relay로 나가는 연결만 만들 수 있게 하는
-기반이며, 현재 APK에는 relay 등록·선택 UI가 아직 없다. 따라서 이 checkpoint는 CI와 격리된 개발
-환경에서만 사용하고 실행 중인 v1 Companion이나 휴대폰 연결을 교체하지 않는다.
+기반이다. 현재 v2 APK에는 명시적인 direct/relay 선택과 Keystore-backed 등록 UI가 있지만 실기기·공용
+relay acceptance 전이므로 CI와 격리된 개발 환경에서만 사용하고 실행 중인 v1 Companion이나 휴대폰
+연결을 교체하지 않는다.
 
 ## 데이터 경로
 
@@ -104,13 +105,48 @@ export CODEX_POCKET_RELAY_SERVER_PIN='sha256/REVIEWED_RELAY_SPKI_PIN='
 export CODEX_POCKET_RELAY_CA_FILE=/private/relay/ca.pem
 export CODEX_POCKET_RELAY_SLOT='OPAQUE_128_BIT_SLOT'
 export CODEX_POCKET_RELAY_SECRET_FILE=/private/companion-relay/secret
-export CODEX_POCKET_RELAY_POOL=2
+export CODEX_POCKET_RELAY_POOL=4
 ```
 
-`CA_FILE`은 private CA를 쓸 때만 필요하지만 SPKI pin은 항상 필요하다. Connector는 기본 두 개, 최대
-네 개의 outbound 대기 socket만 유지한다. client가 붙으면 그 socket을 로컬 PocketLink TLS listener에
+`CA_FILE`은 private CA를 쓸 때만 필요하지만 SPKI pin은 항상 필요하다. Connector는 UI SSE, 선택형
+background SSE와 한 번의 API 요청이 겹쳐도 고갈되지 않도록 기본·최대 네 개의 outbound 대기 socket만
+유지한다. client가 붙으면 그 socket을 로컬 PocketLink TLS listener에
 raw stream으로 연결하고 tunnel이 끝난 뒤 새 대기 socket을 만든다. relay host·slot·secret은 로그에
 출력하지 않는다.
+
+## Android enrollment와 nested TLS
+
+Android 연결 센터에서 PocketLink를 고른 뒤 연결 경로를 `직접 LAN` 또는 `아웃바운드 릴레이`로
+명시적으로 선택한다. 릴레이 경로에는 다음 두 identity를 별도로 입력·검토한다.
+
+- 내부 Companion: certificate hostname용 host, TLS port, 기본/교체용 Companion SPKI pin
+- 외부 relay: 접속 host/port, certificate hostname, relay SPKI pin, opaque slot, 256-bit shared secret
+
+relay host와 certificate hostname은 split DNS나 별도 접속 주소를 지원하기 위해 분리하지만 둘 다
+bounded hostname/IP로 검증한다. Android 첫 구현은 platform trust store가 신뢰하는 public CA chain만
+허용하고 hostname과 reviewed relay SPKI pin도 함께 요구한다. Node Companion의 선택형 private CA file을
+Android UI로 복사하지 않는다.
+
+등록 정보는 기존 AndroidKeyStore AES-GCM key가 보호하는 PocketLink config schema 2에 저장한다. schema
+1 direct 설정은 relay 없이 읽어 schema 2로 자연스럽게 갱신된다. slot과 secret은 native configuration
+call에서만 일시적으로 지나가며 WebView storage, device-target record, status 응답, notification과 로그로
+다시 내보내지 않는다. 사용자가 target을 삭제하면 암호문 설정과 해당 P-256 device-key A/B alias를
+함께 제거한다.
+
+로컬 browser connection마다 native forwarder는 다음 순서를 지킨다.
+
+1. relay TCP socket에 TLS 1.2/1.3을 열고 platform CA, HTTPS hostname, leaf SPKI pin을 모두 검증한다.
+2. 10초 안에 2 KiB 이하의 protocol 1 exact client frame을 보내고 exact `paired` response 하나만 받는다.
+   `unavailable`과 `rejected`는 사용자에게 같은 generic 실패로 보이며 내부 TLS 첫 byte는 선행 소비하지
+   않는다.
+3. paired outer socket 위에 새 `SSLSocket`을 겹쳐 기존 Companion hostname과 primary/backup SPKI pin을
+   확인하고 Android Keystore의 non-exportable P-256 client certificate proof를 전송한다.
+4. 두 handshake가 모두 성공한 뒤에만 loopback browser bytes를 내부 mTLS로 전달한다. 어느 단계든
+   실패하면 socket을 닫고 direct LAN, SSH 또는 다른 Provider로 자동 전환하지 않는다.
+
+Android route status는 `direct`/`relay`만 반환하고 endpoint·pin·slot·secret은 반환하지 않는다. 서버 pin
+승격과 Android client-key A/B rotation은 내부 Companion mTLS 관찰을 기준으로 하므로 relay 경로에서도
+기존 복구 순서를 그대로 사용한다.
 
 ## 자동 검증과 남은 범위
 
@@ -120,8 +156,12 @@ Node 통합 검사는 서로 다른 relay/Companion/Android test certificate를 
 - 잘못된 secret이 기존 Companion waiter를 소비하지 않음
 - 바깥 relay TLS 안에서 별도의 Android client certificate와 Companion certificate로 mTLS가 성립함
 - relay를 통과한 뒤에만 로컬 Companion이 payload를 읽고 응답함
+- Android protocol JVM 검사에서 response field 순서/공백 호환, unknown·duplicate·oversize 거부,
+  credential 결과 비구분과 내부 TLS ClientHello byte 비소비
+- Android source contract에서 public CA+hostname+relay SPKI, inner Companion pin+client identity의 분리,
+  Keystore encrypted schema migration과 status credential 비노출
 
-아직 남은 Phase E 범위는 Android Keystore에 relay endpoint·slot·secret을 등록하는 UI와 native nested
-TLS connector, direct/P2P/relay 우선순위의 명시적 사용자 정책, 실제 공용 relay 운영·부하/남용 방어,
-실기기 네트워크 전환·절전·배터리 acceptance다. 이 항목 전에는 relay를 출시 transport로 간주하지
-않고 기존 LAN PocketLink와 Termux/SSH rollback 경로를 유지한다.
+아직 남은 Phase E 범위는 Wi-Fi Direct 같은 P2P와 direct/P2P/relay 전체 우선순위 정책, 실제 공용 relay
+운영·부하/남용 방어, Android nested socket의 실기기 네트워크 전환·절전·배터리 acceptance다. 이 항목
+전에는 relay를 출시 transport로 간주하지 않고 기존 LAN PocketLink와 Termux/SSH rollback 경로를
+유지한다.

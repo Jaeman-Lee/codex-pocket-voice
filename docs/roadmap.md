@@ -105,8 +105,10 @@ retires the prior pin. Android client-device identity rotation now uses a review
 Keystore A/B slots and actual new-key mTLS proof before the prior alias is retired; uncertain responses preserve both
 slots for recovery. User-triggered same-LAN DNS-SD address discovery is implemented with bounded private-address
 candidates and separate manual SPKI-pin review. A bounded TLS relay broker and Linux Companion outbound connector
-now carry an inner end-to-end PocketLink mTLS stream without exposing Gateway plaintext. Android relay enrollment,
-the native nested-TLS connector, Wi-Fi Direct-style P2P and field battery/background measurements remain open.
+now carry an inner end-to-end PocketLink mTLS stream without exposing Gateway plaintext. Android relay enrollment
+stores the endpoint, slot and secret in Keystore-encrypted config and the native connector verifies public CA,
+hostname and relay SPKI before starting the existing Companion mTLS inside it. Wi-Fi Direct-style P2P, public relay
+operations hardening and field battery/background measurements remain open.
 
 ## Final definition of done
 
