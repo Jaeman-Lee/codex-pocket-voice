@@ -10,6 +10,11 @@ const MAX_REPORT_FILES = 64;
 const MAX_REPORT_BYTES = 64 * 1024;
 const MAX_REPORT_AGE_MS = 30 * 24 * 60 * 60_000;
 const MAX_FUTURE_SKEW_MS = 5 * 60_000;
+const MAX_SMOKE_BUDGET_USD = 0.02;
+const MAX_OPENAI_SMOKE_INPUT_TOKENS_PER_REQUEST = 4_096;
+const MAX_OPENAI_SMOKE_OUTPUT_TOKENS_PER_REQUEST = 256;
+const MAX_OPENROUTER_SMOKE_INPUT_TOKENS_PER_REQUEST = 2_048;
+const MAX_OPENROUTER_SMOKE_OUTPUT_TOKENS_PER_REQUEST = 64;
 const MAX_PROJECT_EVAL_BUDGET_USD = 0.05;
 const MAX_PROJECT_EVAL_INPUT_TOKENS_PER_REQUEST = 8_192;
 const MAX_PROJECT_EVAL_OUTPUT_TOKENS_PER_REQUEST = 256;
@@ -221,6 +226,7 @@ export function parseProviderModelGradeReport(
   const expiresAt = new Date(checkedMs + MAX_REPORT_AGE_MS).toISOString();
   if (report.provider === "openai") {
     if (report.schemaVersion !== 1) throw new ProviderModelGradeError("OpenAI grade report schema가 잘못됐습니다.");
+    validateProviderGradeReportShape(report, "openai");
     const privacyProfile = record(report.privacyProfile);
     if (privacyProfile?.store !== false || privacyProfile.serviceTier !== "default") {
       throw new ProviderModelGradeError("OpenAI grade report의 privacy profile이 잘못됐습니다.");
@@ -242,10 +248,14 @@ export function parseProviderModelGradeReport(
     return normalizedRecord("openai", modelId, undefined, checkedAt, expiresAt, expired, contract, grades);
   }
   if (report.schemaVersion !== 2) throw new ProviderModelGradeError("OpenRouter grade report schema가 잘못됐습니다.");
+  validateProviderGradeReportShape(report, "openrouter");
   const privacyProfile = record(report.privacyProfile);
   if (privacyProfile?.zdr !== true || privacyProfile.dataCollection !== "deny"
       || privacyProfile.allowFallbacks !== false) {
     throw new ProviderModelGradeError("OpenRouter grade report의 privacy profile이 잘못됐습니다.");
+  }
+  if (report.creditBaseCurrency !== "USD") {
+    throw new ProviderModelGradeError("OpenRouter grade report의 비용 통화가 잘못됐습니다.");
   }
   if (!Array.isArray(report.actualProviders) || report.actualProviders.length !== 1
       || typeof report.actualProviders[0] !== "string"
@@ -313,6 +323,7 @@ function validateProjectGradeEvidence(
     if (projectRead === "pass" || coding === "pass") {
       throw new ProviderModelGradeError("Provider project grade에 보호된 평가 증거가 없습니다.");
     }
+    validateSmokeGradeEnvelope(report, grades, providerId);
     return null;
   }
   if (!exactKeys(evaluation, ["scope", "fixture", "approval", "maximumRequests", "outcome", "tools"])
@@ -362,6 +373,121 @@ function validateProjectGradeEvidence(
   }
   validateProjectGradeEnvelope(report, providerId, maximumRequests, projectRead === "pass" || coding === "pass");
   return { scope, outcome, tools };
+}
+
+function validateProviderGradeReportShape(
+  report: Record<string, unknown>,
+  providerId: GradedProviderId,
+): void {
+  const projectGrade = Object.prototype.hasOwnProperty.call(report, "evaluation");
+  const common = [
+    "schemaVersion", "provider", "privacyProfile", "calls", "budgetUsd", "estimatedMaximumUsd",
+    "usage", "grades", "checkedAt",
+  ];
+  const expected = providerId === "openai"
+    ? [
+        ...common, "requestedModel", "actualModel", "actualEstimatedUsd", "pricingBasis",
+        ...(projectGrade ? ["evaluation"] : []),
+      ]
+    : [
+        ...common, "model", "requestedUpstream", "actualProviders", "actualCostCredits",
+        "creditBaseCurrency", ...(projectGrade ? ["actualEstimatedUsd", "evaluation"] : []),
+      ];
+  const privacy = record(report.privacyProfile);
+  const grades = record(report.grades);
+  const expectedPrivacy = providerId === "openai"
+    ? ["store", "serviceTier"]
+    : ["zdr", "dataCollection", "allowFallbacks"];
+  const expectedGrades = providerId === "openai"
+    ? ["streaming", "conversation", "functionCalling", "statelessReplay", "projectRead", "coding"]
+    : ["conversation", "toolCalling", "projectRead", "coding"];
+  if (!exactKeys(report, expected) || !privacy || !exactKeys(privacy, expectedPrivacy)
+      || !grades || !exactKeys(grades, expectedGrades)) {
+    throw new ProviderModelGradeError("Provider model grade report의 redacted schema가 잘못됐습니다.");
+  }
+  if (providerId === "openai") openAIPriceEvidence(report);
+}
+
+function validateSmokeGradeEnvelope(
+  report: Record<string, unknown>,
+  grades: Record<string, unknown> | null,
+  providerId: GradedProviderId,
+): void {
+  if (grade(grades?.projectRead) !== "not_tested" || grade(grades?.coding) !== "not_tested") {
+    throw new ProviderModelGradeError("Provider smoke report는 project tool 등급을 발급할 수 없습니다.");
+  }
+  const budgetUsd = boundedNumber(report.budgetUsd, 0.0001, MAX_SMOKE_BUDGET_USD);
+  const estimatedMaximumUsd = budgetUsd === null
+    ? null
+    : boundedNumber(report.estimatedMaximumUsd, 0, budgetUsd);
+  if (budgetUsd === null || report.calls !== 2
+      || estimatedMaximumUsd === null
+      || !Array.isArray(report.usage) || report.usage.length !== 2) {
+    throw new ProviderModelGradeError("Provider smoke report의 비용 또는 호출 상한이 잘못됐습니다.");
+  }
+  if (providerId === "openai") {
+    const pricing = openAIPriceEvidence(report);
+    const expectedMaximumUsd = 2 * (
+      MAX_OPENAI_SMOKE_INPUT_TOKENS_PER_REQUEST * pricing.inputUsdPerMillion
+      + MAX_OPENAI_SMOKE_OUTPUT_TOKENS_PER_REQUEST * pricing.outputUsdPerMillion
+    ) / 1_000_000;
+    if (Math.abs(estimatedMaximumUsd - expectedMaximumUsd) > 1e-12) {
+      throw new ProviderModelGradeError("OpenAI smoke report의 사전 비용 계산이 일치하지 않습니다.");
+    }
+    let expectedCost = 0;
+    for (const value of report.usage) {
+      const usage = record(value);
+      if (!usage || !exactKeys(usage, [
+        "inputTokens", "cachedInputTokens", "outputTokens", "reasoningTokens", "totalTokens",
+      ])) {
+        throw new ProviderModelGradeError("OpenAI smoke report의 usage schema가 잘못됐습니다.");
+      }
+      const inputTokens = boundedInteger(usage.inputTokens, 0, MAX_OPENAI_SMOKE_INPUT_TOKENS_PER_REQUEST);
+      const outputTokens = boundedInteger(usage.outputTokens, 0, MAX_OPENAI_SMOKE_OUTPUT_TOKENS_PER_REQUEST);
+      const totalTokens = boundedInteger(
+        usage.totalTokens,
+        0,
+        MAX_OPENAI_SMOKE_INPUT_TOKENS_PER_REQUEST + MAX_OPENAI_SMOKE_OUTPUT_TOKENS_PER_REQUEST,
+      );
+      const cachedInputTokens = boundedInteger(usage.cachedInputTokens, 0, inputTokens ?? -1);
+      const reasoningTokens = boundedInteger(usage.reasoningTokens, 0, outputTokens ?? -1);
+      if (inputTokens === null || outputTokens === null || totalTokens !== inputTokens + outputTokens
+          || cachedInputTokens === null || reasoningTokens === null) {
+        throw new ProviderModelGradeError("OpenAI smoke report의 usage 증거가 잘못됐습니다.");
+      }
+      expectedCost += inputTokens * pricing.inputUsdPerMillion / 1_000_000
+        + outputTokens * pricing.outputUsdPerMillion / 1_000_000;
+    }
+    const actualEstimatedUsd = boundedNumber(report.actualEstimatedUsd, 0, budgetUsd);
+    if (actualEstimatedUsd === null || Math.abs(actualEstimatedUsd - expectedCost) > 1e-12) {
+      throw new ProviderModelGradeError("OpenAI smoke report의 비용 계산이 일치하지 않습니다.");
+    }
+    return;
+  }
+  let expectedCredits = 0;
+  for (const value of report.usage) {
+    const usage = record(value);
+    if (!usage || !exactKeys(usage, ["inputTokens", "outputTokens", "totalTokens", "costCredits"])) {
+      throw new ProviderModelGradeError("OpenRouter smoke report의 usage schema가 잘못됐습니다.");
+    }
+    const inputTokens = boundedInteger(usage.inputTokens, 0, MAX_OPENROUTER_SMOKE_INPUT_TOKENS_PER_REQUEST);
+    const outputTokens = boundedInteger(usage.outputTokens, 0, MAX_OPENROUTER_SMOKE_OUTPUT_TOKENS_PER_REQUEST);
+    const totalTokens = boundedInteger(
+      usage.totalTokens,
+      0,
+      MAX_OPENROUTER_SMOKE_INPUT_TOKENS_PER_REQUEST + MAX_OPENROUTER_SMOKE_OUTPUT_TOKENS_PER_REQUEST,
+    );
+    const costCredits = boundedNumber(usage.costCredits, 0, budgetUsd);
+    if (inputTokens === null || outputTokens === null || totalTokens !== inputTokens + outputTokens
+        || costCredits === null) {
+      throw new ProviderModelGradeError("OpenRouter smoke report의 usage 증거가 잘못됐습니다.");
+    }
+    expectedCredits += costCredits;
+  }
+  const actualCostCredits = boundedNumber(report.actualCostCredits, 0, budgetUsd);
+  if (actualCostCredits === null || Math.abs(actualCostCredits - expectedCredits) > 1e-12) {
+    throw new ProviderModelGradeError("OpenRouter smoke report의 비용 계산이 일치하지 않습니다.");
+  }
 }
 
 function validateProjectGradeEnvelope(
@@ -441,18 +567,20 @@ function validateProjectGradeEnvelope(
     throw new ProviderModelGradeError("Provider project grade usage 증거가 잘못됐습니다.");
   }
   if (providerId === "openai") {
-    const pricing = record(report.pricingBasis);
-    const inputPrice = boundedNumber(pricing?.inputUsdPerMillion, 0.000001, 1_000);
-    const outputPrice = boundedNumber(pricing?.outputUsdPerMillion, 0.000001, 1_000);
-    if (!pricing || !exactKeys(pricing, [
-      "currency", "inputUsdPerMillion", "outputUsdPerMillion", "source",
-    ]) || pricing.currency !== "USD" || pricing.source !== "operator_reviewed"
-        || inputPrice === null || outputPrice === null || parsedUsage?.costCredits !== undefined) {
+    const pricing = openAIPriceEvidence(report);
+    const expectedMaximumUsd = maximumRequests * (
+      MAX_PROJECT_EVAL_INPUT_TOKENS_PER_REQUEST * pricing.inputUsdPerMillion
+      + MAX_PROJECT_EVAL_OUTPUT_TOKENS_PER_REQUEST * pricing.outputUsdPerMillion
+    ) / 1_000_000;
+    if (Math.abs(estimatedMaximumUsd - expectedMaximumUsd) > 1e-12) {
+      throw new ProviderModelGradeError("OpenAI project grade 사전 비용 계산이 일치하지 않습니다.");
+    }
+    if (parsedUsage?.costCredits !== undefined) {
       throw new ProviderModelGradeError("OpenAI project grade 가격 증거가 잘못됐습니다.");
     }
     if (parsedUsage && actualEstimatedUsd !== null) {
-      const expected = parsedUsage.inputTokens * inputPrice / 1_000_000
-        + parsedUsage.outputTokens * outputPrice / 1_000_000;
+      const expected = parsedUsage.inputTokens * pricing.inputUsdPerMillion / 1_000_000
+        + parsedUsage.outputTokens * pricing.outputUsdPerMillion / 1_000_000;
       if (Math.abs(expected - actualEstimatedUsd) > 1e-12) {
         throw new ProviderModelGradeError("OpenAI project grade 비용 계산이 일치하지 않습니다.");
       }
@@ -472,6 +600,22 @@ function validateProjectGradeEnvelope(
       || (providerId === "openrouter" && parsedUsage.costCredits === undefined))) {
     throw new ProviderModelGradeError("Provider project grade 통과에 필요한 비용 증거가 없습니다.");
   }
+}
+
+function openAIPriceEvidence(report: Record<string, unknown>): {
+  inputUsdPerMillion: number;
+  outputUsdPerMillion: number;
+} {
+  const pricing = record(report.pricingBasis);
+  const inputUsdPerMillion = boundedNumber(pricing?.inputUsdPerMillion, 0.000001, 1_000);
+  const outputUsdPerMillion = boundedNumber(pricing?.outputUsdPerMillion, 0.000001, 1_000);
+  if (!pricing || !exactKeys(pricing, [
+    "currency", "inputUsdPerMillion", "outputUsdPerMillion", "source",
+  ]) || pricing.currency !== "USD" || pricing.source !== "operator_reviewed"
+      || inputUsdPerMillion === null || outputUsdPerMillion === null) {
+    throw new ProviderModelGradeError("OpenAI project grade 가격 증거가 잘못됐습니다.");
+  }
+  return { inputUsdPerMillion, outputUsdPerMillion };
 }
 
 function normalizedRecord(

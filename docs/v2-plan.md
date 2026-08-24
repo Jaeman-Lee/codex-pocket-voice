@@ -381,7 +381,9 @@ update이며 APK를 새 current 후보로 배포하지 않는다. `store:false` 
 $0.02 상한 아래에서 2회 synthetic Responses 호출만 수행한다. 첫 호출은 `store:false` strict 함수 호출,
 둘째는 encrypted reasoning을 포함한 응답 항목과 `function_call_output`의 stateless replay를 검증한다.
 호출당 input 4,096/output 256 token, 고정 `service_tier: default`를 강제하고 prompt·marker·함수 인자·
-응답 본문이 없는 redacted report만 남긴다. loopback fixture는 구현됐지만 실제 key 실행과 project
+응답 본문이 없는 exact-allowlist redacted report만 남긴다. 직접 실행도 CI와 같은 `$0.02` budget ceiling을
+사용하며 report 소비자는 호출별 usage와 operator-reviewed 가격에서 사전·실제 비용을 재계산한다.
+loopback fixture는 구현됐지만 실제 key 실행과 project
 read/coding 현장 등급은 아직 남아 있다.
 
 같은 protected job의 optional project-grade 단계는 24시간 이내 smoke report와 exact model을 다시
@@ -434,6 +436,10 @@ endpoint의 bounded 가격·p50 latency/throughput·uptime·quantization·tool c
 강제한다. 자동 usage의 USD 기준 credit 비용과 opt-in router metadata의 exact model·첫 attempt·선택
 provider도 검증하며 원문 prompt/response 없는 grade report만 남긴다. 남은 Phase C 핵심은 보호된
 workflow의 실제 모델 실행과 프로젝트 read/coding 현장 등급이다.
+
+OpenRouter smoke report도 top-level부터 호출별 usage까지 exact redacted schema만 허용하고 직접 실행
+budget을 CI와 같은 `$0.02`로 제한한다. report parser는 Provider가 보고한 각 호출의 USD credit 합계와
+top-level 실제 비용이 일치하는지 다시 확인한다.
 
 grade report는 exact model+upstream에 귀속된다. 자동 upstream 선택에는 project tool을 주지 않고,
 사용자가 고른 primary와 backup 모두 같은 권한 등급 및 현재 endpoint의 tool parameter 지원을 통과해야

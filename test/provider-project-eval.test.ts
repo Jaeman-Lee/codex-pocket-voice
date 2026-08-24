@@ -177,6 +177,26 @@ test("project eval rejects a world-readable smoke artifact", async (t) => {
   );
 });
 
+test("project eval rejects a smoke artifact containing an unredacted extra field", async (t) => {
+  const fixture = await evalFixture(t, "openai", "read");
+  const smoke = JSON.parse(await readFile(fixture.config.smokeReportPath, "utf8")) as Record<string, unknown>;
+  smoke.prompt = "private synthetic prompt";
+  await writeFile(fixture.config.smokeReportPath, `${JSON.stringify(smoke)}\n`, { mode: 0o600 });
+  let adapterCreated = false;
+  await assert.rejects(
+    runProviderProjectEval(fixture.config, {
+      now: () => now,
+      createAdapter: (context) => {
+        adapterCreated = true;
+        return new FakeEvalAdapter(context);
+      },
+    }),
+    /Protected smoke report is invalid/,
+  );
+  assert.equal(adapterCreated, false);
+  await assert.rejects(readFile(fixture.config.reportPath, "utf8"), /ENOENT/);
+});
+
 test("OpenRouter project grade fails closed when Provider cost evidence is missing", async (t) => {
   const fixture = await evalFixture(t, "openrouter", "read");
   const result = await runProviderProjectEval(fixture.config, {
@@ -444,6 +464,20 @@ function openAISmoke(): Record<string, unknown> {
     requestedModel: "gpt-eval-model",
     actualModel: "gpt-eval-model",
     privacyProfile: { store: false, serviceTier: "default" },
+    calls: 2,
+    budgetUsd: 0.02,
+    estimatedMaximumUsd: 0.009216,
+    actualEstimatedUsd: 0.000068,
+    pricingBasis: {
+      currency: "USD",
+      inputUsdPerMillion: 1,
+      outputUsdPerMillion: 2,
+      source: "operator_reviewed",
+    },
+    usage: [
+      { inputTokens: 20, cachedInputTokens: 0, outputTokens: 5, reasoningTokens: 2, totalTokens: 25 },
+      { inputTokens: 30, cachedInputTokens: 0, outputTokens: 4, reasoningTokens: 0, totalTokens: 34 },
+    ],
     grades: {
       streaming: "pass",
       conversation: "pass",
@@ -464,6 +498,15 @@ function openRouterSmoke(): Record<string, unknown> {
     requestedUpstream: "strict-eval",
     actualProviders: ["Strict Eval"],
     privacyProfile: { zdr: true, dataCollection: "deny", allowFallbacks: false },
+    calls: 2,
+    budgetUsd: 0.02,
+    estimatedMaximumUsd: 0.004352,
+    actualCostCredits: 0.002,
+    creditBaseCurrency: "USD",
+    usage: [
+      { inputTokens: 20, outputTokens: 5, totalTokens: 25, costCredits: 0.001 },
+      { inputTokens: 30, outputTokens: 4, totalTokens: 34, costCredits: 0.001 },
+    ],
     grades: {
       conversation: "pass",
       toolCalling: "pass",

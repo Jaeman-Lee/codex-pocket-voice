@@ -153,11 +153,32 @@ test("project tool grades require exact protected evaluation, usage, and cost ev
     /비용 계산이 일치하지 않습니다/,
   );
 
+  const mismatchedPreflightCost = openAIReport();
+  mismatchedPreflightCost.estimatedMaximumUsd = 0.01;
+  assert.throws(
+    () => parseProviderModelGradeReport(JSON.stringify(mismatchedPreflightCost), currentTime),
+    /사전 비용 계산이 일치하지 않습니다/,
+  );
+
   const wrongServiceTier = openAIReport();
   wrongServiceTier.privacyProfile.serviceTier = "flex";
   assert.throws(
     () => parseProviderModelGradeReport(JSON.stringify(wrongServiceTier), currentTime),
     /privacy profile이 잘못됐습니다/,
+  );
+
+  const privateTopLevel = openAIReport() as ReturnType<typeof openAIReport> & { prompt: string };
+  privateTopLevel.prompt = "private prompt";
+  assert.throws(
+    () => parseProviderModelGradeReport(JSON.stringify(privateTopLevel), currentTime),
+    /redacted schema가 잘못됐습니다/,
+  );
+
+  const privateUsage = openRouterReport();
+  (privateUsage.usage as typeof privateUsage.usage & { modelOutput: string }).modelOutput = "private output";
+  assert.throws(
+    () => parseProviderModelGradeReport(JSON.stringify(privateUsage), currentTime),
+    /usage 증거가 잘못됐습니다/,
   );
 });
 
@@ -256,6 +277,7 @@ function openRouterReport() {
     },
     actualEstimatedUsd: 0.00014,
     actualCostCredits: 0.001,
+    creditBaseCurrency: "USD",
     evaluation: {
       scope: "coding",
       fixture: "ephemeral_synthetic_workspace",

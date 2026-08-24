@@ -10,6 +10,7 @@ import { InMemoryApprovalBroker } from "../src/approval-broker.js";
 import { PathPolicy } from "../src/path-policy.js";
 import { createReadOnlyWorkspaceTools } from "../src/read-only-tools.js";
 import {
+  parseProviderModelGradeReport,
   StaticProviderModelGradeSource,
   type ProviderModelGradeRecord,
 } from "../src/providers/model-grades.js";
@@ -571,6 +572,15 @@ async function loadSmokeContract(
   try {
     parsed = JSON.parse(raw);
   } catch {
+    throw new ProviderProjectEvalError("Protected smoke report is invalid");
+  }
+  try {
+    const validated = parseProviderModelGradeReport(raw, now);
+    if (validated.providerId !== config.provider) {
+      throw new ProviderProjectEvalError("Protected smoke report provider does not match");
+    }
+  } catch (error) {
+    if (error instanceof ProviderProjectEvalError) throw error;
     throw new ProviderProjectEvalError("Protected smoke report is invalid");
   }
   const report = record(parsed);

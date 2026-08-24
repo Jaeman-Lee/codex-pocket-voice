@@ -15,6 +15,9 @@ Codex Pocket Voice는 model catalog의 이름이나 `tools` metadata만으로 �
 파일명은 소문자·숫자·점·밑줄·하이픈과 `.json`만 사용하며 최대 64개, 각 64 KiB다. 하나라도 권한,
 소유자, UTF-8, JSON 또는 schema 검사를 통과하지 못하면 해당 Provider의 모든 project tool을
 fail-closed로 차단한다. report 원문과 비용·usage는 Gateway, SSE와 journal export에 보내지 않는다.
+schema는 top-level, privacy, grades, pricing, per-call/aggregate usage, evaluation과 tool record까지 exact
+allowlist다. 따라서 prompt, model output, marker, 파일 내용·SHA나 자유 형식 note 같은 추가 필드는
+이름과 위치에 관계없이 report 전체를 무효화한다.
 
 보호된 workflow artifact를 검토한 뒤 설치하는 예시는 다음과 같다.
 
@@ -53,7 +56,9 @@ install -m 600 /reviewed/path/openai-project-grade-report.json "$grade_dir/opena
 두 protected smoke workflow의 `project_scope`을 `read` 또는 `coding`으로 고르면 smoke가 통과한 같은
 job에서 `provider-project-eval.ts`를 실행한다. 이 단계는 smoke report를 24시간 이내의 owner-only
 regular file로 다시 검증하고 exact model, OpenRouter exact ZDR upstream과 실제 upstream 이름을
-그 report에 고정한다. OpenAI 가격은 실행자가 다시 입력한 값, OpenRouter 가격은 현재 exact endpoint
+그 report에 고정한다. 선행 smoke도 설치 시와 같은 exact redacted schema, 호출별 usage·비용 parser를
+통과해야 한다. smoke는 CI와 직접 실행 모두 최대 `$0.02`이며, OpenAI 가격은 실행자가 다시 입력한 값,
+OpenRouter 가격은 현재 exact endpoint
 catalog를 사용하며 최대 2회(read) 또는 3회(coding), 요청당 input 8,192/output 256 token과 총 $0.05
 상한을 inference 전과 usage 후 모두 검사한다.
 

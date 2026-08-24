@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
+import { parseProviderModelGradeReport } from "../src/providers/model-grades.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -78,6 +79,7 @@ test("protected OpenRouter smoke stays allowlisted, bounded, strict, and redacte
   });
   const reportText = await readFile(reportPath, "utf8");
   const report = JSON.parse(reportText);
+  assert.equal(parseProviderModelGradeReport(reportText).verification.projectRead, "not_tested");
   assert.equal(report.schemaVersion, 2);
   assert.equal(report.calls, 2);
   assert.equal(report.actualCostCredits, 0.002);
@@ -171,6 +173,14 @@ test("protected OpenRouter smoke rejects routing metadata that cannot prove the 
   assert.notEqual(marker, "");
 });
 
+test("protected OpenRouter smoke rejects a direct-run budget above two cents", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-pocket-openrouter-budget-cap-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const reportPath = join(directory, "report.json");
+  await assert.rejects(runSmoke(1, reportPath, "0.020001"), /budget is invalid/);
+  await assert.rejects(readFile(reportPath, "utf8"), /ENOENT/);
+});
+
 function routingMetadata(): Record<string, unknown> {
   return {
     requested: "vendor/eval-model",
@@ -181,7 +191,11 @@ function routingMetadata(): Record<string, unknown> {
   };
 }
 
-async function runSmoke(port: number, reportPath: string): Promise<{ stdout: string; stderr: string }> {
+async function runSmoke(
+  port: number,
+  reportPath: string,
+  budget = "0.02",
+): Promise<{ stdout: string; stderr: string }> {
   return execFileAsync(process.execPath, ["scripts/openrouter-smoke.mjs"], {
     cwd: process.cwd(),
     env: {
@@ -190,7 +204,7 @@ async function runSmoke(port: number, reportPath: string): Promise<{ stdout: str
       OPENROUTER_SMOKE_MODELS: "vendor/eval-model",
       OPENROUTER_SMOKE_MODEL: "vendor/eval-model",
       OPENROUTER_SMOKE_UPSTREAM: "strict-eval",
-      OPENROUTER_SMOKE_MAX_USD: "0.02",
+      OPENROUTER_SMOKE_MAX_USD: budget,
       OPENROUTER_SMOKE_REPORT: reportPath,
       OPENROUTER_SMOKE_API_BASE: `http://127.0.0.1:${port}/api/v1`,
       OPENROUTER_SMOKE_TEST_MODE: "1",

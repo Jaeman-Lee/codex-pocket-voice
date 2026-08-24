@@ -10,6 +10,19 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Exact redacted Provider-grade schema fix는 model-grade 파서와 project eval 선행 검사가 알려진 필드만
+  읽고 최상위·`grades`·`usage`의 추가 필드를 거부하지 않아, prompt/model output 같은 자유 형식 원문이
+  섞인 report도 설치·최종 evidence 입력으로 인정할 수 있던 privacy boundary 공백을 고치는 internal
+  compatibility `patch`다. 직접 실행 smoke가 문서·CI의 `$0.02`보다 넓은 `$0.05` 예산을 허용하던
+  불일치도 함께 고친다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
+  `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 교체한다. 실제
+  Provider/field 호출, APK 전달·설치와 Companion 재시작은 하지 않으며 current v1 후보 1.8.2, staged
+  v1.8.4, 검증된 1.8.1 rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- smoke/project grade 파서는 top-level, privacy, grades, pricing, per-call/aggregate usage, evaluation과 tool
+  record를 exact allowlist로 제한한다. OpenAI smoke/project의 사전·실제 비용을 token/가격에서 다시
+  계산하고 OpenRouter의 USD credit 합계를 검증한다. project eval도 fresh smoke 원문을 같은 parser로
+  먼저 검증하며, 두 직접 실행 smoke의 budget ceiling을 `$0.02`로 고정한다. `release:check`의 단위
+  검사 322개와 실제 app-server 통합 3개, production build·schema 일치·SBOM이 통과했다.
 - Runtime project-grade evidence validation fix는 Companion의 일반 model-grade 로더가 보호된 project
   eval의 `projectRead`/`coding` 문자열만 검사하고 scope·승인·도구 순서·요청/token/비용 증거를 다시
   검증하지 않아, 잘못 복사되거나 변형된 report가 프로젝트 도구 권한을 올릴 수 있던 authorization

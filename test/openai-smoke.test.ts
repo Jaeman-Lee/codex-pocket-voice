@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
+import { parseProviderModelGradeReport } from "../src/providers/model-grades.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -86,6 +87,7 @@ test("protected OpenAI smoke streams a bounded store:false function replay and w
   const result = await runSmoke(address.port, reportPath, { apiKey: secret });
   const reportText = await readFile(reportPath, "utf8");
   const report = JSON.parse(reportText);
+  assert.equal(parseProviderModelGradeReport(reportText).verification.projectRead, "not_tested");
   assert.equal(report.schemaVersion, 1);
   assert.equal(report.provider, "openai");
   assert.equal(report.requestedModel, "gpt-eval-model");
@@ -159,6 +161,14 @@ test("protected OpenAI smoke rejects an operator price ceiling above budget befo
   await assert.rejects(readFile(reportPath, "utf8"), /ENOENT/);
 });
 
+test("protected OpenAI smoke rejects a direct-run budget above two cents", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-pocket-openai-budget-cap-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const reportPath = join(directory, "report.json");
+  await assert.rejects(runSmoke(1, reportPath, { budget: "0.020001" }), /budget is invalid/);
+  await assert.rejects(readFile(reportPath, "utf8"), /ENOENT/);
+});
+
 test("protected OpenAI smoke rejects unbounded reported usage without writing model output", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "codex-pocket-openai-usage-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -203,7 +213,13 @@ test("protected OpenAI smoke rejects unbounded reported usage without writing mo
 async function runSmoke(
   port: number,
   reportPath: string,
-  overrides: { apiKey?: string; allowedModels?: string; inputPrice?: string; outputPrice?: string } = {},
+  overrides: {
+    apiKey?: string;
+    allowedModels?: string;
+    budget?: string;
+    inputPrice?: string;
+    outputPrice?: string;
+  } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   return execFileAsync(process.execPath, ["scripts/openai-smoke.mjs"], {
     cwd: process.cwd(),
@@ -212,7 +228,7 @@ async function runSmoke(
       OPENAI_API_KEY: overrides.apiKey ?? "fixture-openai-negative-secret",
       OPENAI_SMOKE_MODELS: overrides.allowedModels ?? "gpt-eval-model",
       OPENAI_SMOKE_MODEL: "gpt-eval-model",
-      OPENAI_SMOKE_MAX_USD: "0.02",
+      OPENAI_SMOKE_MAX_USD: overrides.budget ?? "0.02",
       OPENAI_SMOKE_INPUT_USD_PER_MTOK: overrides.inputPrice ?? "1",
       OPENAI_SMOKE_OUTPUT_USD_PER_MTOK: overrides.outputPrice ?? "2",
       OPENAI_SMOKE_REPORT: reportPath,

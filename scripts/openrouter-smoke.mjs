@@ -7,6 +7,7 @@ const MAX_JSON_BYTES = 1024 * 1024;
 const MAX_OUTPUT_TOKENS = 64;
 const ESTIMATED_INPUT_TOKENS_PER_CALL = 2_048;
 const MAX_CALLS = 2;
+const MAX_SMOKE_BUDGET_USD = 0.02;
 
 const apiKey = requiredEnvironment("OPENROUTER_API_KEY", 512);
 const model = safeModelId(requiredEnvironment("OPENROUTER_SMOKE_MODEL", 200));
@@ -15,7 +16,12 @@ const reportPath = requiredEnvironment("OPENROUTER_SMOKE_REPORT", 4_096);
 const allowedModels = new Set(requiredEnvironment("OPENROUTER_SMOKE_MODELS", 4_096)
   .split(",").map((item) => item.trim()).filter(Boolean).map(safeModelId));
 if (!allowedModels.has(model)) fail("Selected model is not in OPENROUTER_SMOKE_MODELS");
-const budgetUsd = boundedNumber(requiredEnvironment("OPENROUTER_SMOKE_MAX_USD", 20), 0.0001, 0.05, "budget");
+const budgetUsd = boundedNumber(
+  requiredEnvironment("OPENROUTER_SMOKE_MAX_USD", 20),
+  0.0001,
+  MAX_SMOKE_BUDGET_USD,
+  "budget",
+);
 const apiBase = smokeApiBase();
 const marker = `cpv-contract-${randomUUID()}`;
 

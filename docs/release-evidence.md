@@ -80,7 +80,9 @@ npm run android:release-evidence -- \
 
 암호 검증을 통과한 뒤 실패 가능한 구조의 field 입력이 완전하고 안전하면 create-once mode `0600` schema 2
 최종 report를 남기고 exit code 1을 반환한다. 서명·artifact 검증 실패, schema 변조, candidate drift, report
-위치 교환처럼 입력 자체를 신뢰할 수 없으면 출력 없이 실패한다. 최종 report에는 candidate digest,
+위치 교환처럼 입력 자체를 신뢰할 수 없으면 출력 없이 실패한다. Provider grade도 top-level·privacy·
+grades·pricing·usage·evaluation/tool record의 exact redacted schema와 비용 재계산을 통과해야 하며 추가
+prompt/model output/freeform 필드가 있으면 출력 전에 실패한다. 최종 report에는 candidate digest,
 각 gate의 시각·기간·판정만 남으며 device/network 값,
 credential, 원본 ADB 진단, prompt/response는 포함하지 않는다. 이 명령은 ADB 조회, 설치, 앱 시작·종료,
 네트워크 전환, Provider 호출 또는 Companion 재시작을 수행하지 않는다.

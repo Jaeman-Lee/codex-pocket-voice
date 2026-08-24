@@ -52,6 +52,19 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
 
+Exact redacted Provider-grade schema checkpoint decision: model-grade 파서와 project eval 선행 검사가 알려진
+필드만 읽고 top-level·`grades`·`usage`의 추가 필드를 거부하지 않아 prompt/model output 같은 자유 형식
+원문이 섞인 report도 권한·최종 evidence 입력으로 인정할 수 있던 privacy boundary 공백을 고치므로
+internal compatibility `patch`로 분류한다. 직접 실행 smoke가 문서·CI의 `$0.02`보다 넓은 `$0.05`를
+허용하던 불일치도 함께 닫는다. 아직 전달하지 않은 incompatible v2 범위 안에서 SemVer `2.0.0`/Android
+`versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 교체한다.
+smoke/project grade의 top-level, privacy, grades, pricing, per-call/aggregate usage, evaluation/tool record는
+exact allowlist만 허용하며 OpenAI 사전·실제 비용과 OpenRouter USD credit 합계를 재검산한다. project
+eval은 fresh smoke를 동일 parser로 먼저 검증하고 직접 실행 smoke budget도 `$0.02`로 고정한다. 실제
+field·Provider 호출, APK 전달·설치와 Companion 재시작 없이 current v1 후보 1.8.2, staged v1.8.4,
+검증된 rollback 1.8.1과 배포 중인 v1.8.3 Companion을 그대로 보존한다. `release:check`의 단위 검사
+322개와 실제 app-server 통합 3개, production build·schema 일치·SBOM이 통과했다.
+
 Runtime project-grade evidence checkpoint decision: Companion의 일반 model-grade 로더가 보호된 project eval의
 `projectRead`/`coding` 문자열만 검사하고 scope·승인·도구 순서·요청/token/비용 증거를 다시 검증하지 않아
 변형된 report가 프로젝트 도구 권한을 올릴 수 있던 authorization 공백을 고치므로 internal compatibility

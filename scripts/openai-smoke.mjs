@@ -10,6 +10,7 @@ const MAX_OUTPUT_TOKENS = 256;
 const MAX_RESPONSE_BYTES = 256 * 1_024;
 const MAX_STREAM_EVENTS = 10_000;
 const MAX_TEXT_BYTES = 4_096;
+const MAX_SMOKE_BUDGET_USD = 0.02;
 
 class SmokeFailure extends Error {}
 
@@ -20,7 +21,12 @@ await requireUnusedReportPath();
 const allowedModels = new Set(requiredEnvironment("OPENAI_SMOKE_MODELS", 4_096)
   .split(",").map((item) => item.trim()).filter(Boolean).map(safeModelId));
 if (!allowedModels.has(model)) fail("Selected model is not in OPENAI_SMOKE_MODELS");
-const budgetUsd = boundedNumber(requiredEnvironment("OPENAI_SMOKE_MAX_USD", 20), 0.0001, 0.05, "budget");
+const budgetUsd = boundedNumber(
+  requiredEnvironment("OPENAI_SMOKE_MAX_USD", 20),
+  0.0001,
+  MAX_SMOKE_BUDGET_USD,
+  "budget",
+);
 const inputUsdPerMillion = boundedNumber(
   requiredEnvironment("OPENAI_SMOKE_INPUT_USD_PER_MTOK", 20),
   0.000001,
