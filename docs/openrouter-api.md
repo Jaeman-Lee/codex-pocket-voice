@@ -94,8 +94,20 @@ contract/eval과 현장 검증 전에는 이 범위를 넓히지 않는다.
 
 실제 모델 contract는 catalog metadata로 추정하지 않는다. GitHub의 `provider-smoke` environment에
 승인 규칙을 설정하고 `OPENROUTER_API_KEY` secret과 쉼표로 구분한 `OPENROUTER_SMOKE_MODELS` variable을
-넣은 뒤에만 `OpenRouter protected smoke` workflow를 수동 실행한다. 실행자는 exact model과 ZDR
-upstream tag를 직접 입력한다.
+넣은 뒤에만 protected smoke를 수동 실행한다. v2 merge 전에는 이미 default branch에 등록된 `Linux
+checks` workflow를 `feature/v2-control-plane` ref와 `provider=openrouter`로 dispatch하고, merge 뒤에는
+standalone workflow도 직접 실행할 수 있다. 실행자는 exact model과 ZDR upstream tag를 직접 입력한다.
+
+```sh
+gh workflow run ci.yml --ref feature/v2-control-plane \
+  -f provider=openrouter \
+  -f model=EXACT_ALLOWLISTED_MODEL \
+  -f upstream=EXACT_ZDR_UPSTREAM_TAG \
+  -f project_scope=none
+```
+
+dispatcher 기본값 `provider=none`과 일반 push/PR은 Provider job을 만들지 않는다. key·allowlist·upstream이
+없거나 잘못되면 inference 전에 실패한다.
 
 Harness는 synthetic token만 사용해 강제 tool call과 그 결과를 잇는 대화 2회만 호출한다. endpoint
 가격과 호출당 2,048 input/64 output token ceiling으로 $0.02 상한을 사전 검사하고 key remaining

@@ -24,8 +24,8 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Staged v1 hotfix APK | 1.8.4 candidate | external-writer clarity PR #6 checks and signed artifact verified; kept separate and not installed |
 | Existing rollback APK | 1.8.1 | user-validated rollback set preserved |
 | Deployed v1 Companion | 1.8.3 at `e0f6ea1` | separate versioned runtime active; completed target writer release verified |
-| OpenAI API milestone | official SDK 6.49.0 | encrypted bounded `store:false` multi-turn replay, fake tool-loop/SSE/Models tests and protected 2-call smoke harness; no API key configured and no paid request sent |
-| OpenRouter milestone | Chat Completions + user/ZDR model, endpoint and key APIs | encrypted bounded multi-turn replay, exact upstream lock/approved backup, bounded price/performance/quota UI, fake routing/tool-loop/SSE and protected 2-call smoke harness; no API key configured and no paid request sent |
+| OpenAI API milestone | official SDK 6.49.0 | encrypted bounded `store:false` multi-turn replay, fake tool-loop/SSE/Models tests and pre-merge dispatchable protected 2-call smoke harness; no API key/allowlist configured and no paid request sent |
+| OpenRouter milestone | Chat Completions + user/ZDR model, endpoint and key APIs | encrypted bounded multi-turn replay, exact upstream lock/approved backup, bounded price/performance/quota UI, fake routing/tool-loop/SSE and pre-merge dispatchable protected 2-call smoke harness; no API key/allowlist configured and no paid request sent |
 | Provider credential boundary | systemd 256+ encrypted user credential | fixed-name runtime files, generation-bound activation, immediate new-run revoke, no-follow/owner/mode/size validation and recoverable ciphertext rotation/removal implemented; legacy 0600 file retained |
 | Provider model grade boundary | owner-only redacted report, maximum age 30 days | OpenAI exact model and OpenRouter exact model+every selected upstream gate read/coding tool exposure; protected fresh-smoke synthetic project grade workflow implemented, but no real API workflow run or grade issued |
 | Provider runtime contract | exact run ownership + ordered single-terminal events | Codex/OpenAI/OpenRouter shared success/partial-failure/cancel/timeout suite and fake 401/403/429/5xx/malformed SSE fixtures passing |
@@ -51,6 +51,19 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | pairing/revoke/key-rotation state uses durable serialized commits; reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, standalone Linux GO/PBC + memory-only DHCP cleanup lifecycle, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; actual P2P field validation pending |
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+Pre-merge Provider smoke dispatch checkpoint decision: v2 feature branch에만 있는 standalone manual workflow는
+GitHub의 default-branch 등록 조건 때문에 PR field acceptance 전에 dispatch할 수 없던 release validation
+deadlock을 고치는 internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 SemVer
+`2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
+대체한다. default branch에 이미 등록된 Linux checks workflow에 명시적 `none`/`openai`/`openrouter`
+dispatcher를 추가하고, 기본 `none`, 기존 Node 검사 성공, exact provider 조건 뒤에만 reusable smoke를
+호출한다. 일반 push/PR은 Provider job을 만들지 않으며 OpenAI/OpenRouter 유료 smoke concurrency는 각각
+한 건으로 제한한다. 현재 GitHub에는 Provider API key·model allowlist variable과 `provider-smoke`
+environment 보호 규칙이 없으므로 실제 dispatch·유료 요청은 하지 않았다. APK 전달·설치와 Companion
+재시작 없이 current v1 후보 1.8.2, staged v1.8.4, 검증된 rollback 1.8.1과 배포 중인 v1.8.3 Companion을
+그대로 보존한다. `release:check`의 단위 검사 306개와 실제 app-server 통합 3개, production build·schema
+일치·SBOM이 통과했다.
 
 Exact-head Android candidate checkpoint decision: PR Android artifact가 feature head 대신 GitHub 임시 merge
 commit을 checkout하고 manifest에 `$GITHUB_SHA`를 기록해 clean feature checkout 기반 field gate와 결합되지

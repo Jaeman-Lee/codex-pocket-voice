@@ -392,6 +392,11 @@ read/coding 현장 등급은 아직 남아 있다.
 model output은 남지 않는다. 공개 회귀는 fake adapter가 실제 Tool Broker를 통과하는 경로만 사용하며,
 실제 workflow 실행과 사용자 프로젝트 acceptance는 계속 남아 있다.
 
+PR 병합 전에도 보호된 workflow를 실행할 수 있도록 default branch에 이미 등록된 Linux checks workflow를
+명시적 `none`/`openai`/`openrouter` dispatcher로 사용한다. 기본 `none`과 일반 push/PR은 Provider job을
+만들지 않고, exact provider를 수동 선택한 dispatch만 기존 Node 검사 성공 뒤 reusable smoke를 호출한다.
+OpenAI/OpenRouter는 각각 동시 실행 한 건으로 직렬화하며 기존 environment·allowlist·비용 상한을 유지한다.
+
 Companion은 protected report의 exact requested/actual model, contract 선행 등급과 30일 freshness를
 검사한다. `projectRead:pass`일 때만 observation 도구를, `coding:pass`까지 이어질 때만 touch-approved
 change/execution 도구를 Responses 요청에 넣는다. report가 없거나 malformed·insecure·실패·만료면
@@ -633,6 +638,8 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - OpenRouter model capability 변화와 fallback 정책 fixture
 - OpenRouter 가격 단위·endpoint 성능 상한·quota redaction fixture와 수동 smoke harness loopback 검사
 - OpenAI `store: false` 요청·로컬 상태 replay와 보호된 2-call smoke harness loopback 검사
+- default-branch 등록 Linux workflow의 무호출 `provider=none` 기본값, explicit Provider-only reusable
+  smoke dispatch, Node 검사 선행·secret inheritance·Provider별 concurrency source 계약 검사
 - API Provider replay 상태의 journal 암호화, API/SSE/export 비노출, 이미지 data URL 제거 검사
 - Playwright에서 production client와 실제 pairing·Gateway·SSE·run·approval 경로로 320/360/412px,
   150% 글자, 키보드 축소, 회전과 긴 prompt·diff·승인 상세, 변경 줄 선택·필수 의견·touch decline payload

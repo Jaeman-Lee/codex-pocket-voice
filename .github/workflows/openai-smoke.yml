@@ -1,6 +1,24 @@
 name: OpenAI protected smoke
 
 on:
+  workflow_call:
+    inputs:
+      model:
+        required: true
+        type: string
+      input_usd_per_mtok:
+        required: true
+        type: string
+      output_usd_per_mtok:
+        required: true
+        type: string
+      project_scope:
+        required: true
+        type: string
+      coding_confirmation:
+        required: false
+        default: ""
+        type: string
   workflow_dispatch:
     inputs:
       model:

@@ -4,6 +4,46 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Provider smoke to run after Linux checks
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - openai
+          - openrouter
+      model:
+        description: Exact allowlisted model ID; required for a Provider smoke
+        required: false
+        type: string
+      upstream:
+        description: Exact OpenRouter ZDR upstream tag
+        required: false
+        type: string
+      input_usd_per_mtok:
+        description: Operator-reviewed OpenAI input USD per million tokens
+        required: false
+        type: string
+      output_usd_per_mtok:
+        description: Operator-reviewed OpenAI output USD per million tokens
+        required: false
+        type: string
+      project_scope:
+        description: Optional protected synthetic project grade
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - read
+          - coding
+      coding_confirmation:
+        description: For coding only, enter APPROVE_SYNTHETIC_CODING_EVAL
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -35,3 +75,28 @@ jobs:
               sh -n "$script"
             fi
           done
+
+  openai-smoke:
+    name: Explicit OpenAI protected smoke
+    needs: test
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.provider == 'openai' }}
+    uses: ./.github/workflows/openai-smoke.yml
+    with:
+      model: ${{ inputs.model }}
+      input_usd_per_mtok: ${{ inputs.input_usd_per_mtok }}
+      output_usd_per_mtok: ${{ inputs.output_usd_per_mtok }}
+      project_scope: ${{ inputs.project_scope }}
+      coding_confirmation: ${{ inputs.coding_confirmation }}
+    secrets: inherit
+
+  openrouter-smoke:
+    name: Explicit OpenRouter protected smoke
+    needs: test
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.provider == 'openrouter' }}
+    uses: ./.github/workflows/openrouter-smoke.yml
+    with:
+      model: ${{ inputs.model }}
+      upstream: ${{ inputs.upstream }}
+      project_scope: ${{ inputs.project_scope }}
+      coding_confirmation: ${{ inputs.coding_confirmation }}
+    secrets: inherit
