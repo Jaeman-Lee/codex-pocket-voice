@@ -41,6 +41,16 @@ import {
 } from "./native";
 import { mergeSpeechSegments } from "./speech-utils";
 import { initialConnectionState, reduceConnection } from "./connection-state";
+import {
+  activeRunOwnsOperation,
+  activeRunScope,
+  activeRunScopeMatches,
+  initialActiveRunState,
+  reduceActiveRun,
+  type ActiveRunAction,
+  type ActiveRunScope,
+  type RunActivityState,
+} from "./active-run-state";
 import { initialVoiceInputState, reduceVoiceInput } from "./voice-input-state";
 import {
   initialMediaComposerState,
@@ -56,6 +66,15 @@ import { providerConversationMessages, providerConversationThreads } from "./pro
 import { workspaceIdentityFor, workspaceIdentityLabel } from "./workspace-identity";
 import { createWorkJournal } from "./work-journal";
 import { conversationKey, restoredMessages, serializableQueue } from "./work-journal-model";
+import {
+  conversationJournalRestored,
+  initialJournalState,
+  mergeRestoredPrompts,
+  queueJournalReady,
+  queueLoadMatches,
+  reduceJournalState,
+  type JournalAction,
+} from "./journal-state";
 import { initialSpeechLanguage, initialUiLanguage, translate, type MessageKey, type UiLanguage } from "./i18n";
 import { parsePocketLinkBootstrapUri } from "../../src/pocket-link-bootstrap";
 import {
@@ -153,12 +172,6 @@ declare global {
   }
 }
 
-interface ActivityState {
-  running: boolean;
-  text: string;
-  detail: string;
-}
-
 let localId = 0;
 const newId = (prefix: string) => `${prefix}-${Date.now()}-${localId++}`;
 
@@ -176,8 +189,8 @@ export function App() {
   const [threadId, setThreadId] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [prompt, setPrompt] = useState("");
-  const [operation, setOperation] = useState<Operation | null>(null);
-  const [activity, setActivity] = useState<ActivityState>({ running: false, text: "", detail: "" });
+  const [activeRun, dispatchActiveRunState] = useReducer(reduceActiveRun, initialActiveRunState(device));
+  const { operation, activity } = activeRun;
   const [tts, setTts] = useState(() => localStorage.getItem("codex-pocket-tts") === "true");
   const [notificationsEnabled, setNotificationsEnabled] = useState(
     () => localStorage.getItem("codex-pocket-notifications") === "true",
@@ -216,7 +229,6 @@ export function App() {
   const [updateInstallPermissionRequired, setUpdateInstallPermissionRequired] = useState(false);
   const [loginSession, setLoginSession] = useState<ProviderLoginSession | null>(null);
   const [providerAliases, setProviderAliases] = useState<Partial<Record<ProviderId, string>>>({});
-  const [journalRestored, setJournalRestored] = useState(false);
   const [pairing, setPairing] = useState<PairingStatus | null>(null);
   const [pairingCode, setPairingCode] = useState("");
   const [pairingBusy, setPairingBusy] = useState(false);
@@ -267,6 +279,9 @@ export function App() {
   const [exportingWorkspace, setExportingWorkspace] = useState<string | null>(null);
   const [deletingWorkspace, setDeletingWorkspace] = useState<string | null>(null);
   const [journal] = useState(createWorkJournal);
+  const [journalState, dispatchJournalState] = useReducer(reduceJournalState, initialJournalState);
+  const selectedJournalKey = workspace ? conversationKey(device, workspace, threadId, provider) : "";
+  const journalRestored = conversationJournalRestored(journalState, selectedJournalKey);
   const tr = (key: MessageKey) => translate(uiLanguage, key);
   const selectedWorkspaceIdentity = workspaceIdentityFor(workspaces, workspace);
   const selectedWorkspaceIdentityText = workspaceIdentityLabel(selectedWorkspaceIdentity);
@@ -274,20 +289,20 @@ export function App() {
   const transcriptRef = useRef<HTMLElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const operationRef = useRef<Operation | null>(null);
+  const activeRunRef = useRef(activeRun);
+  const activeRunGenerationRef = useRef(0);
   const promptQueueRef = useRef<QueuedPrompt[]>([]);
   const messagesRef = useRef<ChatMessage[]>([]);
   const mediaComposerRef = useRef(mediaComposer);
-  const journalQueueReadyRef = useRef<DeviceId | null>(null);
+  const journalStateRef = useRef(journalState);
+  const conversationJournalGenerationRef = useRef(0);
+  const queueJournalGenerationRef = useRef(0);
   const queueDispatchingRef = useRef(false);
   const workspaceRef = useRef("");
   const deviceRef = useRef<DeviceId>(device);
   const threadRef = useRef("");
   const providerRef = useRef<ProviderId>("codex");
   const ttsRef = useRef(tts);
-  const liveMessageIdRef = useRef<string | null>(null);
-  const liveTextRef = useRef("");
-  const latestDiffRef = useRef("");
   const pollTimerRef = useRef<number | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -310,6 +325,26 @@ export function App() {
   const pendingNotificationActionRef = useRef<NativeNotificationAction | null>(null);
   const openOperationFromDashboardRef = useRef<(operation: Operation) => void>(() => undefined);
 
+  const dispatchActiveRun = (action: ActiveRunAction) => {
+    const current = activeRunRef.current;
+    const next = reduceActiveRun(current, action);
+    if (next !== current) {
+      activeRunRef.current = next;
+      dispatchActiveRunState(action);
+    }
+    return next;
+  };
+
+  const dispatchJournal = (action: JournalAction) => {
+    const current = journalStateRef.current;
+    const next = reduceJournalState(current, action);
+    if (next !== current) {
+      journalStateRef.current = next;
+      dispatchJournalState(action);
+    }
+    return next;
+  };
+
   const dispatchMediaComposer = (action: MediaComposerAction) => {
     mediaComposerRef.current = reduceMediaComposer(mediaComposerRef.current, action);
     dispatchMediaComposerState(action);
@@ -323,7 +358,6 @@ export function App() {
   }, [device]);
   useEffect(() => { threadRef.current = threadId; }, [threadId]);
   useEffect(() => { ttsRef.current = tts; localStorage.setItem("codex-pocket-tts", String(tts)); }, [tts]);
-  useEffect(() => { operationRef.current = operation; }, [operation]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { mediaComposerRef.current = mediaComposer; }, [mediaComposer]);
   useEffect(() => { handsFreeRef.current = handsFree; }, [handsFree]);
@@ -379,17 +413,41 @@ export function App() {
 
   useEffect(() => {
     let disposed = false;
-    journalQueueReadyRef.current = null;
+    const generation = Math.max(queueJournalGenerationRef.current, journalStateRef.current.queue.generation) + 1;
+    queueJournalGenerationRef.current = generation;
+    dispatchJournal({ type: "queue_begin", generation, device });
     void journal.loadQueue(device).then((record) => {
-      if (disposed || deviceRef.current !== device) return;
+      const journalSnapshot = journalStateRef.current;
+      if (disposed || deviceRef.current !== device || !queueLoadMatches(journalSnapshot, generation, device)) return;
       const now = Date.now();
-      const prompts = serializableQueue(record?.prompts ?? [])
-        .filter((prompt) => !prompt.expiresAt || Date.parse(prompt.expiresAt) > now)
-        .map((prompt) => ({ ...prompt, requiresConfirmation: true }));
+      const restored = serializableQueue(record?.prompts ?? [])
+        .filter((prompt) => !prompt.expiresAt || Date.parse(prompt.expiresAt) > now);
+      const prompts = mergeRestoredPrompts(
+        restored,
+        journalSnapshot.queue.changedDuringLoad ? promptQueueRef.current : [],
+      );
       promptQueueRef.current = prompts;
       setPromptQueue(prompts);
-      journalQueueReadyRef.current = device;
-    }).catch(() => undefined);
+      dispatchJournal({ type: "queue_loaded", generation, device });
+      if (journalSnapshot.queue.changedDuringLoad) {
+        void journal.saveQueue({
+          device,
+          prompts: serializableQueue(prompts),
+          updatedAt: new Date().toISOString(),
+        }).catch(() => undefined);
+      }
+    }).catch(() => {
+      if (disposed || deviceRef.current !== device
+          || !queueLoadMatches(journalStateRef.current, generation, device)) return;
+      dispatchJournal({ type: "queue_loaded", generation, device });
+      if (promptQueueRef.current.length > 0) {
+        void journal.saveQueue({
+          device,
+          prompts: serializableQueue(promptQueueRef.current),
+          updatedAt: new Date().toISOString(),
+        }).catch(() => undefined);
+      }
+    });
     return () => { disposed = true; };
   }, [device, journal]);
 
@@ -397,14 +455,33 @@ export function App() {
     if (!workspace) return;
     let disposed = false;
     const expectedKey = conversationKey(device, workspace, threadId, provider);
+    const generation = Math.max(
+      conversationJournalGenerationRef.current,
+      journalStateRef.current.conversation.generation,
+    ) + 1;
+    conversationJournalGenerationRef.current = generation;
+    dispatchJournal({ type: "conversation_begin", generation, key: expectedKey });
     void journal.loadConversation(device, workspace, threadId, provider).then((record) => {
-      if (disposed || !record || record.key !== expectedKey || messagesRef.current.length > 0) return;
+      const currentJournal = journalStateRef.current.conversation;
+      if (disposed || currentJournal.generation !== generation || currentJournal.key !== expectedKey) return;
+      if (!record || record.key !== expectedKey || messagesRef.current.length > 0) {
+        dispatchJournal({ type: "conversation_loaded", generation, key: expectedKey, restored: false });
+        return;
+      }
       const restored = restoredMessages(record.messages);
-      if (!restored.length) return;
+      if (!restored.length) {
+        dispatchJournal({ type: "conversation_loaded", generation, key: expectedKey, restored: false });
+        return;
+      }
       messagesRef.current = restored;
       setMessages(restored);
-      setJournalRestored(true);
-    }).catch(() => undefined);
+      dispatchJournal({ type: "conversation_loaded", generation, key: expectedKey, restored: true });
+    }).catch(() => {
+      const currentJournal = journalStateRef.current.conversation;
+      if (!disposed && currentJournal.generation === generation && currentJournal.key === expectedKey) {
+        dispatchJournal({ type: "conversation_loaded", generation, key: expectedKey, restored: false });
+      }
+    });
     return () => { disposed = true; };
   }, [device, journal, provider, threadId, workspace]);
 
@@ -417,19 +494,23 @@ export function App() {
         workspace,
         threadId,
         messages,
-        syncState: operation?.status === "running" ? "running" : connection === "online" ? "synced" : "local",
+        syncState: activeRun.requestId || operation?.status === "running"
+          ? "running"
+          : connection === "online" ? "synced" : "local",
         updatedAt: new Date().toISOString(),
       }).catch(() => undefined);
     }, 120);
     return () => window.clearTimeout(timer);
-  }, [connection, device, journal, messages, operation?.status, provider, threadId, workspace]);
+  }, [activeRun.requestId, connection, device, journal, messages, operation?.status, provider, threadId, workspace]);
 
   useEffect(() => {
-    if (connection !== "online" || operationRef.current || queueDispatchingRef.current || promptQueueRef.current.length === 0
+    if (connection !== "online" || activeRunRef.current.operation || activeRunRef.current.requestId
+      || queueDispatchingRef.current
+      || promptQueueRef.current.length === 0
       || promptQueueRef.current[0]?.requiresConfirmation) return;
     const timer = window.setTimeout(() => startNextQueuedPrompt(""), 250);
     return () => window.clearTimeout(timer);
-  }, [connection, operation?.id, operation?.status, promptQueue.length]);
+  }, [activeRun.requestId, connection, operation?.id, operation?.status, promptQueue.length]);
 
   const showToast = useCallback((text: string) => {
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
@@ -530,10 +611,12 @@ export function App() {
     preserveSelection: boolean,
     preferredThreadId?: string,
     attempt?: number,
+    runScope?: ActiveRunScope,
   ) => {
     try {
       const data = await api<{ threads: ThreadSummary[] }>("/api/threads?limit=30");
-      if (attempt !== undefined && attempt !== connectionAttemptRef.current) return;
+      if ((attempt !== undefined && attempt !== connectionAttemptRef.current)
+          || (runScope && !activeRunScopeMatches(activeRunRef.current, runScope))) return;
       const prefix = selectedWorkspace.endsWith("/") ? selectedWorkspace : `${selectedWorkspace}/`;
       const filtered = data.threads.filter(
         (thread) => !selectedWorkspace || thread.cwd === selectedWorkspace || thread.cwd.startsWith(prefix),
@@ -544,24 +627,31 @@ export function App() {
       setThreadId(next);
       threadRef.current = next;
     } catch (error) {
-      if (attempt !== undefined && attempt !== connectionAttemptRef.current) return;
+      if ((attempt !== undefined && attempt !== connectionAttemptRef.current)
+          || (runScope && !activeRunScopeMatches(activeRunRef.current, runScope))) return;
       showToast(errorMessage(error));
     }
   }, [showToast]);
 
-  const loadProjectHandoff = useCallback(async (selectedWorkspace: string, attempt?: number) => {
+  const loadProjectHandoff = useCallback(async (
+    selectedWorkspace: string,
+    attempt?: number,
+    runScope?: ActiveRunScope,
+  ) => {
     const requestedDevice = deviceRef.current;
     try {
       const suffix = selectedWorkspace ? `?workspace=${encodeURIComponent(selectedWorkspace)}` : "";
       const data = await api<{ handoff: SessionHandoff | null }>(`/api/session/handoff${suffix}`);
       if (deviceRef.current !== requestedDevice || workspaceRef.current !== selectedWorkspace
-          || (attempt !== undefined && attempt !== connectionAttemptRef.current)) return;
+          || (attempt !== undefined && attempt !== connectionAttemptRef.current)
+          || (runScope && !activeRunScopeMatches(activeRunRef.current, runScope))) return;
       setHandoffSupported(true);
       const dismissed = localStorage.getItem(handoffDismissedKey(requestedDevice));
       setHandoff(scopedHandoff(data.handoff, selectedWorkspace, dismissed));
     } catch {
       if (deviceRef.current !== requestedDevice || workspaceRef.current !== selectedWorkspace
-          || (attempt !== undefined && attempt !== connectionAttemptRef.current)) return;
+          || (attempt !== undefined && attempt !== connectionAttemptRef.current)
+          || (runScope && !activeRunScopeMatches(activeRunRef.current, runScope))) return;
       setHandoffSupported(false);
       setHandoff(null);
     }
@@ -668,7 +758,7 @@ export function App() {
         threadRef.current = selectedConversation;
         messagesRef.current = [];
         setMessages([]);
-        setJournalRestored(false);
+        beginConversationJournalScope();
         if (selectedConversation) {
           const restored = providerConversationMessages(
             runData.operations,
@@ -689,24 +779,31 @@ export function App() {
           const restored = historyMessages(data.thread);
           messagesRef.current = restored;
           setMessages(restored);
-          setJournalRestored(false);
+          markConversationJournalLive();
         } catch {
           // The local work journal effect restores the last saved copy.
         }
       }
       if (attempt !== connectionAttemptRef.current || deviceRef.current !== selectedDevice) return;
-      const currentOperation = operationRef.current;
+      const currentOperation = activeRunRef.current.operation;
       const currentSnapshot = currentOperation
         ? runData.operations.find((item) => item.id === currentOperation.id)
         : undefined;
       if (currentSnapshot) {
         if (currentSnapshot.status === "unknown" && currentSnapshot.acknowledgedAt) {
-          operationRef.current = null;
-          setOperation(null);
-          stopRunning();
+          dispatchActiveRun({
+            type: "acknowledge",
+            ...activeRunScope(activeRunRef.current),
+            operationId: currentSnapshot.id,
+          });
+          clearOperationPoll();
         } else if (currentSnapshot.status === "unknown" && currentOperation?.status === "unknown") {
-          operationRef.current = currentSnapshot;
-          setOperation(currentSnapshot);
+          dispatchActiveRun({
+            type: "update",
+            ...activeRunScope(activeRunRef.current),
+            operationId: currentSnapshot.id,
+            operation: currentSnapshot,
+          });
           stopRunning();
         } else {
           handleOperationEvent(operationAction(currentSnapshot), currentSnapshot);
@@ -975,10 +1072,66 @@ export function App() {
     });
   }
 
-  function ensureLiveMessage(): string {
-    if (liveMessageIdRef.current) return liveMessageIdRef.current;
+  function beginActiveRun(
+    nextDevice: DeviceId,
+    options: { requestId?: string; liveMessageId?: string; activity?: RunActivityState } = {},
+  ): ActiveRunScope {
+    clearOperationPoll();
+    const generation = Math.max(activeRunGenerationRef.current, activeRunRef.current.generation) + 1;
+    activeRunGenerationRef.current = generation;
+    dispatchActiveRun({ type: "begin", generation, device: nextDevice, ...options });
+    return { generation, device: nextDevice };
+  }
+
+  function resetActiveRun(nextDevice = deviceRef.current) {
+    return beginActiveRun(nextDevice);
+  }
+
+  function beginConversationJournalScope() {
+    const key = workspaceRef.current
+      ? conversationKey(deviceRef.current, workspaceRef.current, threadRef.current, providerRef.current)
+      : "";
+    const generation = Math.max(
+      conversationJournalGenerationRef.current,
+      journalStateRef.current.conversation.generation,
+    ) + 1;
+    conversationJournalGenerationRef.current = generation;
+    dispatchJournal({ type: "conversation_begin", generation, key });
+  }
+
+  function beginQueueJournalScope(nextDevice: DeviceId) {
+    const generation = Math.max(queueJournalGenerationRef.current, journalStateRef.current.queue.generation) + 1;
+    queueJournalGenerationRef.current = generation;
+    dispatchJournal({ type: "queue_begin", generation, device: nextDevice });
+  }
+
+  function markConversationJournalLive() {
+    const current = journalStateRef.current.conversation;
+    const key = workspaceRef.current
+      ? conversationKey(deviceRef.current, workspaceRef.current, threadRef.current, providerRef.current)
+      : "";
+    if (current.key !== key) return;
+    dispatchJournal({ type: "conversation_live", generation: current.generation, key });
+  }
+
+  function activeOwner(state = activeRunRef.current): { requestId?: string; operationId?: string } {
+    if (state.operation) return { operationId: state.operation.id };
+    if (state.requestId) return { requestId: state.requestId };
+    return {};
+  }
+
+  function ensureLiveMessage(scope = activeRunScope(activeRunRef.current)): string | null {
+    const current = activeRunRef.current;
+    if (!activeRunScopeMatches(current, scope)) return null;
+    if (current.liveMessageId) return current.liveMessageId;
     const id = newId("assistant");
-    liveMessageIdRef.current = id;
+    const next = dispatchActiveRun({
+      type: "set_live_message",
+      ...scope,
+      ...activeOwner(current),
+      messageId: id,
+    });
+    if (next.liveMessageId !== id) return null;
     setMessages((current) => {
       const next: ChatMessage[] = [...current, { id, role: "assistant", text: "", pending: true }];
       messagesRef.current = next;
@@ -987,7 +1140,7 @@ export function App() {
     return id;
   }
 
-  function buildResultDetails(result: RunResult): string {
+  function buildResultDetails(result: RunResult, latestDiff = activeRunRef.current.latestDiff): string {
     const lines: string[] = [];
     for (const command of result.commands ?? []) {
       lines.push(`$ ${command.command}\n  ${command.status}${command.exitCode == null ? "" : ` · exit ${command.exitCode}`}`);
@@ -1007,33 +1160,60 @@ export function App() {
         usage.costCredits == null ? null : `비용 ${usage.costCredits.toFixed(6)} credits`,
       ].filter(Boolean).join(" · "));
     }
-    if (latestDiffRef.current) lines.push(`\n--- diff ---\n${latestDiffRef.current}`);
+    if (latestDiff) lines.push(`\n--- diff ---\n${latestDiff}`);
     return lines.join("\n");
   }
 
-  function finishLiveMessage(text: string, isError: boolean, result: RunResult = {}) {
-    const id = ensureLiveMessage();
+  function finishLiveMessage(
+    text: string,
+    isError: boolean,
+    result: RunResult = {},
+    scope = activeRunScope(activeRunRef.current),
+    owner = activeOwner(activeRunRef.current),
+  ) {
+    const current = activeRunRef.current;
+    if (!activeRunScopeMatches(current, scope)) return false;
+    const id = ensureLiveMessage(scope);
+    if (!id) return false;
     replaceMessage(id, {
       text,
       pending: false,
       error: isError,
-      details: buildResultDetails(result) || undefined,
+      details: buildResultDetails(result, current.latestDiff) || undefined,
     });
-    liveMessageIdRef.current = null;
-    liveTextRef.current = "";
-    latestDiffRef.current = "";
-    operationRef.current = null;
-    setOperation(null);
+    dispatchActiveRun({ type: "finish", ...scope, ...owner });
+    clearOperationPoll();
+    markConversationJournalLive();
+    return true;
   }
 
-  function stopRunning() {
+  function clearOperationPoll() {
     if (pollTimerRef.current !== null) window.clearTimeout(pollTimerRef.current);
     pollTimerRef.current = null;
-    setActivity({ running: false, text: "", detail: "" });
   }
 
-  function setRunning(text: string, detail = "") {
-    setActivity({ running: true, text, detail });
+  function stopRunning(scope = activeRunScope(activeRunRef.current), owner = activeOwner(activeRunRef.current)) {
+    clearOperationPoll();
+    dispatchActiveRun({
+      type: "set_activity",
+      ...scope,
+      ...owner,
+      activity: { running: false, text: "", detail: "" },
+    });
+  }
+
+  function setRunning(
+    text: string,
+    detail = "",
+    scope = activeRunScope(activeRunRef.current),
+    owner = activeOwner(activeRunRef.current),
+  ) {
+    dispatchActiveRun({
+      type: "set_activity",
+      ...scope,
+      ...owner,
+      activity: { running: true, text, detail },
+    });
   }
 
   function speak(text: string) {
@@ -1073,30 +1253,45 @@ export function App() {
     }
   }
 
-  function scheduleOperationPoll(operationId: string) {
-    if (pollTimerRef.current !== null) window.clearTimeout(pollTimerRef.current);
-    pollTimerRef.current = window.setTimeout(() => void pollOperation(operationId), 2_000);
+  function scheduleOperationPoll(
+    operationId: string,
+    scope = activeRunScope(activeRunRef.current),
+  ) {
+    if (!activeRunOwnsOperation(activeRunRef.current, scope, operationId)) return;
+    clearOperationPoll();
+    pollTimerRef.current = window.setTimeout(() => void pollOperation(operationId, scope), 2_000);
   }
 
-  async function pollOperation(operationId: string) {
-    const current = operationRef.current;
-    if (!current || current.id !== operationId || current.status !== "running") return;
+  async function pollOperation(operationId: string, scope: ActiveRunScope) {
+    const current = activeRunRef.current.operation;
+    if (!activeRunOwnsOperation(activeRunRef.current, scope, operationId) || current?.status !== "running") return;
     try {
       const data = await api<{ operation: Operation }>(`/api/runs/${encodeURIComponent(operationId)}`);
+      if (!activeRunOwnsOperation(activeRunRef.current, scope, operationId)) return;
       if (data.operation.status === "running") {
-        scheduleOperationPoll(operationId);
+        dispatchActiveRun({ type: "update", ...scope, operationId, operation: data.operation });
+        scheduleOperationPoll(operationId, scope);
         return;
       }
       handleOperationEvent(
         data.operation.status === "unknown" ? "recovered" : data.operation.status === "failed" ? "failed" : "completed",
         data.operation,
+        scope,
       );
     } catch {
-      scheduleOperationPoll(operationId);
+      if (activeRunOwnsOperation(activeRunRef.current, scope, operationId)) {
+        scheduleOperationPoll(operationId, scope);
+      }
     }
   }
 
-  function handleOperationEvent(action: string, nextOperation: Operation) {
+  function handleOperationEvent(
+    action: string,
+    nextOperation: Operation,
+    expectedScope = activeRunScope(activeRunRef.current),
+    requestId?: string,
+  ) {
+    if (!activeRunScopeMatches(activeRunRef.current, expectedScope)) return;
     const operationProvider = nextOperation.providerId ?? "codex";
     const updateSnapshots = (current: Operation[]) => {
       const retired = nextOperation.status === "completed"
@@ -1112,14 +1307,18 @@ export function App() {
     };
     setOperationSnapshots(updateSnapshots);
     if (action === "acknowledged") {
-      if (operationRef.current?.id !== nextOperation.id) return;
-      operationRef.current = null;
-      setOperation(null);
-      stopRunning();
+      if (activeRunRef.current.operation?.id !== nextOperation.id) return;
+      dispatchActiveRun({
+        type: "acknowledge",
+        ...expectedScope,
+        operationId: nextOperation.id,
+      });
+      clearOperationPoll();
       startNextQueuedPrompt(threadRef.current);
       return;
     }
-    if ((action === "started" || action === "recovered") && !operationRef.current) {
+    if ((requestId !== undefined || action === "started" || action === "recovered")
+        && !activeRunRef.current.operation) {
       if (nextOperation.cwd !== workspaceRef.current || operationProvider !== providerRef.current) return;
       const operationConversation = operationProvider === "codex"
         ? nextOperation.threadId
@@ -1135,33 +1334,52 @@ export function App() {
           operationConversation,
         );
       }
-      operationRef.current = nextOperation;
-      setOperation(nextOperation);
-      ensureLiveMessage();
+      const adopted = dispatchActiveRun({
+        type: "adopt",
+        ...expectedScope,
+        ...(requestId === undefined ? {} : { requestId }),
+        operation: nextOperation,
+      });
+      if (adopted.operation?.id !== nextOperation.id) return;
+      ensureLiveMessage(expectedScope);
     }
-    if (!operationRef.current || nextOperation.id !== operationRef.current.id) return;
-    operationRef.current = nextOperation;
-    setOperation(nextOperation);
+    if (activeRunRef.current.operation?.id !== nextOperation.id) return;
+    dispatchActiveRun({
+      type: "update",
+      ...expectedScope,
+      operationId: nextOperation.id,
+      operation: nextOperation,
+    });
 
     if (nextOperation.status === "running") {
       setRunning(operationProvider === "codex"
         ? "Codex가 프로젝트를 살펴보고 있습니다…"
-        : "AI가 프로젝트를 살펴보고 있습니다…");
-      scheduleOperationPoll(nextOperation.id);
+        : "AI가 프로젝트를 살펴보고 있습니다…", "", expectedScope, { operationId: nextOperation.id });
+      scheduleOperationPoll(nextOperation.id, expectedScope);
     } else if (action === "recovered" || nextOperation.status === "unknown") {
-      replaceMessage(ensureLiveMessage(), {
+      const messageId = ensureLiveMessage(expectedScope);
+      if (!messageId) return;
+      replaceMessage(messageId, {
         text: nextOperation.error || "Companion 재시작 전 작업의 최종 상태를 확인할 수 없습니다.",
         pending: false,
         error: true,
       });
-      liveMessageIdRef.current = null;
-      liveTextRef.current = "";
-      latestDiffRef.current = "";
-      stopRunning();
+      dispatchActiveRun({
+        type: "mark_unknown",
+        ...expectedScope,
+        operationId: nextOperation.id,
+        operation: nextOperation,
+      });
+      clearOperationPoll();
     } else if (action === "completed") {
       const result = nextOperation.result ?? {};
-      finishLiveMessage(result.finalResponse || statusMessage(nextOperation.status), false, result);
-      stopRunning();
+      finishLiveMessage(
+        result.finalResponse || statusMessage(nextOperation.status),
+        false,
+        result,
+        expectedScope,
+        { operationId: nextOperation.id },
+      );
       if (result.threadId) {
         setThreadId(result.threadId);
         threadRef.current = result.threadId;
@@ -1186,11 +1404,18 @@ export function App() {
         }
       }
       if (ttsRef.current && result.finalResponse) speak(result.finalResponse);
-      if (operationProvider === "codex") void loadThreads(workspaceRef.current, true, result.threadId);
+      if (operationProvider === "codex") {
+        void loadThreads(workspaceRef.current, true, result.threadId, undefined, expectedScope);
+      }
       startNextQueuedPrompt(result.threadId ?? nextOperation.conversationId ?? threadRef.current);
     } else if (action === "failed") {
-      finishLiveMessage(`작업 실패: ${nextOperation.error || "알 수 없는 오류"}`, true);
-      stopRunning();
+      finishLiveMessage(
+        `작업 실패: ${nextOperation.error || "알 수 없는 오류"}`,
+        true,
+        {},
+        expectedScope,
+        { operationId: nextOperation.id },
+      );
       startNextQueuedPrompt(threadRef.current);
     }
   }
@@ -1208,12 +1433,15 @@ export function App() {
     if (event.type === "journal" && event.action === "history_deleted" && event.workspace) {
       setOperationSnapshots((current) => current.filter((item) => item.cwd !== event.workspace));
       setApprovalInbox((current) => current.filter((item) => item.cwd !== event.workspace));
-      const current = operationRef.current;
+      const current = activeRunRef.current.operation;
       if (current?.cwd === event.workspace && current.status !== "running"
         && (current.status !== "unknown" || current.acknowledgedAt)) {
-        operationRef.current = null;
-        setOperation(null);
-        stopRunning();
+        dispatchActiveRun({
+          type: "finish",
+          ...activeRunScope(activeRunRef.current),
+          operationId: current.id,
+        });
+        clearOperationPoll();
       }
       return;
     }
@@ -1223,7 +1451,7 @@ export function App() {
       return;
     }
     if (event.type === "journal" && event.action === "reset") {
-      const current = operationRef.current;
+      const current = activeRunRef.current.operation;
       if (event.reason === "database_reset" && current?.status === "running") {
         handleOperationEvent("recovered", {
           ...current,
@@ -1264,18 +1492,28 @@ export function App() {
       setHandoff((current) => current?.id === event.handoffId ? null : current);
       return;
     }
-    const current = operationRef.current;
+    const current = activeRunRef.current.operation;
     if (!current) return;
+    const scope = activeRunScope(activeRunRef.current);
     if (event.type === "provider") {
       if (event.providerId !== current.providerId
         || event.conversationId !== current.conversationId
         || (event.runId && event.runId !== current.runId)) return;
       switch (event.kind) {
-        case "output.delta":
-          liveTextRef.current += event.delta ?? "";
-          replaceMessage(ensureLiveMessage(), { text: liveTextRef.current });
+        case "output.delta": {
+          const messageId = ensureLiveMessage(scope);
+          if (!messageId) return;
+          const next = dispatchActiveRun({
+            type: "append_output",
+            ...scope,
+            operationId: current.id,
+            messageId,
+            delta: event.delta ?? "",
+          });
+          replaceMessage(messageId, { text: next.liveText });
           setRunning("AI가 답변을 작성하고 있습니다…");
           break;
+        }
         case "tool.started":
           setRunning("도구를 실행하고 있습니다…", event.tool?.command ?? event.tool?.paths?.join("\n"));
           break;
@@ -1283,7 +1521,12 @@ export function App() {
           setRunning(`도구 완료 · ${event.tool?.status || "처리됨"}`, event.tool?.command);
           break;
         case "workspace.diff":
-          latestDiffRef.current = event.diff ?? "";
+          dispatchActiveRun({
+            type: "set_diff",
+            ...scope,
+            operationId: current.id,
+            diff: event.diff ?? "",
+          });
           setRunning("변경 내용을 검토하고 있습니다…");
           break;
         case "run.failed":
@@ -1299,8 +1542,16 @@ export function App() {
 
     switch (event.method) {
       case "item/agentMessage/delta": {
-        liveTextRef.current += typeof params.delta === "string" ? params.delta : "";
-        replaceMessage(ensureLiveMessage(), { text: liveTextRef.current });
+        const messageId = ensureLiveMessage(scope);
+        if (!messageId) return;
+        const next = dispatchActiveRun({
+          type: "append_output",
+          ...scope,
+          operationId: current.id,
+          messageId,
+          delta: typeof params.delta === "string" ? params.delta : "",
+        });
+        replaceMessage(messageId, { text: next.liveText });
         setRunning("Codex가 답변을 작성하고 있습니다…");
         break;
       }
@@ -1321,7 +1572,12 @@ export function App() {
         break;
       }
       case "turn/diff/updated":
-        latestDiffRef.current = stringValue(params.diff);
+        dispatchActiveRun({
+          type: "set_diff",
+          ...scope,
+          operationId: current.id,
+          diff: stringValue(params.diff),
+        });
         setRunning("변경 내용을 검토하고 있습니다…");
         break;
       case "error":
@@ -1628,11 +1884,12 @@ export function App() {
     };
     setPrompt("");
     dispatchMediaComposer({ type: "clear" });
-    if (connection !== "online" || operationRef.current !== null) {
+    if (connection !== "online" || activeRunRef.current.operation !== null
+        || activeRunRef.current.requestId !== null) {
       const nextQueue = [...promptQueueRef.current, queued];
       updatePromptQueue(nextQueue);
       showToast(connection === "online"
-        ? operationRef.current?.status === "unknown"
+        ? activeRunRef.current.operation?.status === "unknown"
           ? `이전 작업 상태를 확인할 때까지 요청을 대기열 ${nextQueue.length}번째에 보관합니다.`
           : `요청을 대기열 ${nextQueue.length}번째에 추가했습니다.`
         : `오프라인 대기열에 저장했습니다. ${deviceLabel(deviceRef.current)} 연결 후 자동 실행됩니다.`);
@@ -1642,6 +1899,7 @@ export function App() {
   }
 
   async function executePrompt(queued: QueuedPrompt, continuedThreadId = "") {
+    const selectedDevice = deviceRef.current;
     const userId = newId("user");
     const assistantId = newId("assistant");
     const attachmentLabel = queued.attachments.length
@@ -1656,11 +1914,16 @@ export function App() {
       messagesRef.current = next;
       return next;
     });
-    setJournalRestored(false);
-    liveMessageIdRef.current = assistantId;
-    liveTextRef.current = "";
-    latestDiffRef.current = "";
-    setRunning("Codex가 요청을 시작하고 있습니다…");
+    markConversationJournalLive();
+    const runScope = beginActiveRun(selectedDevice, {
+      requestId: queued.id,
+      liveMessageId: assistantId,
+      activity: {
+        running: true,
+        text: queued.provider === "codex" ? "Codex가 요청을 시작하고 있습니다…" : "AI가 요청을 시작하고 있습니다…",
+        detail: "",
+      },
+    });
 
     try {
       const data = await api<{ operation: Operation }>("/api/runs", {
@@ -1679,33 +1942,27 @@ export function App() {
           attachments: queued.attachments.map((item) => item.id),
         },
       });
-      operationRef.current = data.operation;
-      setOperation(data.operation);
-      setOperationSnapshots((current) => upsertOperation(current, data.operation));
-      const startedConversation = queued.provider === "codex"
-        ? data.operation.threadId
-        : data.operation.conversationId;
-      if (startedConversation && !threadRef.current) {
-        setThreadId(startedConversation);
-        threadRef.current = startedConversation;
-        persistConversationSelection(
-          deviceRef.current,
-          queued.provider,
-          queued.cwd,
-          startedConversation,
-        );
-      }
+      if (!activeRunScopeMatches(activeRunRef.current, runScope)
+          || activeRunRef.current.requestId !== queued.id
+          || deviceRef.current !== selectedDevice) return;
       queueDispatchingRef.current = false;
       for (const item of queued.attachments) if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
-      if (data.operation.status === "running") {
-        scheduleOperationPoll(data.operation.id);
-        setRunning(queued.provider === "codex"
-          ? "Codex가 프로젝트를 살펴보고 있습니다…"
-          : "AI가 프로젝트를 살펴보고 있습니다…");
-      } else {
-        handleOperationEvent(operationAction(data.operation), data.operation);
+      handleOperationEvent(operationAction(data.operation), data.operation, runScope, queued.id);
+      if (activeRunScopeMatches(activeRunRef.current, runScope)
+          && activeRunRef.current.requestId === queued.id) {
+        finishLiveMessage(
+          "Companion 응답이 현재 프로젝트 또는 AI 제공자와 일치하지 않아 연결하지 않았습니다.",
+          true,
+          {},
+          runScope,
+          { requestId: queued.id },
+        );
+        startNextQueuedPrompt(continuedThreadId || threadRef.current);
       }
     } catch (error) {
+      if (!activeRunScopeMatches(activeRunRef.current, runScope)
+          || activeRunRef.current.requestId !== queued.id
+          || deviceRef.current !== selectedDevice) return;
       queueDispatchingRef.current = false;
       const message = errorMessage(error);
       if (message.includes("연결할 수 없습니다")) {
@@ -1715,18 +1972,28 @@ export function App() {
           device: deviceRef.current,
         });
         updatePromptQueue([{ ...queued, displayed: true }, ...promptQueueRef.current]);
-        finishLiveMessage("단말 연결이 끊겨 요청을 오프라인 대기열로 되돌렸습니다.", true);
-        stopRunning();
+        finishLiveMessage(
+          "단말 연결이 끊겨 요청을 오프라인 대기열로 되돌렸습니다.",
+          true,
+          {},
+          runScope,
+          { requestId: queued.id },
+        );
         return;
       }
-      finishLiveMessage(`실행하지 못했습니다: ${message}`, true);
-      stopRunning();
+      finishLiveMessage(
+        `실행하지 못했습니다: ${message}`,
+        true,
+        {},
+        runScope,
+        { requestId: queued.id },
+      );
       startNextQueuedPrompt(continuedThreadId || threadRef.current);
     }
   }
 
   function startNextQueuedPrompt(continuedThreadId: string) {
-    if (queueDispatchingRef.current) return;
+    if (queueDispatchingRef.current || activeRunRef.current.operation || activeRunRef.current.requestId) return;
     const [next, ...remaining] = promptQueueRef.current;
     if (!next || next.requiresConfirmation) return;
     if (next.expiresAt && Date.parse(next.expiresAt) <= Date.now()) {
@@ -1751,9 +2018,9 @@ export function App() {
       );
       messagesRef.current = [];
       setMessages([]);
-      setJournalRestored(false);
+      beginConversationJournalScope();
     }
-    window.setTimeout(() => void executePrompt(next, continuedThreadId), 0);
+    void executePrompt(next, continuedThreadId);
   }
 
   function removeQueuedPrompt(id: string) {
@@ -1769,7 +2036,8 @@ export function App() {
     const safe = serializableQueue(next);
     promptQueueRef.current = safe;
     setPromptQueue(safe);
-    if (journalQueueReadyRef.current === deviceRef.current) {
+    dispatchJournal({ type: "queue_changed", device: deviceRef.current });
+    if (queueJournalReady(journalStateRef.current, deviceRef.current)) {
       void journal.saveQueue({
         device: deviceRef.current,
         prompts: safe,
@@ -1793,31 +2061,34 @@ export function App() {
   }
 
   async function stopOperation() {
-    const current = operationRef.current;
+    const current = activeRunRef.current.operation;
     if (!current) return;
     if (!operationBelongsToSession(current, workspaceRef.current, threadRef.current)) {
       showToast("현재 프로젝트의 작업이 아니어서 중단하지 않았습니다.");
       return;
     }
+    const scope = activeRunScope(activeRunRef.current);
     try {
       await api(`/api/runs/${encodeURIComponent(current.id)}/interrupt`, { method: "POST", body: {} });
-      setRunning("중단을 요청했습니다…");
+      setRunning("중단을 요청했습니다…", "", scope, { operationId: current.id });
     } catch (error) {
       showToast(errorMessage(error));
     }
   }
 
   async function acknowledgeUnknownOperation() {
-    const current = operationRef.current;
+    const current = activeRunRef.current.operation;
     if (current?.status !== "unknown") return;
+    const scope = activeRunScope(activeRunRef.current);
     const hadQueuedPrompts = promptQueueRef.current.length > 0;
     try {
       const data = await api<{ operation: Operation }>(`/api/runs/${encodeURIComponent(current.id)}/acknowledge`, {
         method: "POST",
         body: {},
       });
+      if (!activeRunOwnsOperation(activeRunRef.current, scope, current.id)) return;
       setOperationSnapshots((snapshots) => upsertOperation(snapshots, data.operation));
-      if (operationRef.current?.id === current.id) handleOperationEvent("acknowledged", data.operation);
+      handleOperationEvent("acknowledged", data.operation, scope);
       showToast(hadQueuedPrompts
         ? "상태 확인을 마쳤습니다. 보관한 대기열을 다시 시작합니다."
         : "상태 확인을 마쳤습니다. 새 작업을 시작할 수 있습니다.");
@@ -1828,11 +2099,15 @@ export function App() {
 
   async function releaseSession() {
     if (handoffBusy) return;
+    if (activeRunRef.current.requestId) {
+      showToast("작업 시작 응답을 확인한 뒤 세션을 반납해 주세요.");
+      return;
+    }
     if (promptQueueRef.current.length > 0) {
       showToast("이 기기에만 저장된 대기열이 있습니다. 모두 실행하거나 취소한 뒤 세션을 반납하세요.");
       return;
     }
-    const candidateOperation = operationRef.current;
+    const candidateOperation = activeRunRef.current.operation;
     const currentOperation = operationBelongsToSession(
       candidateOperation,
       workspaceRef.current,
@@ -1883,17 +2158,13 @@ export function App() {
   }
 
   function detachLocalSession() {
-    if (pollTimerRef.current !== null) window.clearTimeout(pollTimerRef.current);
-    pollTimerRef.current = null;
-    operationRef.current = null;
-    setOperation(null);
-    stopRunning();
+    resetActiveRun();
     setThreadId("");
     threadRef.current = "";
     localStorage.removeItem(storageKey("thread", deviceRef.current));
     setMessages([]);
     messagesRef.current = [];
-    setJournalRestored(false);
+    beginConversationJournalScope();
     setShowHandoffDialog(false);
   }
 
@@ -1904,6 +2175,7 @@ export function App() {
       showToast("현재 기기의 대기열을 먼저 실행하거나 취소한 뒤 인계받으세요.");
       return;
     }
+    const selectedDevice = deviceRef.current;
     setHandoffBusy(true);
     try {
       if (!workspaces.some((item) => item.path === pending.workspace)) {
@@ -1912,21 +2184,24 @@ export function App() {
       setWorkspace(pending.workspace);
       workspaceRef.current = pending.workspace;
       localStorage.setItem(storageKey("workspace", deviceRef.current), pending.workspace);
-      await loadThreads(pending.workspace, false, pending.threadId);
+      const runScope = resetActiveRun(selectedDevice);
+      await loadThreads(pending.workspace, false, pending.threadId, undefined, runScope);
       const data = await api<{ thread: ThreadDetail }>(`/api/threads/${encodeURIComponent(pending.threadId)}`);
+      if (deviceRef.current !== selectedDevice || !activeRunScopeMatches(activeRunRef.current, runScope)) return;
       setThreadId(pending.threadId);
       threadRef.current = pending.threadId;
       localStorage.setItem(storageKey("thread", deviceRef.current), pending.threadId);
       const restored = historyMessages(data.thread);
       messagesRef.current = restored;
       setMessages(restored);
-      setJournalRestored(false);
+      beginConversationJournalScope();
       if (pending.operationId) {
         const active = await api<{ operation: Operation }>(`/api/runs/${encodeURIComponent(pending.operationId)}`)
           .catch(() => null);
-        if (active?.operation.status === "running") handleOperationEvent("started", active.operation);
-        else if (active?.operation.status === "unknown") handleOperationEvent("recovered", active.operation);
-        else if (active?.operation.status === "failed") handleOperationEvent("failed", active.operation);
+        if (deviceRef.current !== selectedDevice || !activeRunScopeMatches(activeRunRef.current, runScope)) return;
+        if (active?.operation.status === "running") handleOperationEvent("started", active.operation, runScope);
+        else if (active?.operation.status === "unknown") handleOperationEvent("recovered", active.operation, runScope);
+        else if (active?.operation.status === "failed") handleOperationEvent("failed", active.operation, runScope);
       }
       let claimWarning = "";
       try {
@@ -1967,17 +2242,12 @@ export function App() {
     setEffort("");
     setMessages([]);
     messagesRef.current = [];
-    operationRef.current = null;
-    setOperation(null);
-    stopRunning();
-    liveMessageIdRef.current = null;
-    liveTextRef.current = "";
-    latestDiffRef.current = "";
+    resetActiveRun(nextDevice);
     promptQueueRef.current = [];
     setPromptQueue([]);
-    journalQueueReadyRef.current = null;
+    beginQueueJournalScope(nextDevice);
     queueDispatchingRef.current = false;
-    setJournalRestored(false);
+    beginConversationJournalScope();
     setHandoff(null);
     setShowHandoffDialog(false);
     setHandoffSupported(false);
@@ -2006,7 +2276,7 @@ export function App() {
   }
 
   async function selectProvider(nextProvider: ProviderId) {
-    if (operationRef.current) {
+    if (activeRunRef.current.operation || activeRunRef.current.requestId) {
       showToast("현재 작업 상태를 확인한 뒤 AI 제공자를 바꿔 주세요.");
       return;
     }
@@ -2015,13 +2285,17 @@ export function App() {
       showToast(info?.detail ?? "이 AI 연결은 현재 사용할 수 없습니다.");
       return;
     }
+    const selectedDevice = deviceRef.current;
     setProvider(nextProvider);
     providerRef.current = nextProvider;
+    const selectionScope = resetActiveRun(selectedDevice);
     localStorage.setItem(storageKey("provider", deviceRef.current), nextProvider);
     const nextAccount = info.accounts.find((item) => item.connected) ?? info.accounts[0];
     setAccountId(nextAccount?.id ?? "");
     if (nextAccount) localStorage.setItem(storageKey("account", deviceRef.current), nextAccount.id);
     const modelData = await api<ModelResponse>(`/api/models?provider=${encodeURIComponent(nextProvider)}`);
+    if (deviceRef.current !== selectedDevice || providerRef.current !== nextProvider
+        || !activeRunScopeMatches(activeRunRef.current, selectionScope)) return;
     setModels(modelData.models);
     setModel("");
     setEffort("");
@@ -2029,15 +2303,17 @@ export function App() {
     threadRef.current = "";
     setMessages([]);
     messagesRef.current = [];
-    setJournalRestored(false);
+    beginConversationJournalScope();
     setHandoff(null);
     if (nextProvider === "codex") {
       await loadThreads(
         workspaceRef.current,
         true,
         localStorage.getItem(storageKey("thread", deviceRef.current)) ?? "",
+        undefined,
+        selectionScope,
       );
-      await loadProjectHandoff(workspaceRef.current);
+      await loadProjectHandoff(workspaceRef.current, undefined, selectionScope);
     } else {
       const availableConversations = providerConversationThreads(
         operationSnapshots,
@@ -2192,10 +2468,11 @@ export function App() {
   }
 
   async function selectWorkspace(path: string) {
-    if (operationRef.current) {
+    if (activeRunRef.current.operation || activeRunRef.current.requestId) {
       showToast("현재 작업 상태를 확인한 뒤 프로젝트를 바꿔 주세요.");
       return;
     }
+    const selectedDevice = deviceRef.current;
     setWorkspace(path);
     workspaceRef.current = path;
     localStorage.setItem(storageKey("workspace", deviceRef.current), path);
@@ -2204,10 +2481,11 @@ export function App() {
     localStorage.removeItem(storageKey("thread", deviceRef.current));
     setMessages([]);
     messagesRef.current = [];
-    setJournalRestored(false);
+    const selectionScope = resetActiveRun(selectedDevice);
+    beginConversationJournalScope();
     if (providerRef.current === "codex") {
-      await loadThreads(path, false);
-      await loadProjectHandoff(path);
+      await loadThreads(path, false, undefined, undefined, selectionScope);
+      await loadProjectHandoff(path, undefined, selectionScope);
     } else {
       const availableConversations = providerConversationThreads(operationSnapshots, providerRef.current, path);
       const storedConversation = localStorage.getItem(
@@ -2234,16 +2512,18 @@ export function App() {
   }
 
   async function selectThread(id: string) {
-    if (operationRef.current) {
+    if (activeRunRef.current.operation || activeRunRef.current.requestId) {
       showToast("현재 작업 상태를 확인한 뒤 대화를 바꿔 주세요.");
       return;
     }
+    const selectedDevice = deviceRef.current;
     setThreadId(id);
     threadRef.current = id;
     persistConversationSelection(deviceRef.current, providerRef.current, workspaceRef.current, id);
     setMessages([]);
     messagesRef.current = [];
-    setJournalRestored(false);
+    const selectionScope = resetActiveRun(selectedDevice);
+    beginConversationJournalScope();
     if (!id) return;
     if (providerRef.current !== "codex") {
       const restored = providerConversationMessages(
@@ -2258,6 +2538,8 @@ export function App() {
     }
     try {
       const data = await api<{ thread: ThreadDetail }>(`/api/threads/${encodeURIComponent(id)}`);
+      if (deviceRef.current !== selectedDevice || threadRef.current !== id
+          || !activeRunScopeMatches(activeRunRef.current, selectionScope)) return;
       const restored = historyMessages(data.thread);
       messagesRef.current = restored;
       setMessages(restored);
@@ -2892,12 +3174,15 @@ export function App() {
       });
       setOperationSnapshots((current) => current.filter((item) => item.cwd !== targetWorkspace));
       setApprovalInbox((current) => current.filter((item) => item.cwd !== targetWorkspace));
-      const current = operationRef.current;
+      const current = activeRunRef.current.operation;
       if (current?.cwd === targetWorkspace && current.status !== "running"
         && (current.status !== "unknown" || current.acknowledgedAt)) {
-        operationRef.current = null;
-        setOperation(null);
-        stopRunning();
+        dispatchActiveRun({
+          type: "finish",
+          ...activeRunScope(activeRunRef.current),
+          operationId: current.id,
+        });
+        clearOperationPoll();
       }
       showToast(`Companion 기록 ${data.deletedOperations}건과 이벤트 ${data.deletedEvents}건을 삭제했습니다.`);
     } catch (error) {
@@ -2920,12 +3205,7 @@ export function App() {
     const nextThread = nextProvider === "codex" || providerThreads.some((item) => item.id === conversationId)
       ? conversationId
       : "";
-    stopRunning();
-    operationRef.current = null;
-    setOperation(null);
-    liveMessageIdRef.current = null;
-    liveTextRef.current = "";
-    latestDiffRef.current = "";
+    const assistantId = newId("operation-assistant");
 
     setProvider(nextProvider);
     providerRef.current = nextProvider;
@@ -2942,14 +3222,17 @@ export function App() {
     localStorage.setItem(storageKey("workspace", deviceRef.current), nextOperation.cwd);
     setThreadId(nextThread);
     threadRef.current = nextThread;
+    const runScope = beginActiveRun(deviceRef.current, nextOperation.status === "running"
+      || (nextOperation.status === "unknown" && !nextOperation.acknowledgedAt)
+      ? { liveMessageId: assistantId }
+      : {});
     persistConversationSelection(deviceRef.current, nextProvider, nextOperation.cwd, nextThread);
     setThreads(nextProvider === "codex"
       ? (current) => current.filter((item) => item.cwd === nextOperation.cwd)
       : providerThreads);
     setHandoff(null);
-    setJournalRestored(false);
+    beginConversationJournalScope();
 
-    const assistantId = newId("operation-assistant");
     const terminalText = nextOperation.status === "failed"
       ? `작업 실패: ${nextOperation.error || "알 수 없는 오류"}`
       : nextOperation.status === "unknown"
@@ -2978,27 +3261,27 @@ export function App() {
             text: nextOperation.status === "running" ? "" : terminalText,
             pending: nextOperation.status === "running",
             error: nextOperation.status === "failed" || nextOperation.status === "unknown",
-            details: nextOperation.status === "running" ? undefined : buildResultDetails(nextOperation.result ?? {}) || undefined,
+            details: nextOperation.status === "running"
+              ? undefined
+              : buildResultDetails(nextOperation.result ?? {}, "") || undefined,
           },
         ];
     messagesRef.current = restored;
     setMessages(restored);
+    markConversationJournalLive();
 
     if (nextOperation.status === "running") {
-      liveMessageIdRef.current = assistantId;
-      operationRef.current = nextOperation;
-      setOperation(nextOperation);
-      handleOperationEvent("started", nextOperation);
+      handleOperationEvent("started", nextOperation, runScope);
     } else if (nextOperation.status === "unknown" && !nextOperation.acknowledgedAt) {
-      operationRef.current = nextOperation;
-      setOperation(nextOperation);
-      handleOperationEvent("recovered", nextOperation);
+      handleOperationEvent("recovered", nextOperation, runScope);
     }
     setShowOperationsDashboard(false);
-    if (nextProvider === "codex") void loadProjectHandoff(nextOperation.cwd);
+    if (nextProvider === "codex") void loadProjectHandoff(nextOperation.cwd, undefined, runScope);
     void api<ModelResponse>(`/api/models?provider=${encodeURIComponent(nextProvider)}`)
       .then((data) => {
-        if (providerRef.current === nextProvider) setModels(data.models);
+        if (providerRef.current === nextProvider && activeRunScopeMatches(activeRunRef.current, runScope)) {
+          setModels(data.models);
+        }
       })
       .catch(() => undefined);
   }
@@ -3174,7 +3457,7 @@ export function App() {
           <span>{tr("target")}</span>
           <select
             value={device}
-            disabled={operation !== null || controlsCollapsed}
+            disabled={operation !== null || activeRun.requestId !== null || controlsCollapsed}
             aria-label="Codex 실행 단말 선택"
             onChange={(event) => selectDevice(event.target.value as DeviceId)}
           >
@@ -3185,7 +3468,7 @@ export function App() {
           <span>{tr("provider")}</span>
           <select
             value={provider}
-            disabled={operation !== null || controlsCollapsed}
+            disabled={operation !== null || activeRun.requestId !== null || controlsCollapsed}
             aria-label="AI 제공자 선택"
             title={activeProvider(providers, provider)?.detail}
             onChange={(event) => void selectProvider(event.target.value as ProviderId)}
@@ -3201,14 +3484,14 @@ export function App() {
         <label>
           <span>{tr("project")}</span>
           <div className="select-row">
-            <select value={workspace} disabled={operation !== null || controlsCollapsed} aria-label="프로젝트 선택" onChange={(event) => void selectWorkspace(event.target.value)}>
+            <select value={workspace} disabled={operation !== null || activeRun.requestId !== null || controlsCollapsed} aria-label="프로젝트 선택" onChange={(event) => void selectWorkspace(event.target.value)}>
               {workspaces.length === 0 && <option value="">{tr("noProject")}</option>}
               {workspaces.map((item) => <option key={item.path} value={item.path}>{item.name}</option>)}
             </select>
             <button
               className="icon-button"
               type="button"
-              disabled={operation !== null || controlsCollapsed}
+              disabled={operation !== null || activeRun.requestId !== null || controlsCollapsed}
               aria-label={`${deviceLabel(device)}에 새 프로젝트 만들기`}
               onClick={() => {
                 setProjectCreatorError(creationLocations.length === 0
@@ -3222,7 +3505,7 @@ export function App() {
         <label>
           <span>{tr("conversation")}</span>
           <div className="select-row">
-            <select value={threadId} disabled={operation !== null || controlsCollapsed} aria-label="AI 대화 선택" onChange={(event) => void selectThread(event.target.value)}>
+            <select value={threadId} disabled={operation !== null || activeRun.requestId !== null || controlsCollapsed} aria-label="AI 대화 선택" onChange={(event) => void selectThread(event.target.value)}>
               <option value="">{tr("newConversation")}</option>
               {threads.map((thread) => (
                 <option key={thread.id} value={thread.id}>{short(thread.name || thread.preview || tr("unnamed"), 42)}</option>
@@ -3231,10 +3514,18 @@ export function App() {
             <button
               className="icon-button"
               type="button"
-              disabled={operation !== null || controlsCollapsed}
+              disabled={operation !== null || activeRun.requestId !== null || controlsCollapsed}
               aria-label="대화 새로고침"
               onClick={() => {
-                if (providerRef.current === "codex") void loadThreads(workspaceRef.current, true);
+                if (providerRef.current === "codex") {
+                  void loadThreads(
+                    workspaceRef.current,
+                    true,
+                    undefined,
+                    undefined,
+                    activeRunScope(activeRunRef.current),
+                  );
+                }
                 else setThreads(providerConversationThreads(
                   operationSnapshots,
                   providerRef.current,

@@ -24,6 +24,10 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 - 연결 lifecycle을 단조 증가 attempt ID에 묶인 reducer로 분리했다. 장치 전환·재페어링 뒤
   이전 initialize/SSE/페어링/진단 응답이 새 PC 상태를 덮지 못하고, 새 attempt는 이전
   초기화가 진행 중이어도 독립적으로 시작한다. Android tunnel 전환도 직렬화한다.
+- active run과 journal 복원 상태를 generation 기반 reducer로 분리했다. run 생성 응답 전
+  request도 active 상태로 취급해 중복 전송·queue 자동 실행을 막고, 이전 장치·run의 늦은
+  POST/poll/stream/terminal 응답은 새 run과 poll timer를 바꾸지 못한다. queue journal을 읽는
+  동안 만든 프롬프트는 복원본과 ID 기준으로 병합해 덮어쓰지 않는다.
 - 세션 인계를 프로젝트·대화별로 격리하고, 다른 프로젝트의 인계 세션이 현재 프로젝트처럼 보이던
   문제를 수정했다. v1 단일 handoff 상태는 손실 없이 다중 상태로 마이그레이션한다.
 - Codex 원본 notification과 OpenAI SSE를 `output.delta`, `tool.started`, `workspace.diff`,
