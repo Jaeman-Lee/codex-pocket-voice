@@ -602,8 +602,10 @@ device/network identifier, credential, prompt/response, 오류 원문과 자유 
 최종 release evidence gate는 원본 기능 observation을 다시 평가하고 schema 2 direct LAN/P2P/outbound relay
 저부하 report를 exact allowlist로 읽는다. 각 report의 candidate·설치 identity·transport·측정 시각과 privacy
 선언을 검증하고 aggregate에서 고정 threshold를 재계산해 편집된 pass를 거부한다. 네 결과가 같은 clean
-candidate이고 모두 30일 이내 pass일 때만 create-once 0600 aggregate를 통과시킨다. 이 gate도 별도 manifest
-서명 검증이나 실제 field 실행을 대신하지 않는다.
+candidate이고 모두 30일 이내 pass일 때만 create-once 0600 aggregate를 통과시킨다. field 평가 전에는
+independent trust path의 pinned certificate fingerprint로 detached manifest signature, APK signer와
+APK/SBOM 실제 hash·byte count를 검증하며 실패하면 출력 없이 종료한다. 실제 field evidence는 아직 없고
+signed/tampered bundle과 합성 field fixture로만 검증했다.
 
 Android CI는 APK와 SBOM의 SHA-256·크기, package, SemVer/versionCode, commit을 담은 canonical
 `update-manifest.json`을 생성한다. official signed build는 APK release key로 manifest 원문에 RSA/ECDSA
@@ -675,8 +677,9 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
   시간·개수·attestation gate, extra/freeform field 거부와 owner-only create-once report 검사
 - Android 저부하 report의 canonical signed candidate/clean commit·APK digest, exact transport와 측정 시각 결합,
   설치 package/versionCode drift·미지정/임의 transport 거부 및 owner-only create-once schema 2 검사
-- 기능 observation과 세 transport 저부하 report의 exact candidate/slot/freshness 결합, aggregate threshold
-  재계산, verdict·extra field·wall-duration 변조 거부와 owner-only create-once 최종 evidence 검사
+- pinned certificate·detached manifest signature·APK signer·APK/SBOM bytes 선행 검증 뒤 기능 observation과
+  세 transport 저부하 report의 exact candidate/slot/freshness 결합, aggregate threshold 재계산,
+  verdict·extra field·wall-duration·artifact 변조 거부와 owner-only create-once 최종 evidence 검사
 - relay의 private secret/key, TLS hostname+SPKI pin, 틀린 slot/secret 비소비, connection/slot/waiter/frame/
   timeout 상한, source IP 정규화·동시 연결·fixed-window 시작/new-slot 제한, 무응답 pre-TLS burst·shutdown과
   aggregate-only stats schema 및 relay 안쪽

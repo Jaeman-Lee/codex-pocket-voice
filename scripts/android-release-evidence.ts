@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { lstat, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { AndroidFieldTransport } from "../src/android-field-metrics.js";
 import { FunctionalFieldError } from "../src/functional-field-acceptance.js";
 import {
@@ -20,6 +20,11 @@ const MAX_INPUT_BYTES = 64 * 1024;
 
 interface CliOptions {
   manifestPath: string;
+  signaturePath: string;
+  certificatePath: string;
+  expectedCertificateSha256: string;
+  artifactDirectory: string;
+  apkSignerPath: string;
   observationsPath: string;
   androidReportPaths: Record<AndroidFieldTransport, string>;
   reportPath: string;
@@ -29,6 +34,11 @@ function parseArguments(args: string[]): CliOptions | "help" {
   const values = new Map<string, string>();
   const allowed = new Set([
     "--manifest",
+    "--signature",
+    "--certificate",
+    "--expected-certificate-sha256",
+    "--artifact-dir",
+    "--apksigner",
     "--observations",
     "--direct-lan-report",
     "--p2p-report",
@@ -47,6 +57,11 @@ function parseArguments(args: string[]): CliOptions | "help" {
   }
   const required = [
     "--manifest",
+    "--signature",
+    "--certificate",
+    "--expected-certificate-sha256",
+    "--artifact-dir",
+    "--apksigner",
     "--observations",
     "--direct-lan-report",
     "--p2p-report",
@@ -58,6 +73,11 @@ function parseArguments(args: string[]): CliOptions | "help" {
   }
   return {
     manifestPath: values.get("--manifest")!,
+    signaturePath: values.get("--signature")!,
+    certificatePath: values.get("--certificate")!,
+    expectedCertificateSha256: values.get("--expected-certificate-sha256")!,
+    artifactDirectory: values.get("--artifact-dir")!,
+    apkSignerPath: values.get("--apksigner")!,
     observationsPath: values.get("--observations")!,
     androidReportPaths: {
       direct_lan: values.get("--direct-lan-report")!,
@@ -75,13 +95,19 @@ async function main(): Promise<void> {
       "Usage:",
       "  npm run android:release-evidence -- \\",
       "    --manifest /private/update-manifest.json \\",
+      "    --signature /private/update-manifest.sig \\",
+      "    --certificate /trusted/update-manifest-cert.pem \\",
+      "    --expected-certificate-sha256 PINNED_FINGERPRINT \\",
+      "    --artifact-dir /private/update-bundle \\",
+      "    --apksigner /trusted/android-sdk/build-tools/36.0.0/apksigner \\",
       "    --observations /private/functional-observations.json \\",
       "    --direct-lan-report /private/direct-lan.json \\",
       "    --p2p-report /private/p2p.json \\",
       "    --relay-report /private/outbound-relay.json \\",
       "    --report /private/release-evidence.json",
       "",
-      "The signed update bundle must be verified separately before this command.",
+      "The pinned fingerprint must come from a previously trusted install or another independent trust path.",
+      "This command verifies the detached manifest signature, APK signer, APK/SBOM hashes, and exact source before evaluating field evidence.",
       "All private inputs must be owner-only regular files for the same exact clean candidate commit.",
       "This command performs no ADB, device, network, Provider, installation, or Companion action.",
       "",
@@ -89,6 +115,7 @@ async function main(): Promise<void> {
     return;
   }
   await requireUnusedReleaseEvidenceFile(options.reportPath);
+  await verifySignedCandidateBundle(options);
   const [manifestText, observationsText, directText, p2pText, relayText, source] = await Promise.all([
     readBoundedFile(options.manifestPath, false, "Update manifest"),
     readBoundedFile(options.observationsPath, true, "Functional observations"),
@@ -113,6 +140,30 @@ async function main(): Promise<void> {
   } else {
     process.stderr.write("Release evidence gate failed; inspect the private aggregate report.\n");
     process.exitCode = 1;
+  }
+}
+
+async function verifySignedCandidateBundle(options: CliOptions): Promise<void> {
+  const verifier = fileURLToPath(new URL("./verify-update-manifest.mjs", import.meta.url));
+  try {
+    const result = await execFileAsync(process.execPath, [
+      verifier,
+      "--manifest", options.manifestPath,
+      "--signature", options.signaturePath,
+      "--certificate", options.certificatePath,
+      "--expected-certificate-sha256", options.expectedCertificateSha256,
+      "--artifact-dir", options.artifactDirectory,
+      "--apksigner", options.apkSignerPath,
+    ], {
+      encoding: "utf8",
+      timeout: 90_000,
+      maxBuffer: 64 * 1024,
+    });
+    if (!/^Verified update manifest for .+\n$/.test(result.stdout)) {
+      throw new Error("Unexpected verifier output");
+    }
+  } catch {
+    throw new ReleaseEvidenceError("Signed update bundle verification failed before release evidence evaluation");
   }
 }
 

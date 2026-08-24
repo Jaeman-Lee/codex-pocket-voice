@@ -10,6 +10,17 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Cryptographic final evidence preflight fix는 최종 release evidence가 `signed: true` manifest와 별도
+  운영자 검증에 의존하던 exact-candidate 신뢰 공백을 고치는 internal compatibility `patch`다. 아직
+  전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,
+  `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. 실제 Provider 호출·APK 전달·
+  설치·Companion 재시작은 하지 않으며 current v1 후보 1.8.2, staged v1.8.4, 검증된 1.8.1 rollback과
+  배포 중인 v1.8.3 Companion을 보존한다.
+- 최종 evidence CLI는 independent trust path의 pinned certificate fingerprint, detached manifest
+  signature, APK signer와 APK/SBOM 실제 hash·byte count를 기존 verifier로 먼저 검사한다. 검증 실패는
+  기능·저부하 evidence 평가 전에 종료하고 출력 report를 만들지 않는다. 유효 bundle과 tampered APK를
+  실제 CLI 경로로 회귀하며 `release:check`의 단위 검사 307개와 실제 app-server 통합 3개, production
+  build·schema 일치·SBOM이 통과했다.
 - Protected Provider execution gate fix는 `provider-smoke` environment가 실제로 보호되기 전에 저장소
   수준 API key만으로 명시적 dispatch가 실행될 수 있던 release validation 경계를 고치는 internal
   compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
