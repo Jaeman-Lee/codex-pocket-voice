@@ -26,7 +26,6 @@ jobs:
       OPENROUTER_SMOKE_MODEL: ${{ inputs.model }}
       OPENROUTER_SMOKE_UPSTREAM: ${{ inputs.upstream }}
       OPENROUTER_SMOKE_MAX_USD: "0.02"
-      OPENROUTER_SMOKE_REPORT: ${{ runner.temp }}/openrouter-smoke-report.json
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -37,6 +36,8 @@ jobs:
           node-version: 22
 
       - name: Run bounded synthetic smoke
+        env:
+          OPENROUTER_SMOKE_REPORT: ${{ runner.temp }}/openrouter-smoke-report.json
         run: node scripts/openrouter-smoke.mjs
 
       - name: Upload redacted grade report
