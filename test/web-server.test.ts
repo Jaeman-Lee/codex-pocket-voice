@@ -173,6 +173,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(released.handoff.threadId, "thread-web");
   assert.equal(released.handoff.operationId, operationId);
   assert.equal(released.operation.status, "running");
+  assert.equal(released.threadUnsubscribeStatus, null);
   assert.equal(fake.interrupted, undefined);
   const availableHandoff = await jsonFetch(`${base}/api/session/handoff`, { headers: authorized() });
   assert.equal(availableHandoff.handoff.id, released.handoff.id);
@@ -182,18 +183,6 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
     { headers: authorized() },
   );
   assert.equal(unrelatedHandoff.handoff, null);
-  const claimed = await jsonFetch(`${base}/api/session/handoffs/${released.handoff.id}/claim`, {
-    method: "POST",
-    headers: authorized({ "Content-Type": "application/json", Origin: base }),
-    body: "{}",
-  });
-  assert.equal(claimed.claimed.id, released.handoff.id);
-  const clearedHandoff = await jsonFetch(
-    `${base}/api/session/handoff?workspace=${encodeURIComponent(cwd)}`,
-    { headers: authorized() },
-  );
-  assert.equal(clearedHandoff.handoff, null);
-
   const interrupted = await jsonFetch(`${base}/api/runs/${operationId}/interrupt`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: base }),
@@ -207,11 +196,33 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
     const operation = await jsonFetch(`${base}/api/runs/${operationId}`, { headers: authorized() });
     return operation.operation.status === "interrupted";
   });
+  await waitFor(async () => fake.unsubscribed.length === 1);
+  assert.deepEqual(fake.unsubscribed, ["thread-web"]);
+  const claimed = await jsonFetch(`${base}/api/session/handoffs/${released.handoff.id}/claim`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: "{}",
+  });
+  assert.equal(claimed.claimed.id, released.handoff.id);
+  const clearedHandoff = await jsonFetch(
+    `${base}/api/session/handoff?workspace=${encodeURIComponent(cwd)}`,
+    { headers: authorized() },
+  );
+  assert.equal(clearedHandoff.handoff, null);
+
+  const idleRelease = await jsonFetch(`${base}/api/session/handoff`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ workspace: cwd, threadId: "thread-web" }),
+  });
+  assert.equal(idleRelease.threadUnsubscribeStatus, "unsubscribed");
+  assert.deepEqual(fake.unsubscribed, ["thread-web", "thread-web"]);
 });
 
 class FakeWebClient implements WebCodexClient {
   lastRun?: RunTurnOptions;
   interrupted?: [string, string];
+  unsubscribed: string[] = [];
   private listeners = new Set<(notification: AppServerNotification) => void>();
   private resolveTurn?: (turn: Turn) => void;
 
@@ -269,6 +280,11 @@ class FakeWebClient implements WebCodexClient {
     this.interrupted = [threadId, turnId];
   }
 
+  async unsubscribeThread(threadId: string) {
+    this.unsubscribed.push(threadId);
+    return { status: "unsubscribed" as const };
+  }
+
   subscribe(listener: (notification: AppServerNotification) => void) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -290,6 +306,7 @@ function thread(includeTurns = false): Thread {
     ephemeral: false,
     section: null,
     sectionEnteredAt: null,
+    projectId: null,
     historyMode: "legacy",
     modelProvider: "openai",
     createdAt: 1,
@@ -307,7 +324,7 @@ function thread(includeTurns = false): Thread {
     gitInfo: null,
     name: "Web test",
     turns: includeTurns
-      ? [{ ...turn("completed"), items: [{ type: "agentMessage", id: "message-web", text: "hello", phase: "final_answer", memoryCitation: null }] }]
+      ? [{ ...turn("completed"), items: [{ type: "agentMessage", id: "message-web", text: "hello", phase: "final_answer", memoryCitation: null, delivery: null }] }]
       : [],
   };
 }

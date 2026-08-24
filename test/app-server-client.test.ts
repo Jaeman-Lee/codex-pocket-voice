@@ -41,4 +41,7 @@ test("client initializes, lists threads, runs a sandboxed turn, and declines app
   });
   assert.equal(resumed.thread.id, "thread-1");
   assert.equal(resumed.turn.status, "completed");
+
+  const unsubscribed = await client.unsubscribeThread(resumed.thread.id);
+  assert.equal(unsubscribed.status, "unsubscribed");
 });

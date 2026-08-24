@@ -8,6 +8,7 @@ import type { ModelListResponse } from "../generated/app-server/v2/ModelListResp
 import type { Thread } from "../generated/app-server/v2/Thread";
 import type { ThreadListResponse } from "../generated/app-server/v2/ThreadListResponse";
 import type { ThreadReadResponse } from "../generated/app-server/v2/ThreadReadResponse";
+import type { ThreadUnsubscribeResponse } from "../generated/app-server/v2/ThreadUnsubscribeResponse";
 import type { Turn } from "../generated/app-server/v2/Turn";
 import type {
   AppServerNotification,
@@ -45,6 +46,7 @@ export interface WebCodexClient {
   readThread(threadId: string, includeTurns?: boolean): Promise<ThreadReadResponse>;
   beginTurn(options: RunTurnOptions): Promise<BeginTurnResult>;
   interrupt(threadId: string, turnId: string): Promise<void>;
+  unsubscribeThread(threadId: string): Promise<ThreadUnsubscribeResponse>;
   subscribe(listener: (notification: AppServerNotification) => void): () => void;
 }
 
@@ -390,6 +392,9 @@ async function handleApi(
     if (operation && (operation.threadId !== threadId || operation.cwd !== workspace)) {
       throw new HttpError(409, "Operation does not belong to this session");
     }
+    const unsubscribe = operation?.status === "running"
+      ? null
+      : await options.client.unsubscribeThread(threadId);
     const handoff = await handoffs.release({
       workspace,
       threadId,
@@ -400,6 +405,7 @@ async function handleApi(
     sendJson(response, 201, {
       handoff,
       operation: operation ? publicOperation(operation) : null,
+      threadUnsubscribeStatus: unsubscribe?.status ?? null,
     });
     return;
   }
@@ -543,7 +549,7 @@ async function handleApi(
     operations.set(operation.id, operation);
     activeThreads.add(operation.threadId);
     broadcast(sseClients, { type: "operation", action: "started", operation: publicOperation(operation) });
-    void settleOperation(operation, begun, operations, activeThreads, sseClients);
+    void settleOperation(operation, begun, operations, activeThreads, handoffs, options.client, sseClients);
     sendJson(response, 202, { operation: publicOperation(operation) });
     return;
   }
@@ -586,6 +592,8 @@ async function settleOperation(
   begun: BeginTurnResult,
   operations: Map<string, Operation>,
   activeThreads: Set<string>,
+  handoffs: SessionHandoffStore,
+  client: WebCodexClient,
   clients: Set<ServerResponse>,
 ): Promise<void> {
   try {
@@ -602,6 +610,13 @@ async function settleOperation(
   } finally {
     if (![...operations.values()].some((item) => item.threadId === operation.threadId && item.status === "running")) {
       activeThreads.delete(operation.threadId);
+    }
+    if (handoffs.current({ workspace: operation.cwd, threadId: operation.threadId })) {
+      try {
+        await client.unsubscribeThread(operation.threadId);
+      } catch {
+        process.stderr.write("[codex-session-handoff] Could not release completed thread writer.\n");
+      }
     }
   }
 }

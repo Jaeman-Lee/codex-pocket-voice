@@ -2,6 +2,25 @@
 
 이 문서는 사용자가 설치할 수 있는 배포판과 개발 중 CI 산출물을 구분한다.
 
+## 1.8.3 hotfix candidate — release handed-off thread writers
+
+Update decision: 사용자가 세션을 반납한 뒤에도 Companion의 app-server가 writer lock을
+유지해 PC의 `codex resume`를 막는 연결 장애 수정이므로 `patch`로 분류하고
+`1.8.3`/Android `versionCode 10803`으로 올린다. 대상은
+`hotfix/1.8.3-writer-release` 브랜치이다. 새 APK는 CI 검증 전까지 배포하지 않고,
+기존 1.8.2 current 후보와 사용자 검증 1.8.1 rollback APK를 모두 보존한다. 최초
+1.8.3 현장 설치 후에는 1.8.2를 rollback으로 두고 1.8.1은 복구 가능한 archive로
+이동한다. 실행 중 Companion은 활성 Codex turn이 없고 사용자가 확인한 뒤에만 재시작한다.
+
+- idle 세션 반납 시 정확한 Codex thread에 `thread/unsubscribe`를 호출한 뒤 handoff를 기록한다.
+- 실행 중 세션 반납은 turn을 끊지 않고, 완료·실패 후 handoff가 그대로일 때 writer를 반환한다.
+- 다른 workspace/thread의 handoff에는 영향을 주지 않으며, 반환 실패 시 기존 handoff와 세션을 보존한다.
+- PC Codex CLI `0.149.0` 기준으로 app-server TypeScript 바인딩을 재생성하고 실제
+  app-server에서 존재하지 않는 thread의 안전한 unsubscribe 응답을 검증한다.
+- 커밋 `e0f6ea1`의 Linux Node 20/22와 Android stable APK CI가 통과했다. Actions run
+  `32671707088`의 서명 APK·SHA256SUMS·SBOM을 PC의 별도 1.8.3 candidate 폴더에 내려받아
+  SHA-256을 확인했으며, 현재 1.8.2와 rollback 1.8.1 세트는 변경하지 않았다.
+
 ## 1.8.2 hotfix candidate — project-scoped session handoff
 
 Update decision: 다른 프로젝트의 인계 세션과 실행이 현재 프로젝트의 세션 종료·반납 대상으로
@@ -65,7 +84,8 @@ Candidate build history:
 | 1.7.4 | `91f27b4` | superseded field build | 구형 Git 프로젝트 생성 호환 |
 | 1.8.0 | `5c4d0bb` | superseded candidate | 교차 기기 세션 인계와 순차 배포 호환 |
 | 1.8.1 | `c5563ec` | rollback candidate | 스마트폰 뷰포트 수용과 조절 가능한 WebView |
-| 1.8.2 | `d76e478` | current install candidate | 프로젝트별 세션 인계와 종료 대상 격리 |
+| 1.8.2 | `d76e478` | preserved current candidate | 프로젝트별 세션 인계와 종료 대상 격리 |
+| 1.8.3 | `e0f6ea1` | staged install candidate | 반납한 thread의 app-server writer 반환 |
 
 ## 1.6.0 — 2026-08-16
 
