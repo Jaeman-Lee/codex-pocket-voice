@@ -602,6 +602,9 @@ Android CI는 APK와 SBOM의 SHA-256·크기, package, SemVer/versionCode, commi
 SHA-256 분리 서명을 만들고 공개 인증서를 함께 싣는다. 오프라인 검증기는 호출자가 별도 경로로 고정한
 인증서 fingerprint, manifest 서명, APK 실제 signer, artifact hash와 anti-downgrade를 모두 확인한다.
 포함된 인증서 자체는 신뢰 기준이 아니며 unsigned fork manifest는 명시적 override 없이 거부한다.
+PR candidate는 임시 merge ref가 아니라 exact feature head SHA를 checkout하고, 실제 checkout commit과
+예상 PR head가 같은지 확인한 뒤 그 SHA를 manifest에 기록한다. 따라서 field harness의 clean source
+identity와 APK를 만든 source가 재현 가능하게 일치한다.
 Android 앱은 사용자가 받은 전체 artifact ZIP을 document picker로 선택하거나 **공식판 조회**를 누를 때만
 hardcoded public GitHub 저장소의 최신 non-draft/non-prerelease Release를 확인한다. metadata는 1 MiB와
 128 asset으로 제한하고 정확한 `Codex-Pocket-Voice-vX.Y.Z-update.zip`, uploaded/application-zip 상태,
@@ -651,6 +654,7 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
   default-network callback 등록/해제 source 계약과 retry wait 즉시 해제는 native JVM 검사 구현;
   물리 단말 잠금화면 탭, background reconnect와 음성 확인은 실기기 gate 잔여
 - update manifest 서명·APK signer binding, artifact 변조, unsigned 기본 거부와 versionCode downgrade 차단
+- Android workflow의 exact PR head checkout, 실제 checkout SHA 일치와 signed/unsigned manifest commit 결합
 - Android ZIP importer의 path/duplicate/size 상한, current signer/package binding, 10분 재검토와 설치 전 rehash
 - 공식 Release의 잘못된 repo/tag/중복 asset/digest/content-type, oversized JSON/ZIP, HTTP·외부-host redirect와 조회 token 만료 차단
 - DNS-SD의 wrong service/TXT, public·loopback 주소, 후보 flood·중복·만료·Unicode control과 pin/TXT smuggling 차단

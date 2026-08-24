@@ -14,6 +14,9 @@ Android `versionCode`, APK 이름과 Git tag는 이 값과 일치해야 한다. 
 4. **Released** — PR 병합 후 병합 커밋에 `vX.Y.Z` annotated tag와 GitHub Release를 만든다.
 
 Candidate 단계에서는 Draft PR을 유지하고 `Latest` Release를 바꾸지 않는다.
+PR의 Android candidate는 GitHub 임시 merge ref가 아니라 exact feature head SHA를 checkout해 build하고,
+manifest의 commit도 실제 checkout의 `git rev-parse HEAD`와 같아야 한다. merge compatibility는 별도 PR
+checks가 담당하며 field evidence는 이 재현 가능한 feature commit에만 결합한다.
 
 ## Update decision gate
 

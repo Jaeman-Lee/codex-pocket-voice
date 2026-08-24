@@ -26,6 +26,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -62,8 +64,13 @@ jobs:
         id: app
         run: |
           version=$(node -p "JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version")
+          source_commit=$(git rev-parse HEAD)
+          expected_commit="${{ github.event.pull_request.head.sha || github.sha }}"
           test -n "$version"
+          node -e "if (!/^[a-f0-9]{40}$/.test(process.argv[1])) process.exit(1)" "$source_commit"
+          test "$source_commit" = "$expected_commit"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'source_commit=%s\n' "$source_commit" >> "$GITHUB_OUTPUT"
 
       - name: Build unsigned release APK
         run: npm run android:sync && cd android && ./gradlew assembleRelease
@@ -153,7 +160,7 @@ jobs:
             --version-code "$(node -p "const [a,b,c]='${{ steps.app.outputs.version }}'.split('.').map(Number); a*10000+b*100+c")" \
             --application-id "${POCKET_APPLICATION_ID:-io.github.jaemanlee.codexpocketvoice.stable}" \
             --channel ci \
-            --commit "$GITHUB_SHA" \
+            --commit "${{ steps.app.outputs.source_commit }}" \
             --certificate "$certificate"
           mkdir -p "$RUNNER_TEMP/release-manifest-signer"
           javac -d "$RUNNER_TEMP/release-manifest-signer" scripts/ReleaseManifestSigner.java
@@ -186,7 +193,7 @@ jobs:
             --version-code "$version_code" \
             --application-id "${POCKET_APPLICATION_ID:-io.github.jaemanlee.codexpocketvoice.stable}" \
             --channel ci-unsigned \
-            --commit "$GITHUB_SHA" \
+            --commit "${{ steps.app.outputs.source_commit }}" \
             --unsigned
           node scripts/verify-update-manifest.mjs \
             --manifest "$manifest" \

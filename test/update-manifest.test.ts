@@ -9,6 +9,7 @@ import test from "node:test";
 
 const createManifest = fileURLToPath(new URL("../scripts/create-update-manifest.mjs", import.meta.url));
 const verifyManifest = fileURLToPath(new URL("../scripts/verify-update-manifest.mjs", import.meta.url));
+const androidWorkflow = fileURLToPath(new URL("../.github/workflows/android-debug.yml", import.meta.url));
 const applicationId = "io.github.jaemanlee.codexpocketvoice.stable";
 const commit = "a".repeat(40);
 const createdAt = "2026-08-24T00:00:00.000Z";
@@ -138,6 +139,17 @@ test("update manifests bind the APK, signing identity, and monotonic version", {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("Android candidate workflow builds and manifests the exact pull-request head", async () => {
+  const workflow = await readFile(androidWorkflow, "utf8");
+  const exactHeadExpression = "${{ github.event.pull_request.head.sha || github.sha }}";
+  assert.match(workflow, new RegExp(`ref: \\$\\{\\{ github\\.event\\.pull_request\\.head\\.sha \\|\\| github\\.sha \\}\\}`));
+  assert.match(workflow, /source_commit=\$\(git rev-parse HEAD\)/);
+  assert.match(workflow, /test "\$source_commit" = "\$expected_commit"/);
+  assert.equal(workflow.match(/--commit "\$\{\{ steps\.app\.outputs\.source_commit \}\}"/g)?.length, 2);
+  assert.doesNotMatch(workflow, /--commit "\$GITHUB_SHA"/);
+  assert.ok(workflow.includes(`expected_commit="${exactHeadExpression}"`));
 });
 
 function run(script: string, arguments_: string[], expectSuccess = true) {

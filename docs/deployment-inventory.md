@@ -52,6 +52,16 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
 
+Exact-head Android candidate checkpoint decision: PR Android artifact가 feature head 대신 GitHub 임시 merge
+commit을 checkout하고 manifest에 `$GITHUB_SHA`를 기록해 clean feature checkout 기반 field gate와 결합되지
+않던 provenance 오류를 고치므로 internal compatibility `patch`로 분류한다. 아직 전달하지 않은 incompatible
+v2 범위 안에서 SemVer `2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고
+기존 CI-only 2.0 artifact를 대체한다. workflow는 PR exact head SHA를 명시적으로 checkout하고 실제
+`git rev-parse HEAD` 일치를 확인한 뒤 signed/unsigned manifest에 그 source commit만 기록한다. APK 전달·
+설치, 실제 field·Provider 호출과 Companion 재시작은 하지 않고 current v1 후보 1.8.2, staged v1.8.4,
+검증된 rollback 1.8.1과 배포 중인 v1.8.3 Companion을 그대로 보존한다. `release:check`의 단위 검사
+304개와 실제 app-server 통합 3개, production build·schema 일치·SBOM이 통과했다.
+
 Functional field acceptance harness checkpoint decision: 기존 v2 physical/provider release checklist를 exact
 candidate에 묶어 반복 가능하게 검증하는 developer validation이므로 internal compatibility `patch`로 분류한다.
 아직 전달하지 않은 incompatible v2 범위 안에서 SemVer `2.0.0`/Android `versionCode 20000`, 대상

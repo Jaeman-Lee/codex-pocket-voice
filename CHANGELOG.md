@@ -10,6 +10,16 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Exact-head Android candidate fix는 PR artifact가 feature head 대신 GitHub 임시 merge commit을 build하고
+  manifest에 기록해 clean feature checkout 기반 field gate와 결합할 수 없던 provenance 오류를 고치는
+  internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
+  `versionCode 20000`, `feature/v2-control-plane`을 유지하고 기존 CI-only 2.0 artifact를 대체한다.
+  APK 전달·설치, 실제 field·Provider 호출과 Companion 재시작은 하지 않으며 current v1 후보 1.8.2,
+  staged v1.8.4, 검증된 1.8.1 rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- Android candidate workflow는 PR의 exact head SHA를 checkout하고 실제 `git rev-parse HEAD`가 예상 SHA와
+  같은지 확인한 뒤 signed/unsigned manifest 모두 그 값만 기록한다. `$GITHUB_SHA` 임시 merge commit을
+  candidate identity로 사용하는 회귀를 source 계약으로 차단한다. `release:check`의 단위 검사 304개와
+  실제 app-server 통합 3개, production build·schema 일치·SBOM이 통과했다.
 - Final release evidence gate는 기능 observation과 transport별 저부하 결과를 수동 대조하던 절차를 한
   exact candidate 판정으로 고정하는 developer validation이므로 internal compatibility `patch`다. 아직
   전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,
