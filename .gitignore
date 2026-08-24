@@ -8,3 +8,5 @@ client/dist/
 .gradle/
 android/.gradle/
 android/local.properties
+playwright-report/
+test-results/

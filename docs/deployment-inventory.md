@@ -30,11 +30,20 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Android journal milestone | app-owned SQLite schema 1 | encrypted snapshot migration and rollback mirror implemented; CI-only, no device migration performed |
 | Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, HMAC-authenticated bounded user retention, workspace JSON export and protected delete implemented in v2; not field deployed |
 | Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation, touch-only approvals, durable goal/pin/archive and two-touch history deletion implemented; no field APK handed off |
+| Mobile browser acceptance | Playwright Chromium on Node 22 | production build plus real pairing/Gateway/SSE/run/approval path covers 320/360/412px, 150% text, keyboard resize, rotation and long diff; synthetic only, device acceptance still pending |
 | Android work notifications | opt-in connectedDevice service | maximum 8 encrypted loopback subscriptions, notification-only authenticated SSE, durable cursor/replay freshness and generic retained-operation navigation implemented; field process-kill/deep-link acceptance pending |
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
 | PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD address discovery, observed backup-pin server certificate promotion and recoverable Keystore A/B client identity rotation implemented; P2P, relay and field validation pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+Mobile browser acceptance checkpoint decision: production build·pairing·Gateway·SSE·run·approval를 함께 검증하고
+live diff를 모바일 진행 패널에 노출하는 새 v2 capability이므로 `feature`로 분류한다. 아직 현장 전달하지
+않은 incompatible v2 범위 안이어서 SemVer `2.0.0`/Android `versionCode 20000`, 대상
+`feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. 공개 검사는 합성 Codex client와
+임시 인증·journal만 사용하며 실제 Provider, API key와 유료 inference를 호출하지 않는다. APK 전달·설치와
+실행 중 Companion 재시작은 하지 않고 current v1 후보 1.8.2, 별도 staged 1.8.3과 검증된 rollback
+1.8.1을 그대로 보존한다.
 
 Provider contract checkpoint decision: 기존 v2 실행 계층의 run event 오귀속·중복과 Provider별 transport
 failure 차이를 수정하는 internal compatibility `patch`다. 아직 전달하지 않은 v2 candidate 안의 변경이므로

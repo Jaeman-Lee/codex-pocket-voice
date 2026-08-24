@@ -10,6 +10,16 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- 모바일 browser acceptance checkpoint는 production client build와 실제 pairing·Gateway·SSE·run·approval
+  경로를 사용하는 새 v2 검증 capability이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 v2 안의
+  변경이므로 `2.0.0`/Android `versionCode 20000`과 `feature/v2-control-plane`을 유지하고 기존 CI-only
+  candidate를 대체한다. APK 전달·설치와 Companion 재시작은 수행하지 않으며 v1.8.2 current 후보,
+  별도 staged v1.8.3과 검증된 v1.8.1 rollback을 그대로 보존한다.
+- Playwright Chromium 검사를 추가해 pairing 전 화면과 인증된 production Gateway를 거쳐 320/360/412px,
+  150% 글자, 키보드 축소, 가로 회전, 긴 prompt·diff·승인 상세가 화면 안에 머물고 내부 스크롤로
+  접근 가능한지 확인한다. 공개 CI는 합성 Codex client와 임시 인증·journal만 사용한다.
+- live Codex 및 공통 Provider diff를 진행 패널 상세에 표시해 모바일에서 변경 검토 중인 내용을 바로
+  확인할 수 있게 했다.
 - Codex 실행·취소·stream event를 Provider 공통 runtime 계약 뒤로 이동했다.
 - Provider capability를 streaming, 승인, workspace 읽기·쓰기, 명령 실행과 사용량 기록까지 확장했다.
 - Gateway protocol 3을 추가하면서 protocol 2 Companion과 클라이언트가 공존할 수 있는 범위 협상을

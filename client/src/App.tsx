@@ -1535,15 +1535,17 @@ export function App() {
         case "tool.completed":
           setRunning(`도구 완료 · ${event.tool?.status || "처리됨"}`, event.tool?.command);
           break;
-        case "workspace.diff":
+        case "workspace.diff": {
+          const diff = event.diff ?? "";
           dispatchActiveRun({
             type: "set_diff",
             ...scope,
             operationId: current.id,
-            diff: event.diff ?? "",
+            diff,
           });
-          setRunning("변경 내용을 검토하고 있습니다…");
+          setRunning("변경 내용을 검토하고 있습니다…", diff);
           break;
+        }
         case "run.failed":
           showToast(event.message || "AI 처리 중 오류가 발생했습니다.");
           break;
@@ -1586,15 +1588,17 @@ export function App() {
         }
         break;
       }
-      case "turn/diff/updated":
+      case "turn/diff/updated": {
+        const diff = stringValue(params.diff);
         dispatchActiveRun({
           type: "set_diff",
           ...scope,
           operationId: current.id,
-          diff: stringValue(params.diff),
+          diff,
         });
-        setRunning("변경 내용을 검토하고 있습니다…");
+        setRunning("변경 내용을 검토하고 있습니다…", diff);
         break;
+      }
       case "error":
         showToast(stringValue(params.message) || "Codex 처리 중 오류가 발생했습니다.");
         break;
