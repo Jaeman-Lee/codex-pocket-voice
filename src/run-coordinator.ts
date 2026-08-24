@@ -35,6 +35,22 @@ export interface RunSteerRecord {
   acceptedAt: string;
 }
 
+export interface RunForkProvenance {
+  schema: 1;
+  sourceOperationId: string;
+  sourceProviderId: string;
+  sourceModel?: string;
+  targetProviderId: string;
+  contextDigest: string;
+  importedCharacters: number;
+  transferredCharacters: number;
+  estimatedInputTokens: number;
+  truncated: boolean;
+  attachmentCount: number;
+  previewedAt: string;
+  confirmedAt: string;
+}
+
 export interface RunOperation {
   id: string;
   providerId: string;
@@ -43,6 +59,7 @@ export interface RunOperation {
   cwd: string;
   prompt: string;
   steers?: RunSteerRecord[];
+  fork?: RunForkProvenance;
   accountId?: string;
   model?: string;
   effort?: string;
@@ -70,6 +87,7 @@ export interface StartRunCommand {
   workspaceIdentity?: WorkspaceIdentity;
   idempotencyKey?: string;
   policyConfirmation?: string;
+  fork?: RunForkProvenance;
 }
 
 export interface SteerRunCommand {
@@ -521,6 +539,7 @@ export class RunCoordinator {
         ...(providerInput.routing ? { routing: structuredClone(providerInput.routing) } : {}),
         ...(runPolicy ? { runPolicy: structuredClone(runPolicy) } : {}),
         ...(command.workspaceIdentity ? { workspaceIdentity: structuredClone(command.workspaceIdentity) } : {}),
+        ...(command.fork ? { fork: structuredClone(command.fork) } : {}),
         status: "running",
         startedAt: new Date(this.now()).toISOString(),
       };
@@ -763,6 +782,7 @@ function fingerprintCommand(command: StartRunCommand): string {
       accountId: command.accountId ?? null,
       prompt: command.prompt,
       input: command.input,
+      fork: command.fork ?? null,
     }))
     .digest("hex");
 }

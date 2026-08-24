@@ -56,6 +56,9 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   const runPolicyReview = css.match(/\.run-policy-review \{([^}]+)\}/)?.[1] ?? "";
   const runPolicyReviewCard = css.match(/\.run-policy-review-card \{([^}]+)\}/)?.[1] ?? "";
   const runPolicyFields = css.match(/\.run-policy-fields \{([^}]+)\}/)?.[1] ?? "";
+  const runForkReview = css.match(/\.run-fork-review \{([^}]+)\}/)?.[1] ?? "";
+  const runForkReviewCard = css.match(/\.run-fork-review-card \{([^}]+)\}/)?.[1] ?? "";
+  const runForkContext = css.match(/\.run-fork-context \{([^}]+)\}/)?.[1] ?? "";
 
   assert.match(overlay, /grid-template-rows:\s*minmax\(0,\s*1fr\)/);
   assert.match(overlay, /overflow:\s*hidden/);
@@ -111,6 +114,17 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   assert.match(runPolicyReviewCard, /overflow-y:\s*auto/);
   assert.match(runPolicyFields, /minmax\(0,\s*1fr\)/);
   assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.run-policy-review-facts, \.run-policy-review-actions, \.run-policy-fields \{[^}]*minmax\(0,\s*1fr\)/);
+  assert.match(runForkReview, /grid-template-rows:\s*minmax\(0,\s*1fr\)/);
+  assert.match(runForkReview, /overflow:\s*hidden/);
+  assert.match(runForkReviewCard, /max-width:\s*100%/);
+  assert.match(runForkReviewCard, /max-height:\s*100%/);
+  assert.match(runForkReviewCard, /overflow-x:\s*hidden/);
+  assert.match(runForkReviewCard, /overflow-y:\s*auto/);
+  assert.match(runForkContext, /overflow-x:\s*hidden/);
+  assert.match(runForkContext, /overflow-y:\s*auto/);
+  assert.match(css, /\.run-fork-context pre[^}]*white-space:\s*pre-wrap/);
+  assert.match(css, /\.run-fork-context pre[^}]*overflow-wrap:\s*anywhere/);
+  assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.run-fork-review-facts, \.run-fork-review-actions \{[^}]*minmax\(0,\s*1fr\)/);
 });
 
 test("API policy confirmation is touch-only and never persists its one-time token", async () => {
@@ -126,6 +140,22 @@ test("API policy confirmation is touch-only and never persists its one-time toke
   assert.match(dashboard, /API 실행 긴급 중단/);
   assert.match(dashboard, /if \(!confirming\)/);
   assert.match(dashboard, /확인하고 API 정책 적용/);
+});
+
+test("Provider fork is touch-reviewed, client-bound, and does not auto-resume a conversation", async () => {
+  const app = await readFile(new URL("../client/src/App.tsx", import.meta.url), "utf8");
+  const server = await readFile(new URL("../src/web-server.ts", import.meta.url), "utf8");
+  const journal = await readFile(new URL("../client/src/work-journal-model.ts", import.meta.url), "utf8");
+
+  assert.match(app, /\/api\/run-forks\/preview/);
+  assert.match(app, /Provider 컨텍스트 Fork 확인/);
+  assert.match(app, /이 범위로 새 대화 Fork/);
+  assert.match(app, /forkPreviewId:\s*queued\.forkPreviewId/);
+  assert.match(app, /!queued\.forkPreviewId && queued\.provider === "codex"/);
+  assert.match(server, /runForks\.sourceOperationId\(forkPreviewId, authenticatedClient\.id\)/);
+  assert.match(server, /Provider fork always starts a new conversation/);
+  assert.match(server, /Provider fork cannot move context to another workspace/);
+  assert.match(journal, /forkPreviewId:\s*_forkPreviewId/);
 });
 
 test("running Codex input defaults to Queue and exposes explicit bounded Steer controls", async () => {

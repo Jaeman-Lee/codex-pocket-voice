@@ -792,6 +792,7 @@ function assertStoredOperation(value: StoredOperationPayload, expectedId: string
     || !boundedString(operation.cwd, 4_096)
     || typeof operation.prompt !== "string" || operation.prompt.length > 100_000
     || !validSteerRecords(operation.steers)
+    || !validForkProvenance(operation.fork, operation.providerId)
     || (operation.accountId !== undefined && !boundedString(operation.accountId, 100))
     || (operation.model !== undefined && !boundedString(operation.model, 200))
     || (operation.effort !== undefined && !boundedString(operation.effort, 40))
@@ -838,6 +839,27 @@ function validSteerRecords(value: unknown): boolean {
     if (promptLength > 1_000_000) return false;
   }
   return true;
+}
+
+function validForkProvenance(value: unknown, providerId: unknown): boolean {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const fork = value as Record<string, unknown>;
+  return fork.schema === 1
+    && boundedString(fork.sourceOperationId, 200)
+    && boundedString(fork.sourceProviderId, 80)
+    && (fork.sourceModel === undefined || boundedString(fork.sourceModel, 200))
+    && boundedString(fork.targetProviderId, 80)
+    && fork.targetProviderId === providerId
+    && fork.sourceProviderId !== fork.targetProviderId
+    && typeof fork.contextDigest === "string" && /^[a-f0-9]{64}$/.test(fork.contextDigest)
+    && safeBoundedInteger(fork.importedCharacters, 1, 48_000)
+    && safeBoundedInteger(fork.transferredCharacters, 1, 200_000)
+    && safeBoundedInteger(fork.estimatedInputTokens, 1, 50_000)
+    && typeof fork.truncated === "boolean"
+    && safeBoundedInteger(fork.attachmentCount, 0, 4)
+    && boundedTimestamp(fork.previewedAt)
+    && boundedTimestamp(fork.confirmedAt);
 }
 
 function validRoutingSelection(value: unknown): boolean {

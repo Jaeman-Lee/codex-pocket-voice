@@ -63,7 +63,11 @@ import {
 import { OperationsDashboard } from "./OperationsDashboard";
 import { activeApprovals, applyApprovalEvent, upsertOperation } from "./operations-state";
 import { operationBelongsToSession, scopedHandoff } from "./session-scope";
-import { providerConversationMessages, providerConversationThreads } from "./provider-conversations";
+import {
+  latestProviderForkSource,
+  providerConversationMessages,
+  providerConversationThreads,
+} from "./provider-conversations";
 import { workspaceIdentityFor, workspaceIdentityLabel } from "./workspace-identity";
 import { createWorkJournal } from "./work-journal";
 import { conversationKey, restoredMessages, serializableQueue } from "./work-journal-model";
@@ -135,6 +139,7 @@ import type {
   RunResult,
   RunPolicyConfig,
   RunPolicyConfigLimits,
+  RunForkPreview,
   RunPolicyPreflight,
   RunPolicySnapshot,
   SessionHandoff,
@@ -152,6 +157,15 @@ interface PendingRunPolicyReview {
   continuedThreadId: string;
   preflight?: RunPolicyPreflight;
   error?: string;
+}
+
+interface PendingRunForkReview {
+  queued: QueuedPrompt;
+  preview: RunForkPreview;
+}
+
+interface PendingRunForkRetry {
+  queued: QueuedPrompt;
 }
 
 interface SpeechRecognitionEventLike {
@@ -315,6 +329,10 @@ export function App() {
   const [updatingRunPolicy, setUpdatingRunPolicy] = useState(false);
   const [lastRunPolicyPreflight, setLastRunPolicyPreflight] = useState<RunPolicySnapshot | null>(null);
   const [pendingRunPolicyReview, setPendingRunPolicyReview] = useState<PendingRunPolicyReview | null>(null);
+  const [forkSource, setForkSource] = useState<Operation | null>(null);
+  const [previewingRunFork, setPreviewingRunFork] = useState(false);
+  const [pendingRunForkReview, setPendingRunForkReview] = useState<PendingRunForkReview | null>(null);
+  const [pendingRunForkRetry, setPendingRunForkRetry] = useState<PendingRunForkRetry | null>(null);
   const [workspaceRecovery, setWorkspaceRecovery] = useState<WorkspaceChangeRecoveryStatus | null>(null);
   const [retryingWorkspaceRecovery, setRetryingWorkspaceRecovery] = useState(false);
   const [exportingWorkspace, setExportingWorkspace] = useState<string | null>(null);
@@ -340,6 +358,8 @@ export function App() {
   const queueJournalGenerationRef = useRef(0);
   const queueDispatchingRef = useRef(false);
   const pendingRunPolicyReviewRef = useRef<PendingRunPolicyReview | null>(null);
+  const pendingRunForkReviewRef = useRef<PendingRunForkReview | null>(null);
+  const pendingRunForkRetryRef = useRef<PendingRunForkRetry | null>(null);
   const steerRequestRef = useRef<{ fingerprint: string; requestId: string } | null>(null);
   const workspaceRef = useRef("");
   const deviceRef = useRef<DeviceId>(device);
@@ -1972,22 +1992,25 @@ export function App() {
     dispatchMediaComposer({ type: "remove", id });
   }
 
-  async function submitPrompt() {
-    const text = prompt.trim() || (attachments.length ? "첨부한 매체를 분석하고 요청에 맞게 처리해 주세요." : "");
-    const attachmentsReady = attachments.every((item) => item.kind === "image" || item.status === "ready");
-    if (!text || !attachmentsReady || mediaBusy) return;
-    if (!workspaceRef.current) {
-      showToast("프로젝트를 먼저 선택하세요.");
-      return;
-    }
-    if (dictating) await stopDictation();
+  function setRunForkReview(next: PendingRunForkReview | null) {
+    pendingRunForkReviewRef.current = next;
+    setPendingRunForkReview(next);
+  }
 
-    if (composerRunMode === "steer") {
-      await submitSteer(text);
-      return;
-    }
+  function setRunForkRetry(next: PendingRunForkRetry | null) {
+    pendingRunForkRetryRef.current = next;
+    setPendingRunForkRetry(next);
+  }
 
-    const queued: QueuedPrompt = {
+  function clearRunForkState() {
+    setForkSource(null);
+    setRunForkReview(null);
+    setRunForkRetry(null);
+    setPreviewingRunFork(false);
+  }
+
+  function queuedPromptFromComposer(text: string): QueuedPrompt {
+    return {
       id: newId("queued"),
       text,
       cwd: workspaceRef.current,
@@ -2002,6 +2025,127 @@ export function App() {
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
     };
+  }
+
+  function restoreRunForkInput(queued: QueuedPrompt) {
+    setPrompt((current) => current.trim() ? current : queued.text);
+    if (mediaComposerRef.current.attachments.length === 0) {
+      for (const attachment of queued.attachments) {
+        dispatchMediaComposer({ type: "add_placeholder", attachment });
+      }
+    }
+    const source = operationSnapshots.find((item) => item.id === queued.forkSourceOperationId) ?? null;
+    setForkSource(source);
+  }
+
+  async function previewProviderFork() {
+    const source = forkSource;
+    if (!source || previewingRunFork) return;
+    if (pendingRunForkRetryRef.current) {
+      showToast("응답이 불확실한 Fork를 먼저 같은 확인으로 재시도해 주세요.");
+      return;
+    }
+    const text = prompt.trim() || (attachments.length ? "첨부한 매체를 분석하고 요청에 맞게 처리해 주세요." : "");
+    const attachmentsReady = attachments.every((item) => item.kind === "image" || item.status === "ready");
+    if (!text || !attachmentsReady || mediaBusy) return;
+    if (connection !== "online") {
+      showToast("Provider fork는 Companion에 연결된 상태에서 미리 확인해야 합니다.");
+      return;
+    }
+    if (activeRunRef.current.operation || activeRunRef.current.requestId) {
+      showToast("현재 작업 상태를 확인한 뒤 Provider fork를 검토해 주세요.");
+      return;
+    }
+    if (source.cwd !== workspaceRef.current || (source.providerId ?? "codex") === providerRef.current) {
+      setForkSource(null);
+      showToast("Fork 원본과 대상 Provider 범위가 더 이상 일치하지 않습니다.");
+      return;
+    }
+    if (dictating) await stopDictation();
+    const queued = {
+      ...queuedPromptFromComposer(text),
+      threadId: "",
+      forkSourceOperationId: source.id,
+    };
+    const selectedDevice = deviceRef.current;
+    setPreviewingRunFork(true);
+    try {
+      const data = await api<{ preview: RunForkPreview }>("/api/run-forks/preview", {
+        method: "POST",
+        body: {
+          sourceOperationId: source.id,
+          targetProvider: queued.provider,
+          accountId: queued.accountId,
+          model: queued.model || undefined,
+          effort: queued.effort || undefined,
+          networkAccess: queued.networkAccess,
+          routing: queued.routing,
+          prompt: queued.text,
+          attachments: queued.attachments.map((item) => item.id),
+        },
+      });
+      if (deviceRef.current !== selectedDevice || providerRef.current !== queued.provider
+          || workspaceRef.current !== queued.cwd) return;
+      setLastRunPolicyPreflight(data.preview.policy);
+      setRunForkReview({ queued, preview: data.preview });
+    } catch (error) {
+      if (deviceRef.current === selectedDevice) showToast(errorMessage(error));
+    } finally {
+      if (deviceRef.current === selectedDevice) setPreviewingRunFork(false);
+    }
+  }
+
+  function confirmProviderFork() {
+    const review = pendingRunForkReviewRef.current;
+    if (!review) return;
+    if (Date.parse(review.preview.expiresAt) <= Date.now()) {
+      setRunForkReview(null);
+      showToast("Fork 미리보기가 만료됐습니다. 같은 입력으로 다시 검토해 주세요.");
+      return;
+    }
+    setRunForkReview(null);
+    setPrompt("");
+    dispatchMediaComposer({ type: "clear" });
+    void executePrompt({
+      ...review.queued,
+      forkPreviewId: review.preview.id,
+      expiresAt: review.preview.expiresAt,
+    });
+  }
+
+  function retryProviderFork() {
+    const retry = pendingRunForkRetryRef.current;
+    if (!retry) return;
+    setRunForkRetry(null);
+    if (!retry.queued.expiresAt || Date.parse(retry.queued.expiresAt) <= Date.now()) {
+      restoreRunForkInput(retry.queued);
+      showToast("Fork 확인이 만료됐습니다. 컨텍스트를 다시 검토해 주세요.");
+      return;
+    }
+    void executePrompt(retry.queued);
+  }
+
+  async function submitPrompt() {
+    const text = prompt.trim() || (attachments.length ? "첨부한 매체를 분석하고 요청에 맞게 처리해 주세요." : "");
+    const attachmentsReady = attachments.every((item) => item.kind === "image" || item.status === "ready");
+    if (!text || !attachmentsReady || mediaBusy) return;
+    if (!workspaceRef.current) {
+      showToast("프로젝트를 먼저 선택하세요.");
+      return;
+    }
+    if (pendingRunForkRetryRef.current) {
+      showToast("응답이 불확실한 Fork를 먼저 같은 확인으로 재시도해 주세요.");
+      return;
+    }
+    if (dictating) await stopDictation();
+
+    if (composerRunMode === "steer") {
+      await submitSteer(text);
+      return;
+    }
+
+    const queued = queuedPromptFromComposer(text);
+    setForkSource(null);
     setPrompt("");
     dispatchMediaComposer({ type: "clear" });
     if (connection !== "online" || pendingRunPolicyReviewRef.current
@@ -2073,7 +2217,7 @@ export function App() {
   async function executePrompt(queued: QueuedPrompt, continuedThreadId = "") {
     const selectedDevice = deviceRef.current;
     if ((queued.provider === "openai" || queued.provider === "openrouter")
-        && !queued.policyConfirmation) {
+        && !queued.policyConfirmation && !queued.forkPreviewId) {
       const holdForPolicyReview = (review: PendingRunPolicyReview) => {
         pendingRunPolicyReviewRef.current = review;
         setPendingRunPolicyReview(review);
@@ -2146,8 +2290,12 @@ export function App() {
           requestId: queued.id,
           prompt: queued.text,
           cwd: queued.cwd,
-          threadId: queued.provider === "codex" ? queued.threadId || continuedThreadId || undefined : undefined,
-          conversationId: queued.provider !== "codex" ? queued.threadId || continuedThreadId || undefined : undefined,
+          threadId: !queued.forkPreviewId && queued.provider === "codex"
+            ? queued.threadId || continuedThreadId || undefined
+            : undefined,
+          conversationId: !queued.forkPreviewId && queued.provider !== "codex"
+            ? queued.threadId || continuedThreadId || undefined
+            : undefined,
           networkAccess: queued.networkAccess,
           model: queued.model || undefined,
           effort: queued.effort || undefined,
@@ -2155,6 +2303,7 @@ export function App() {
           accountId: queued.accountId,
           routing: queued.routing,
           policyConfirmation: queued.policyConfirmation,
+          forkPreviewId: queued.forkPreviewId,
           attachments: queued.attachments.map((item) => item.id),
         },
       });
@@ -2163,6 +2312,10 @@ export function App() {
           || deviceRef.current !== selectedDevice) return;
       queueDispatchingRef.current = false;
       for (const item of queued.attachments) if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      if (queued.forkPreviewId) {
+        setForkSource(null);
+        setRunForkRetry(null);
+      }
       handleOperationEvent(operationAction(data.operation), data.operation, runScope, queued.id);
       if (activeRunScopeMatches(activeRunRef.current, runScope)
           && activeRunRef.current.requestId === queued.id) {
@@ -2187,6 +2340,17 @@ export function App() {
           attempt: connectionAttemptRef.current,
           device: deviceRef.current,
         });
+        if (queued.forkPreviewId) {
+          setRunForkRetry({ queued: { ...queued, displayed: true } });
+          finishLiveMessage(
+            "Fork 시작 응답을 확인하지 못했습니다. 새 요청을 만들지 말고 같은 확인으로 재시도해 주세요.",
+            true,
+            {},
+            runScope,
+            { requestId: queued.id },
+          );
+          return;
+        }
         updatePromptQueue([{ ...queued, displayed: true }, ...promptQueueRef.current]);
         finishLiveMessage(
           "단말 연결이 끊겨 요청을 오프라인 대기열로 되돌렸습니다.",
@@ -2197,6 +2361,7 @@ export function App() {
         );
         return;
       }
+      if (queued.forkPreviewId) restoreRunForkInput(queued);
       finishLiveMessage(
         `실행하지 못했습니다: ${message}`,
         true,
@@ -2278,6 +2443,7 @@ export function App() {
 
   function startNextQueuedPrompt(continuedThreadId: string) {
     if (queueDispatchingRef.current || pendingRunPolicyReviewRef.current
+        || pendingRunForkReviewRef.current || pendingRunForkRetryRef.current
         || activeRunRef.current.operation || activeRunRef.current.requestId) return;
     const [next, ...remaining] = promptQueueRef.current;
     if (!next || next.requiresConfirmation) return;
@@ -2444,6 +2610,7 @@ export function App() {
 
   function detachLocalSession() {
     resetActiveRun();
+    clearRunForkState();
     setThreadId("");
     threadRef.current = "";
     localStorage.removeItem(storageKey("thread", deviceRef.current));
@@ -2508,6 +2675,11 @@ export function App() {
 
   function selectDevice(nextDevice: DeviceId) {
     if (nextDevice === deviceRef.current) return;
+    if (pendingRunForkRetryRef.current) {
+      showToast("응답이 불확실한 Fork를 먼저 같은 확인으로 재시도해 주세요.");
+      return;
+    }
+    clearRunForkState();
     setApiDevice(nextDevice);
     deviceRef.current = nextDevice;
     setDevice(nextDevice);
@@ -2604,6 +2776,11 @@ export function App() {
   }
 
   async function selectProvider(nextProvider: ProviderId) {
+    if (nextProvider === providerRef.current) return;
+    if (pendingRunForkRetryRef.current) {
+      showToast("응답이 불확실한 Fork를 먼저 같은 확인으로 재시도해 주세요.");
+      return;
+    }
     if (activeRunRef.current.operation || activeRunRef.current.requestId) {
       showToast("현재 작업 상태를 확인한 뒤 AI 제공자를 바꿔 주세요.");
       return;
@@ -2613,6 +2790,18 @@ export function App() {
       showToast(info?.detail ?? "이 AI 연결은 현재 사용할 수 없습니다.");
       return;
     }
+    const retainedSource = forkSource && forkSource.cwd === workspaceRef.current
+      ? forkSource
+      : latestProviderForkSource(
+          operationSnapshots,
+          providerRef.current,
+          workspaceRef.current,
+          threadRef.current,
+        );
+    setForkSource(retainedSource && (retainedSource.providerId ?? "codex") !== nextProvider
+      ? retainedSource
+      : null);
+    setRunForkReview(null);
     const selectedDevice = deviceRef.current;
     setProvider(nextProvider);
     providerRef.current = nextProvider;
@@ -2800,10 +2989,15 @@ export function App() {
   }
 
   async function selectWorkspace(path: string) {
+    if (pendingRunForkRetryRef.current) {
+      showToast("응답이 불확실한 Fork를 먼저 같은 확인으로 재시도해 주세요.");
+      return;
+    }
     if (activeRunRef.current.operation || activeRunRef.current.requestId) {
       showToast("현재 작업 상태를 확인한 뒤 프로젝트를 바꿔 주세요.");
       return;
     }
+    clearRunForkState();
     const selectedDevice = deviceRef.current;
     setWorkspace(path);
     workspaceRef.current = path;
@@ -2844,10 +3038,15 @@ export function App() {
   }
 
   async function selectThread(id: string) {
+    if (pendingRunForkRetryRef.current) {
+      showToast("응답이 불확실한 Fork를 먼저 같은 확인으로 재시도해 주세요.");
+      return;
+    }
     if (activeRunRef.current.operation || activeRunRef.current.requestId) {
       showToast("현재 작업 상태를 확인한 뒤 대화를 바꿔 주세요.");
       return;
     }
+    clearRunForkState();
     const selectedDevice = deviceRef.current;
     setThreadId(id);
     threadRef.current = id;
@@ -3601,6 +3800,11 @@ export function App() {
   }
 
   function openOperationFromDashboard(nextOperation: Operation) {
+    if (pendingRunForkRetryRef.current) {
+      showToast("응답이 불확실한 Fork를 먼저 같은 확인으로 재시도해 주세요.");
+      return;
+    }
+    clearRunForkState();
     const nextProvider = nextOperation.providerId ?? "codex";
     const conversationId = nextOperation.threadId ?? nextOperation.conversationId ?? "";
     const providerThreads = nextProvider === "codex"
@@ -3877,6 +4081,58 @@ export function App() {
               ) : (
                 <button type="button" className="approve" onClick={approveRunPolicyReview}>검토하고 이 1회 실행</button>
               )}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {pendingRunForkReview && (
+        <section className="run-fork-review" role="dialog" aria-modal="true" aria-labelledby="run-fork-review-title">
+          <div className="run-fork-review-card">
+            <header>
+              <div>
+                <strong id="run-fork-review-title">Provider 컨텍스트 Fork 확인</strong>
+                <small>아직 대상 Provider에 새 요청을 보내지 않았습니다.</small>
+              </div>
+            </header>
+            <div className="run-fork-review-facts">
+              <span><strong>원본</strong>{activeProvider(providers, pendingRunForkReview.preview.source.providerId)?.name ?? pendingRunForkReview.preview.source.providerId}{pendingRunForkReview.preview.source.model ? ` · ${pendingRunForkReview.preview.source.model}` : ""}</span>
+              <span><strong>대상</strong>{activeProvider(providers, pendingRunForkReview.preview.target.providerId)?.name ?? pendingRunForkReview.preview.target.providerId}{pendingRunForkReview.preview.target.model ? ` · ${pendingRunForkReview.preview.target.model}` : ""}</span>
+              <span><strong>Privacy</strong>{runPrivacyLabel(pendingRunForkReview.preview.policy.privacyProfile)}</span>
+              <span><strong>검토 컨텍스트</strong>{pendingRunForkReview.preview.context.importedCharacters.toLocaleString()}자 · 약 {pendingRunForkReview.preview.context.estimatedInputTokens.toLocaleString()} tokens</span>
+              <span><strong>새 첨부</strong>{pendingRunForkReview.preview.context.attachmentCount}개 · 이전 첨부 원본 제외</span>
+              <span><strong>유효 시간</strong>{new Date(pendingRunForkReview.preview.expiresAt).toLocaleTimeString()}까지</span>
+              <span><strong>가격</strong>{pendingRunForkReview.preview.policy.pricing.status === "known"
+                ? `최악 상한 ${formatPolicyUsd(pendingRunForkReview.preview.policy.pricing.maximumRunCostMicrosUsd)}`
+                : "가격 확인 필요 · 추측 안 함"}</span>
+              <span><strong>새 권한</strong>{pendingRunForkReview.preview.target.networkAccess ? "network 허용" : "network 차단"} · 이전 tool state 미승계</span>
+            </div>
+            {pendingRunForkReview.preview.context.truncated && (
+              <p className="run-fork-warning">원본이 길어 표시된 범위까지만 잘렸습니다.</p>
+            )}
+            <div className="run-fork-context" aria-label="Fork로 전달할 정확한 컨텍스트">
+              {pendingRunForkReview.preview.context.items.map((item, index) => (
+                <article key={`${item.role}-${item.label}-${index}`}>
+                  <strong>{item.label}</strong>
+                  <small>{item.role === "user" ? "USER" : "ASSISTANT"}</small>
+                  <pre>{item.text}</pre>
+                </article>
+              ))}
+            </div>
+            <details className="run-fork-boundary">
+              <summary>전송·제외 경계 보기</summary>
+              <div>
+                <p><strong>포함</strong>{pendingRunForkReview.preview.context.included.join(" · ")}</p>
+                <p><strong>제외</strong>{pendingRunForkReview.preview.context.excluded.join(" · ")}</p>
+              </div>
+            </details>
+            {pendingRunForkReview.preview.policy.warnings.length > 0 && (
+              <ul>{pendingRunForkReview.preview.policy.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+            )}
+            <p>확인하면 대상 Provider의 새 대화가 시작됩니다. 이전 Provider 대화·tool state·권한은 이어받지 않습니다.</p>
+            <div className="run-fork-review-actions">
+              <button type="button" onClick={() => setRunForkReview(null)}>취소·입력 유지</button>
+              <button type="button" className="approve" onClick={confirmProviderFork}>이 범위로 새 대화 Fork</button>
             </div>
           </div>
         </section>
@@ -4630,6 +4886,31 @@ export function App() {
       )}
 
       <footer className="composer-wrap">
+        {pendingRunForkRetry && (
+          <section className="run-fork-banner retry" role="status">
+            <div>
+              <strong>Fork 시작 응답 확인 필요</strong>
+              <span>중복 실행을 막기 위해 같은 request ID와 미리보기로만 재시도합니다.</span>
+            </div>
+            <button type="button" onClick={retryProviderFork}>같은 확인으로 재시도</button>
+          </section>
+        )}
+        {forkSource && !pendingRunForkRetry && (
+          <section className="run-fork-banner" role="status">
+            <div>
+              <strong>{activeProvider(providers, forkSource.providerId ?? "codex")?.name ?? (forkSource.providerId ?? "codex")} → {activeProvider(providers, provider)?.name ?? provider}</strong>
+              <span>일반 보내기는 컨텍스트 없는 새 대화입니다. 원본을 넘기려면 전송 범위를 먼저 검토하세요.</span>
+            </div>
+            <div className="run-fork-banner-actions">
+              <button type="button" className="dismiss" onClick={() => setForkSource(null)}>새 대화로 유지</button>
+              <button
+                type="button"
+                disabled={previewingRunFork || connection !== "online" || mediaBusy || (!prompt.trim() && attachments.length === 0)}
+                onClick={() => void previewProviderFork()}
+              >{previewingRunFork ? "검토 준비 중…" : "컨텍스트 Fork 검토"}</button>
+            </div>
+          </section>
+        )}
         {promptQueue.length > 0 && (
           <div className="prompt-queue" aria-label="예약 요청">
             <div className="prompt-queue-head">

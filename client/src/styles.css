@@ -349,6 +349,29 @@ select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shad
 .run-policy-review-actions button { min-width: 0; min-height: 2.8rem; padding: 0.5rem; border: 1px solid var(--line); border-radius: 0.65rem; color: var(--muted); background: transparent; cursor: pointer; font-size: 0.68rem; font-weight: 800; }
 .run-policy-review-actions .retry { color: var(--accent); }
 .run-policy-review-actions .approve { color: #130b02; border-color: transparent; background: var(--warm); }
+.run-fork-review { position: fixed; z-index: 62; inset: 0; display: grid; grid-template-rows: minmax(0, 1fr); justify-items: center; min-width: 0; min-height: 0; overflow: hidden; padding: max(0.75rem, env(safe-area-inset-top)) 0.75rem max(0.75rem, env(safe-area-inset-bottom)); background: rgba(3, 8, 12, 0.92); backdrop-filter: blur(10px); }
+.run-fork-review-card { align-self: center; width: min(100%, 38rem); max-width: 100%; max-height: 100%; min-width: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y pinch-zoom; -webkit-overflow-scrolling: touch; padding: 1rem; border: 1px solid rgba(157, 242, 213, 0.38); border-radius: 1rem; background: var(--surface); box-shadow: var(--shadow); }
+.run-fork-review-card header strong, .run-fork-review-card header small { display: block; overflow-wrap: anywhere; }
+.run-fork-review-card header strong { color: var(--accent); font-size: 1rem; }
+.run-fork-review-card header small { margin-top: 0.22rem; color: var(--muted); font-size: 0.64rem; }
+.run-fork-review-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.45rem; margin-top: 0.7rem; }
+.run-fork-review-facts span { min-width: 0; padding: 0.5rem; border-radius: 0.58rem; background: var(--surface-2); color: var(--text); font-size: 0.68rem; line-height: 1.4; overflow-wrap: anywhere; }
+.run-fork-review-facts strong { display: block; margin-bottom: 0.15rem; color: var(--muted); font-size: 0.56rem; letter-spacing: 0.04em; text-transform: uppercase; }
+.run-fork-warning { margin: 0.65rem 0 0; padding: 0.55rem 0.65rem; border: 1px solid rgba(255, 203, 136, 0.36); border-radius: 0.6rem; color: var(--warm); background: rgba(255, 203, 136, 0.06); font-size: 0.66rem; }
+.run-fork-context { display: grid; gap: 0.5rem; max-height: min(42dvh, 24rem); min-width: 0; overflow-x: hidden; overflow-y: auto; margin-top: 0.7rem; padding-right: 0.1rem; overscroll-behavior: contain; }
+.run-fork-context article { min-width: 0; padding: 0.65rem; border: 1px solid var(--line); border-radius: 0.68rem; background: rgba(8, 15, 21, 0.68); }
+.run-fork-context strong { color: var(--text); font-size: 0.7rem; overflow-wrap: anywhere; }
+.run-fork-context small { margin-left: 0.45rem; color: var(--accent); font-size: 0.54rem; font-weight: 800; }
+.run-fork-context pre { max-width: 100%; margin: 0.45rem 0 0; overflow: visible; color: var(--muted); font: 0.65rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.run-fork-boundary { margin-top: 0.65rem; border: 1px solid var(--line); border-radius: 0.65rem; padding: 0.55rem 0.65rem; }
+.run-fork-boundary summary { color: var(--muted); cursor: pointer; font-size: 0.66rem; font-weight: 800; }
+.run-fork-boundary p { margin: 0.45rem 0 0; color: var(--muted); font-size: 0.62rem; line-height: 1.45; overflow-wrap: anywhere; }
+.run-fork-boundary p strong { margin-right: 0.45rem; color: var(--text); }
+.run-fork-review-card > ul { margin: 0.65rem 0 0; padding-left: 1.2rem; color: var(--warm); font-size: 0.66rem; line-height: 1.5; }
+.run-fork-review-card > p:not(.run-fork-warning) { margin: 0.65rem 0 0; color: var(--muted); font-size: 0.62rem; line-height: 1.5; overflow-wrap: anywhere; }
+.run-fork-review-actions { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 0.5rem; margin-top: 0.75rem; }
+.run-fork-review-actions button { min-width: 0; min-height: 2.8rem; padding: 0.5rem; border: 1px solid var(--line); border-radius: 0.65rem; color: var(--muted); background: transparent; cursor: pointer; font-size: 0.68rem; font-weight: 800; overflow-wrap: anywhere; }
+.run-fork-review-actions .approve { color: #06120e; border-color: transparent; background: var(--accent); }
 
 .operations-dashboard { position: fixed; z-index: 40; inset: 0; display: grid; grid-template-rows: minmax(0, 1fr); justify-items: center; min-width: 0; min-height: 0; overflow: hidden; padding: max(0.75rem, env(safe-area-inset-top)) 0.75rem max(0.75rem, env(safe-area-inset-bottom)); background: rgba(3, 8, 12, 0.86); backdrop-filter: blur(10px); }
 .operations-sheet { align-self: center; width: min(100%, 52rem); max-width: 100%; max-height: 100%; min-width: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y pinch-zoom; -webkit-overflow-scrolling: touch; padding: 1rem; border: 1px solid var(--line); border-radius: 1.15rem; background: var(--surface); box-shadow: var(--shadow); }
@@ -615,6 +638,18 @@ select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shad
   background: rgba(11, 17, 23, 0.92);
   backdrop-filter: blur(22px);
 }
+.run-fork-banner { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.55rem; min-width: 0; margin: 0 0 0.45rem; padding: 0.58rem; border: 1px solid rgba(157, 242, 213, 0.28); border-radius: 0.82rem; background: rgba(23, 64, 55, 0.48); }
+.run-fork-banner.retry { border-color: rgba(255, 203, 136, 0.36); background: rgba(48, 37, 25, 0.78); }
+.run-fork-banner > div:first-child { min-width: 0; }
+.run-fork-banner strong, .run-fork-banner span { display: block; overflow-wrap: anywhere; }
+.run-fork-banner strong { color: var(--accent); font-size: 0.7rem; }
+.run-fork-banner.retry strong { color: var(--warm); }
+.run-fork-banner span { margin-top: 0.18rem; color: var(--muted); font-size: 0.59rem; line-height: 1.35; }
+.run-fork-banner-actions { display: grid; gap: 0.32rem; min-width: 7.6rem; }
+.run-fork-banner button { min-width: 0; min-height: 2.1rem; padding: 0.38rem 0.52rem; border: 0; border-radius: 0.55rem; color: #06120e; background: var(--accent); cursor: pointer; font-size: 0.62rem; font-weight: 800; overflow-wrap: anywhere; }
+.run-fork-banner.retry > button { color: #181006; background: var(--warm); }
+.run-fork-banner button.dismiss { border: 1px solid var(--line); color: var(--muted); background: transparent; }
+.run-fork-banner button:disabled { opacity: 0.42; cursor: not-allowed; }
 .prompt-queue { max-height: 9rem; overflow-y: auto; margin: 0 0 0.45rem; padding: 0.5rem; border: 1px solid rgba(255, 203, 136, 0.2); border-radius: 0.82rem; background: rgba(48, 37, 25, 0.76); }
 .prompt-queue-head { display: flex; align-items: baseline; gap: 0.5rem; margin-bottom: 0.35rem; }
 .prompt-queue-head strong { color: var(--warm); font-size: 0.7rem; }
@@ -736,6 +771,12 @@ textarea::placeholder { color: #6f8285; }
   .run-policy-review { padding: max(0.4rem, env(safe-area-inset-top)) 0.4rem max(0.4rem, env(safe-area-inset-bottom)); }
   .run-policy-review-card { align-self: stretch; padding: 0.8rem; border-radius: 0.9rem; }
   .run-policy-review-facts, .run-policy-review-actions, .run-policy-fields { grid-template-columns: minmax(0, 1fr); }
+  .run-fork-review { padding: max(0.4rem, env(safe-area-inset-top)) 0.4rem max(0.4rem, env(safe-area-inset-bottom)); }
+  .run-fork-review-card { align-self: stretch; padding: 0.8rem; border-radius: 0.9rem; }
+  .run-fork-review-facts, .run-fork-review-actions { grid-template-columns: minmax(0, 1fr); }
+  .run-fork-context { max-height: min(34dvh, 17rem); }
+  .run-fork-banner { grid-template-columns: minmax(0, 1fr); }
+  .run-fork-banner-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0; }
   .operations-sheet { align-self: stretch; padding: 0.8rem; border-radius: 0.9rem; }
   .operations-head { top: -0.8rem; margin: -0.8rem -0.8rem 0; padding: 0.8rem; }
   .operation-counts { grid-template-columns: repeat(3, minmax(0, 1fr)); }

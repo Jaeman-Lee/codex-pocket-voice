@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  latestProviderForkSource,
   providerConversationMessages,
   providerConversationThreads,
 } from "../client/src/provider-conversations.js";
@@ -37,6 +38,20 @@ test("API provider conversation views stay isolated by provider, workspace, and 
       ["assistant", "작업 실패: network stopped", true],
     ],
   );
+});
+
+test("Provider fork source is the latest terminal operation in the selected conversation", () => {
+  const operations: Operation[] = [
+    operation("older", "openai", "/workspace/a", "conversation-a", "old", "old", true, 1),
+    operation("latest", "openai", "/workspace/a", "conversation-a", "new", "new", true, 3),
+    operation("other-conversation", "openai", "/workspace/a", "conversation-b", "other", "other", true, 4),
+    { ...operation("running", "openai", "/workspace/a", "conversation-a", "running", "", false, 5), completedAt: undefined, status: "running" },
+    { ...operation("unknown", "openai", "/workspace/a", "conversation-a", "unknown", "", false, 6), status: "unknown" },
+  ];
+
+  assert.equal(latestProviderForkSource(operations, "openai", "/workspace/a", "conversation-a")?.id, "latest");
+  assert.equal(latestProviderForkSource(operations, "openai", "/workspace/a")?.id, "other-conversation");
+  assert.equal(latestProviderForkSource(operations, "openrouter", "/workspace/a"), null);
 });
 
 function operation(

@@ -10,6 +10,19 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Provider context Fork는 Provider를 바꾸면서 이전 대화 범위를 넘기는 새 user-visible workflow이므로
+  `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
+  `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
+  APK 전달·설치, 실제 Provider 호출과 실행 중 Companion 재시작은 하지 않으며 current v1 후보
+  1.8.2, staged v1.8.4와 검증된 v1.8.1 rollback을 그대로 보존한다.
+- Provider 전환은 기본적으로 빈 새 대화를 만들고, 사용자가 `컨텍스트 Fork 검토`를 누른 경우에만
+  종료된 원본 operation의 요청·수락된 Steer·최종 답변과 새 요청을 bounded 미리보기에 넣는다.
+  이전 tool state·명령 log·raw diff·자격 증명·원본 첨부는 승계하지 않는다. exact Provider·모델·routing·
+  개인정보·비용 정책·새 첨부 수를 화면에서 확인한 10분/1회용 fork만 새 대화로 실행한다.
+- Fork preview는 인증 client와 request ID에 묶고 journal에 저장하지 않는다. 서버는 검토된 context와
+  첨부 경로를 보관하고 selection/context digest, source workspace와 terminal 상태를 재검사한다. 응답
+  유실 시 같은 request ID만 중복 없이 재시도하며 암호화 operation에는 민감한 digest를 제외한 provenance를
+  남기고 대시보드에 source→target·token 추정·잘림 여부를 표시한다.
 - Queue/Steer 분리는 실행 중 Codex turn의 방향을 바꾸는 새 user-visible workflow이므로 `feature`로
   분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
   `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.

@@ -38,7 +38,7 @@ test("restoring a journal never presents an interrupted response as still runnin
   assert.equal(messages[1]?.pending, true);
 });
 
-test("persisted prompt queues remove temporary blob preview URLs", () => {
+test("persisted prompt queues remove temporary blob URLs and one-time capabilities", () => {
   const prompts: QueuedPrompt[] = [{
     id: "queued-1",
     text: "inspect image",
@@ -51,6 +51,8 @@ test("persisted prompt queues remove temporary blob preview URLs", () => {
     accountId: "cli-default",
     routing: { upstreams: ["strict-primary", "strict-backup"], allowFallbacks: true },
     policyConfirmation: "ephemeral-run-policy-token",
+    forkPreviewId: "ephemeral-provider-fork-preview",
+    forkSourceOperationId: "operation-source",
     attachments: [{
       id: "media-1",
       name: "screen.png",
@@ -66,7 +68,10 @@ test("persisted prompt queues remove temporary blob preview URLs", () => {
   assert.equal(saved[0]?.attachments[0]?.previewUrl, undefined);
   assert.deepEqual(saved[0]?.routing, { upstreams: ["strict-primary", "strict-backup"], allowFallbacks: true });
   assert.equal(saved[0]?.policyConfirmation, undefined);
+  assert.equal(saved[0]?.forkPreviewId, undefined);
+  assert.equal(saved[0]?.forkSourceOperationId, "operation-source");
   assert.equal(prompts[0]?.policyConfirmation, "ephemeral-run-policy-token");
+  assert.equal(prompts[0]?.forkPreviewId, "ephemeral-provider-fork-preview");
   assert.equal(prompts[0]?.attachments[0]?.previewUrl, "blob:temporary");
 });
 

@@ -23,4 +23,5 @@ export const GATEWAY_CAPABILITIES = {
   pocketLinkOutboundRelay: true,
   backgroundWorkNotifications: true,
   runSteering: true,
+  runForks: true,
 } as const;

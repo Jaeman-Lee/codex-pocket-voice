@@ -30,6 +30,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Provider model grade boundary | owner-only redacted report, maximum age 30 days | OpenAI exact model and OpenRouter exact model+every selected upstream gate read/coding tool exposure; invalid, stale or absent reports remain chat-only; real project grades not issued |
 | Provider runtime contract | exact run ownership + ordered single-terminal events | Codex/OpenAI/OpenRouter shared success/partial-failure/cancel/timeout suite and fake 401/403/429/5xx/malformed SSE fixtures passing |
 | API run policy | authenticated Companion policy + immutable per-run snapshot | emergency stop, token/cost hard limits, rolling-day warning, monthly touch confirmation and actual/estimated/unknown accounting implemented with fake Providers only; no paid request sent |
+| Provider context Fork | client/request-bound 10-minute reviewed preview | terminal source request/accepted Steers/final answer plus new request only; exact target policy/selection, new-conversation execution, idempotent ambiguous-response retry and durable redacted provenance implemented with synthetic Providers |
 | Android journal milestone | app-owned SQLite schema 1 | encrypted snapshot migration and rollback mirror implemented; CI-only, no device migration performed |
 | Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, HMAC-authenticated bounded user retention, workspace JSON export and protected delete implemented in v2; not field deployed |
 | Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation, touch-only approvals, durable goal/pin/archive and two-touch history deletion implemented; no field APK handed off |
@@ -41,6 +42,17 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, standalone Linux GO/PBC + memory-only DHCP cleanup lifecycle, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; actual P2P field validation pending |
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+Provider context Fork checkpoint decision: Provider 사이에 사용자가 검토한 대화 범위를 넘기는 새 user-visible
+v2 workflow이므로 `feature`로 분류한다. 아직 전달하지 않은 incompatible v2 안에서 SemVer
+`2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
+대체한다. Provider 전환 기본값은 빈 새 대화이며, terminal source operation의 요청·수락된 Steer·최종
+답변과 새 요청만 bounded preview에 넣는다. tool state·명령 log·raw diff·자격 증명·이전 첨부 원본은
+승계하지 않는다. 10분 preview는 authenticated client, exact target selection/policy와 한 request ID에
+묶고 모바일 journal에 저장하지 않는다. 응답 유실은 같은 request ID로만 deduplicate하며 암호화 operation에
+redacted provenance를 남긴다. 합성 Provider·Gateway·모바일 fixture만 검사했고 APK 전달·설치, 실제 Provider
+호출과 Companion 재시작은 하지 않았다. current v1 후보 1.8.2, staged v1.8.4와 검증된 rollback 1.8.1은
+변경·삭제하지 않는다.
 
 Codex Queue/Steer checkpoint decision: 실행 중 turn에 대한 명시적 방향 수정은 새 user-visible v2
 workflow이므로 `feature`로 분류한다. 아직 전달하지 않은 incompatible v2 안에서 SemVer

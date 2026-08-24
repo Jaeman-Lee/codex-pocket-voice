@@ -145,6 +145,48 @@ test("API preflight confirmation stays contained and forwards only the one-time 
   await expectShellContained(page);
 });
 
+test("Provider fork requires an exact contained context review before a new conversation", async ({ page }) => {
+  let observedFork: Record<string, unknown> | null = null;
+  let preflightCalls = 0;
+  await installProviderForkFixture(page, (body) => { observedFork = body; }, () => { preflightCalls += 1; });
+  await bootPairedApp(page, { width: 320, height: 740 });
+
+  await page.getByLabel("Codex에게 보낼 요청").fill("원본 Codex 요청");
+  await page.getByRole("button", { name: "요청 전송" }).click();
+  await expect(page.locator(".message.assistant")).toContainText("원본 Codex 최종 답변");
+
+  await page.getByRole("button", { name: "프로젝트와 대화 선택 열기" }).click();
+  await page.getByLabel("AI 제공자 선택").selectOption("openai");
+  await expect(page.getByLabel("AI 모델", { exact: true })).toHaveValue("browser-fork-model");
+  const banner = page.locator(".run-fork-banner").filter({ hasText: "OpenAI Codex → OpenAI API" });
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText("일반 보내기는 컨텍스트 없는 새 대화");
+  await expectElementContained(page, banner);
+
+  await page.getByLabel("Codex에게 보낼 요청").fill("대상 Provider에서 이어서 검토해 주세요.");
+  await banner.getByRole("button", { name: "컨텍스트 Fork 검토" }).click();
+  const review = page.getByRole("dialog", { name: "Provider 컨텍스트 Fork 확인" });
+  await expect(review).toBeVisible();
+  await expect(review).toContainText("원본 Codex 요청");
+  await expect(review).toContainText("원본 Codex 최종 답변");
+  await expect(review).toContainText("이전 tool state 미승계");
+  await expect(review).toContainText("이전 첨부 원본");
+  await expectElementContained(page, review.locator(".run-fork-review-card"));
+  await expectElementContained(page, review.locator(".run-fork-context"));
+  await expectShellContained(page);
+
+  await review.getByRole("button", { name: "이 범위로 새 대화 Fork" }).click();
+  await expect.poll(() => observedFork?.forkPreviewId).toBe("browser-fork-preview");
+  const submittedFork = observedFork as Record<string, unknown> | null;
+  expect(submittedFork).not.toBeNull();
+  expect(submittedFork?.threadId).toBeUndefined();
+  expect(submittedFork?.conversationId).toBeUndefined();
+  expect(submittedFork?.provider).toBe("openai");
+  expect(preflightCalls).toBe(0);
+  await expect(review).toBeHidden();
+  await expectShellContained(page);
+});
+
 async function bootPairedApp(page: Page, viewport: { width: number; height: number }): Promise<void> {
   await page.setViewportSize(viewport);
   await page.addInitScript(() => {
@@ -327,6 +369,193 @@ async function installApiPolicyFixture(page: Page, observe: (token: string) => v
           startedAt: now,
           completedAt: now,
           result: { finalResponse: "합성 API 정책 실행 완료" },
+        },
+      },
+    });
+  });
+}
+
+async function installProviderForkFixture(
+  page: Page,
+  observe: (body: Record<string, unknown>) => void,
+  observePolicyPreflight: () => void,
+): Promise<void> {
+  await page.route("**/api/providers", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json() as { providers?: any[] };
+    if (!Array.isArray(body.providers)) {
+      await route.fulfill({ response, json: body });
+      return;
+    }
+    body.providers = body.providers.filter((provider) => provider.id !== "openai");
+    body.providers.push({
+      id: "openai",
+      name: "OpenAI API",
+      available: true,
+      status: "connected",
+      detail: "Browser fork fixture",
+      accounts: [{ id: "default", label: "Fixture project", connected: true }],
+      loginCommand: "",
+      installed: true,
+      canLogin: false,
+      canTest: true,
+      capabilities: {
+        run: true,
+        resume: true,
+        models: true,
+        attachments: true,
+        streaming: true,
+        toolCalling: false,
+        approvals: false,
+        workspaceRead: false,
+        workspaceWrite: false,
+        commandExecution: false,
+        usageAccounting: true,
+        steering: false,
+      },
+      installGuide: { summary: "fixture", command: "", docsUrl: "https://example.invalid" },
+    });
+    await route.fulfill({ response, json: body });
+  });
+  await page.route("**/api/models?provider=openai", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    json: {
+      models: [{
+        id: "browser-fork-model",
+        displayName: "Browser Fork model",
+        description: "Synthetic browser-only fork model",
+        isDefault: true,
+        defaultEffort: "medium",
+        efforts: [{ id: "medium", description: "Balanced" }],
+        capabilities: { tools: false, imageInput: true },
+        verification: { scope: "model", conversation: "pass", projectRead: "not_tested", coding: "not_tested" },
+      }],
+    },
+  }));
+  await page.route("**/api/run-policy/preflight", async (route) => {
+    observePolicyPreflight();
+    await route.fallback();
+  });
+  await page.route("**/api/run-forks/preview", (route) => {
+    const body = route.request().postDataJSON() as Record<string, any>;
+    const now = new Date().toISOString();
+    return route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      json: {
+        preview: {
+          id: "browser-fork-preview",
+          expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+          source: {
+            operationId: body.sourceOperationId,
+            providerId: "codex",
+            model: "browser-model",
+            workspace: body.cwd,
+          },
+          target: {
+            providerId: "openai",
+            accountId: body.accountId,
+            model: body.model,
+            networkAccess: false,
+          },
+          context: {
+            items: [
+              { role: "user", label: "원본 사용자 요청", text: "원본 Codex 요청" },
+              { role: "assistant", label: "최종 assistant 답변", text: "원본 Codex 최종 답변" },
+            ],
+            importedCharacters: 25,
+            transferredCharacters: 180,
+            estimatedInputTokens: 45,
+            truncated: false,
+            attachmentCount: 0,
+            included: ["사용자 요청", "최종 assistant 답변"],
+            excluded: ["이전 첨부 원본", "tool 인자", "명령 로그", "원시 diff", "Provider replay state", "자격 증명"],
+          },
+          policy: {
+            schema: 1,
+            providerId: "openai",
+            model: body.model,
+            privacyProfile: "openai-store-false",
+            evaluatedAt: now,
+            configRevision: "0123456789abcdef",
+            attachmentCount: 0,
+            limits: { maxOutputTokens: 4_096, maxTotalTokens: 50_000, maxRunCostMicrosUsd: 1_000_000 },
+            pricing: { status: "unknown", source: "unavailable" },
+            usageWindow: {
+              rollingDayTokens: 0,
+              monthCostMicrosUsd: 0,
+              dailyWarningReached: false,
+              monthlySoftLimitReached: false,
+            },
+            warnings: [],
+            confirmationRequired: false,
+          },
+        },
+      },
+    });
+  });
+  await page.route("**/api/runs", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+    const body = route.request().postDataJSON() as Record<string, any>;
+    const now = new Date().toISOString();
+    if (!body.forkPreviewId) {
+      await route.fulfill({
+        status: 202,
+        contentType: "application/json",
+        json: {
+          operation: {
+            id: "browser-fork-source-operation",
+            providerId: "codex",
+            conversationId: body.threadId || "thread-mobile",
+            threadId: body.threadId || "thread-mobile",
+            runId: "browser-fork-source-run",
+            turnId: "browser-fork-source-run",
+            cwd: body.cwd,
+            prompt: body.prompt,
+            status: "completed",
+            startedAt: now,
+            completedAt: now,
+            result: { finalResponse: "원본 Codex 최종 답변" },
+          },
+        },
+      });
+      return;
+    }
+    observe(body);
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      json: {
+        operation: {
+          id: "browser-fork-target-operation",
+          providerId: "openai",
+          conversationId: "browser-fork-target-conversation",
+          runId: "browser-fork-target-run",
+          cwd: body.cwd,
+          prompt: body.prompt,
+          accountId: body.accountId,
+          model: body.model,
+          status: "completed",
+          startedAt: now,
+          completedAt: now,
+          result: { finalResponse: "Fork 대상 실행 완료" },
+          fork: {
+            schema: 1,
+            sourceOperationId: "browser-fork-source-operation",
+            sourceProviderId: "codex",
+            targetProviderId: "openai",
+            importedCharacters: 25,
+            transferredCharacters: 180,
+            estimatedInputTokens: 45,
+            truncated: false,
+            attachmentCount: 0,
+            previewedAt: now,
+            confirmedAt: now,
+          },
         },
       },
     });

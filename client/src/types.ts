@@ -343,6 +343,7 @@ export interface Operation {
   networkAccess?: boolean;
   routing?: ProviderRoutingSelection;
   runPolicy?: RunPolicySnapshot;
+  fork?: RunForkProvenance;
   workspaceIdentity?: WorkspaceIdentity;
   status: OperationStatus;
   startedAt?: string;
@@ -354,6 +355,56 @@ export interface Operation {
   error?: string;
   result?: RunResult;
   resumable?: boolean;
+}
+
+export interface RunForkProvenance {
+  schema: 1;
+  sourceOperationId: string;
+  sourceProviderId: ProviderId;
+  sourceModel?: string;
+  targetProviderId: ProviderId;
+  importedCharacters: number;
+  transferredCharacters: number;
+  estimatedInputTokens: number;
+  truncated: boolean;
+  attachmentCount: number;
+  previewedAt: string;
+  confirmedAt: string;
+}
+
+export interface RunForkContextItem {
+  role: "user" | "assistant";
+  label: string;
+  text: string;
+}
+
+export interface RunForkPreview {
+  id: string;
+  expiresAt: string;
+  source: {
+    operationId: string;
+    providerId: ProviderId;
+    model?: string;
+    workspace: string;
+  };
+  target: {
+    providerId: ProviderId;
+    accountId?: string;
+    model?: string;
+    routing?: ProviderRoutingSelection;
+    networkAccess: boolean;
+  };
+  context: {
+    items: RunForkContextItem[];
+    importedCharacters: number;
+    transferredCharacters: number;
+    estimatedInputTokens: number;
+    truncated: boolean;
+    attachmentCount: number;
+    included: string[];
+    excluded: string[];
+  };
+  policy: RunPolicySnapshot;
 }
 
 export interface OperationMetadataPatch {
@@ -445,6 +496,8 @@ export interface QueuedPrompt {
   accountId: string;
   routing?: ProviderRoutingSelection;
   policyConfirmation?: string;
+  forkPreviewId?: string;
+  forkSourceOperationId?: string;
   attachments: PendingAttachment[];
   displayed?: boolean;
   createdAt?: string;

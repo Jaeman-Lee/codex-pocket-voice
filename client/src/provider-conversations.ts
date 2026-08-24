@@ -1,5 +1,22 @@
 import type { ChatMessage, Operation, ProviderId, ThreadSummary } from "./types";
 
+export function latestProviderForkSource(
+  operations: readonly Operation[],
+  providerId: ProviderId,
+  workspace: string,
+  conversationId = "",
+): Operation | null {
+  const candidates = operations.filter((operation) => (
+    (operation.providerId ?? "codex") === providerId
+    && operation.cwd === workspace
+    && operation.completedAt !== undefined
+    && operation.status !== "running"
+    && operation.status !== "unknown"
+    && (!conversationId || (operation.threadId ?? operation.conversationId ?? "") === conversationId)
+  ));
+  return candidates.sort((left, right) => operationTime(right) - operationTime(left))[0] ?? null;
+}
+
 export function providerConversationThreads(
   operations: readonly Operation[],
   providerId: ProviderId,

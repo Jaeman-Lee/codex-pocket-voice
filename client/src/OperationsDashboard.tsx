@@ -721,6 +721,13 @@ function OperationCard({
       <div className="operation-facts">
         <span>{operation.providerId ?? "codex"}</span>
         <span>{model}</span>
+        {operation.fork && (
+          <span>
+            Fork {operation.fork.sourceProviderId} → {operation.fork.targetProviderId}
+            {operation.fork.truncated ? " · 일부 전송" : " · 검토 범위 전송"}
+            {` · 약 ${operation.fork.estimatedInputTokens.toLocaleString()} tokens`}
+          </span>
+        )}
         {routedProvider && <span>실제 {routedProvider}</span>}
         {operation.routing?.allowFallbacks && <span>승인 fallback {operation.routing.upstreams.length}개</span>}
         {modelVerification && <span>{operationVerificationLabel(modelVerification)}</span>}

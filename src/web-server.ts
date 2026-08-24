@@ -48,9 +48,15 @@ import { publicKeyPin, type PocketLinkTlsConfig } from "./pocket-link.js";
 import {
   RunCoordinator,
   RunCoordinatorError,
+  type RunForkProvenance,
   type RunOperation,
   type RunOperationMetadataPatch,
 } from "./run-coordinator.js";
+import {
+  RunForkManager,
+  RunForkManagerError,
+  type RunForkSelection,
+} from "./run-fork-manager.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_EVENT_TEXT = 80_000;
@@ -124,10 +130,23 @@ interface RunBody {
   accountId?: unknown;
   routing?: unknown;
   policyConfirmation?: unknown;
+  forkPreviewId?: unknown;
 }
 
 interface SteerBody {
   requestId?: unknown;
+  prompt?: unknown;
+  attachments?: unknown;
+}
+
+interface ForkPreviewBody {
+  sourceOperationId?: unknown;
+  targetProvider?: unknown;
+  accountId?: unknown;
+  model?: unknown;
+  effort?: unknown;
+  networkAccess?: unknown;
+  routing?: unknown;
   prompt?: unknown;
   attachments?: unknown;
 }
@@ -192,6 +211,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     maxOperations: journalPolicy.maxOperations,
     policyGuard: runPolicy,
   });
+  const runForks = new RunForkManager();
   const threadWriterReleases = new Map<string, Promise<ThreadUnsubscribeResponse>>();
   const releaseThreadWriter = (threadId: string): Promise<ThreadUnsubscribeResponse> => {
     const pending = threadWriterReleases.get(threadId);
@@ -256,13 +276,13 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   });
 
   const requestListener = (request: IncomingMessage, response: ServerResponse) => {
-    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, runPolicy, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, undefined).catch(
+    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, runForks, runPolicy, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, undefined).catch(
       (error) => sendError(response, error),
     );
   };
   const pocketLinkRequestListener = (request: IncomingMessage, response: ServerResponse) => {
     void Promise.resolve().then(() => pocketLinkClientPublicKeyPin(request)).then((tlsPublicKeyPin) => (
-      handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, runPolicy, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, tlsPublicKeyPin)
+      handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, runForks, runPolicy, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, tlsPublicKeyPin)
     )).catch((error) => sendError(response, error));
   };
   const server = createServer(requestListener);
@@ -421,6 +441,7 @@ async function handleRequest(
   providers: ProviderRegistry,
   providerLogins: ProviderLoginManager,
   runs: RunCoordinator,
+  runForks: RunForkManager,
   runPolicy: CostAndPolicyGuard,
   approvals: ApprovalBroker,
   journal: EventJournal,
@@ -442,7 +463,7 @@ async function handleRequest(
       response.end();
       return;
     }
-    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, runs, runPolicy, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, tlsPublicKeyPin);
+    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, runs, runForks, runPolicy, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, tlsPublicKeyPin);
     return;
   }
   await serveStatic(request, response, url.pathname, options.staticDir);
@@ -460,6 +481,7 @@ async function handleApi(
   providers: ProviderRegistry,
   providerLogins: ProviderLoginManager,
   runs: RunCoordinator,
+  runForks: RunForkManager,
   runPolicy: CostAndPolicyGuard,
   approvals: ApprovalBroker,
   journal: EventJournal,
@@ -1062,10 +1084,80 @@ async function handleApi(
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/run-forks/preview") {
+    assertSameOrigin(request);
+    const value = await readJson(request);
+    if (!isRecord(value)) throw new HttpError(400, "Provider fork preview body is invalid");
+    const allowedFields = new Set([
+      "sourceOperationId",
+      "targetProvider",
+      "accountId",
+      "model",
+      "effort",
+      "networkAccess",
+      "routing",
+      "prompt",
+      "attachments",
+    ]);
+    if (Object.keys(value).some((key) => !allowedFields.has(key))) {
+      throw new HttpError(400, "Provider fork preview body contains an unsupported field");
+    }
+    const body = value as ForkPreviewBody;
+    const sourceOperationId = requiredString(body.sourceOperationId, "sourceOperationId", 200);
+    const source = runs.get(sourceOperationId);
+    if (!source) throw new HttpError(404, "Fork source operation not found");
+    options.paths.assertAllowed(source.cwd);
+    const targetProvider = requiredString(body.targetProvider, "targetProvider", 40);
+    const accountId = optionalString(body.accountId, "accountId", 100);
+    const model = optionalString(body.model, "model", 200);
+    const effort = optionalEnum(
+      body.effort,
+      ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const,
+      "effort",
+    );
+    const routing = optionalRoutingSelection(body.routing);
+    if (routing && targetProvider !== "openrouter") {
+      throw new HttpError(400, "upstream routing is only available for OpenRouter");
+    }
+    const networkAccess = optionalBoolean(body.networkAccess, false, "networkAccess");
+    const prompt = requiredString(body.prompt, "prompt", 100_000);
+    const attachmentIds = optionalStringArray(body.attachments, "attachments", 4, 200);
+    const attachmentInput = media.resolveForTurn(attachmentIds);
+    providers.assertRunnable(targetProvider, accountId);
+    const preflight = await runPolicy.preflight({
+      providerId: targetProvider,
+      ...(accountId ? { accountId } : {}),
+      ...(model ? { model } : {}),
+      ...(routing ? { routing } : {}),
+      attachmentCount: attachmentInput.imagePaths.length,
+    }, runs.list());
+    const selection: RunForkSelection = {
+      targetProviderId: targetProvider,
+      ...(accountId ? { accountId } : {}),
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
+      ...(routing ? { routing } : {}),
+      networkAccess,
+      prompt,
+      attachmentIds,
+    };
+    const preview = runForks.create({
+      clientId: authenticatedClient.id,
+      source,
+      selection,
+      attachments: attachmentInput,
+      policy: preflight.snapshot,
+      ...(preflight.confirmationToken ? { policyConfirmation: preflight.confirmationToken } : {}),
+    });
+    sendJson(response, 201, { preview });
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/api/runs") {
     assertSameOrigin(request);
     const body = (await readJson(request)) as RunBody;
     const requestId = optionalString(body.requestId, "requestId", 200);
+    const forkPreviewId = optionalString(body.forkPreviewId, "forkPreviewId", 200);
     const prompt = requiredString(body.prompt, "prompt", 100_000);
     const provider = optionalString(body.provider, "provider", 40) ?? "codex";
     const accountId = optionalString(body.accountId, "accountId", 100);
@@ -1077,21 +1169,6 @@ async function handleApi(
     if (threadId && requestedConversationId && threadId !== requestedConversationId) {
       throw new HttpError(400, "threadId and conversationId must identify the same Codex conversation");
     }
-    const conversationId = requestedConversationId ?? threadId;
-    const requestedCwd = optionalString(body.cwd, "cwd", 4_096);
-    let cwd: string;
-    if (conversationId && provider === "codex") {
-      const existing = await options.client.readThread(conversationId, false);
-      options.paths.assertAllowed(existing.thread.cwd);
-      cwd = await options.paths.resolveWorkspace(requestedCwd ?? existing.thread.cwd);
-      const threadWorkspace = await options.paths.resolveWorkspace(existing.thread.cwd);
-      if (!containsWorkspace(cwd, threadWorkspace)) {
-        throw new HttpError(409, "Thread does not belong to the selected workspace");
-      }
-    } else {
-      cwd = await options.paths.resolveWorkspace(requestedCwd);
-    }
-
     const effort = optionalEnum(
       body.effort,
       ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const,
@@ -1102,11 +1179,72 @@ async function handleApi(
     if (routing && provider !== "openrouter") {
       throw new HttpError(400, "upstream routing is only available for OpenRouter");
     }
-    const networkAccess = body.networkAccess === true;
+    const networkAccess = optionalBoolean(body.networkAccess, false, "networkAccess");
     const policyConfirmation = optionalString(body.policyConfirmation, "policyConfirmation", 200);
     const timeoutSeconds = optionalInteger(body.timeoutSeconds, 30, 3600, 900, "timeoutSeconds");
     const attachmentIds = optionalStringArray(body.attachments, "attachments", 4, 200);
-    const attachmentInput = media.resolveForTurn(attachmentIds);
+    const selection: RunForkSelection = {
+      targetProviderId: provider,
+      ...(accountId ? { accountId } : {}),
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
+      ...(routing ? { routing } : {}),
+      networkAccess,
+      prompt,
+      attachmentIds,
+    };
+    const requestedCwd = optionalString(body.cwd, "cwd", 4_096);
+    let conversationId = requestedConversationId ?? threadId;
+    let cwd: string;
+    let providerPrompt: string;
+    let imagePaths: string[];
+    let effectivePolicyConfirmation = policyConfirmation;
+    let fork: RunForkProvenance | undefined;
+    if (forkPreviewId) {
+      if (!requestId) throw new HttpError(400, "Provider fork confirmation requires requestId");
+      if (threadId || requestedConversationId) {
+        throw new HttpError(409, "Provider fork always starts a new conversation");
+      }
+      if (policyConfirmation) {
+        throw new HttpError(400, "Provider fork policy confirmation is owned by its preview");
+      }
+      const sourceOperationId = runForks.sourceOperationId(forkPreviewId, authenticatedClient.id);
+      const source = runs.get(sourceOperationId);
+      if (!source) throw new HttpError(409, "Fork source operation is no longer retained");
+      options.paths.assertAllowed(source.cwd);
+      const sourceWorkspace = await options.paths.resolveWorkspace(source.cwd);
+      cwd = await options.paths.resolveWorkspace(requestedCwd ?? sourceWorkspace);
+      if (cwd !== sourceWorkspace) {
+        throw new HttpError(409, "Provider fork cannot move context to another workspace");
+      }
+      const prepared = runForks.claim({
+        previewId: forkPreviewId,
+        clientId: authenticatedClient.id,
+        requestId,
+        source,
+        selection,
+      });
+      conversationId = undefined;
+      providerPrompt = prepared.providerPrompt;
+      imagePaths = prepared.imagePaths;
+      effectivePolicyConfirmation = prepared.policyConfirmation;
+      fork = prepared.provenance;
+    } else {
+      if (conversationId && provider === "codex") {
+        const existing = await options.client.readThread(conversationId, false);
+        options.paths.assertAllowed(existing.thread.cwd);
+        cwd = await options.paths.resolveWorkspace(requestedCwd ?? existing.thread.cwd);
+        const threadWorkspace = await options.paths.resolveWorkspace(existing.thread.cwd);
+        if (!containsWorkspace(cwd, threadWorkspace)) {
+          throw new HttpError(409, "Thread does not belong to the selected workspace");
+        }
+      } else {
+        cwd = await options.paths.resolveWorkspace(requestedCwd);
+      }
+      const attachmentInput = media.resolveForTurn(attachmentIds);
+      providerPrompt = `${prompt}${attachmentInput.promptContext}`;
+      imagePaths = attachmentInput.imagePaths;
+    }
     const operation = await runs.start({
       providerId: provider,
       accountId,
@@ -1114,8 +1252,8 @@ async function handleApi(
       input: {
         conversationId,
         cwd,
-        prompt: `${prompt}${attachmentInput.promptContext}`,
-        imagePaths: attachmentInput.imagePaths,
+        prompt: providerPrompt,
+        imagePaths,
         networkAccess,
         model,
         effort,
@@ -1124,7 +1262,8 @@ async function handleApi(
       },
       workspaceIdentity: await inspectWorkspaceIdentity(cwd),
       idempotencyKey: requestId ? `${authenticatedClient.id}:${requestId}` : undefined,
-      policyConfirmation,
+      policyConfirmation: effectivePolicyConfirmation,
+      fork,
     });
     sendJson(response, 202, { operation: publicOperation(operation) });
     return;
@@ -1524,6 +1663,7 @@ function sendError(response: ServerResponse, error: unknown): void {
       || error instanceof ApprovalBrokerError
       || error instanceof EventJournalExportError
       || error instanceof RunPolicyError
+      || error instanceof RunForkManagerError
       ? error.statusCode
       : 500;
   const message = error instanceof Error ? error.message : String(error);
@@ -1627,7 +1767,8 @@ function safeInternalError(error: unknown): string {
 }
 
 function publicOperation(operation: RunOperation): Record<string, unknown> {
-  const { resumeState, steers, ...visible } = operation;
+  const { resumeState, steers, fork, ...visible } = operation;
+  const publicFork = fork ? publicRunFork(fork) : undefined;
   return {
     ...visible,
     ...(steers ? {
@@ -1637,11 +1778,17 @@ function publicOperation(operation: RunOperation): Record<string, unknown> {
         ...steer
       }) => steer),
     } : {}),
+    ...(publicFork ? { fork: publicFork } : {}),
     resumable: resumeState !== undefined,
     ...(operation.providerId === "codex"
       ? { threadId: operation.conversationId, turnId: operation.runId }
       : {}),
   };
+}
+
+function publicRunFork(fork: RunForkProvenance): Omit<RunForkProvenance, "contextDigest"> {
+  const { contextDigest: _contextDigest, ...visible } = fork;
+  return visible;
 }
 
 async function handoffMatchesWorkspace(
@@ -1712,6 +1859,12 @@ function optionalInteger(
   if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
     throw new HttpError(400, `${name} must be an integer between ${min} and ${max}`);
   }
+  return value;
+}
+
+function optionalBoolean(value: unknown, fallback: boolean, name: string): boolean {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "boolean") throw new HttpError(400, `${name} must be a boolean`);
   return value;
 }
 

@@ -22,6 +22,7 @@
 - 실행할 PC를 골라 새 Git 프로젝트 생성
 - 각 PC가 제공하는 Codex 모델과 지원 추론 성능을 실시간 조회·선택
 - 실행 중 입력은 기본 Queue로 순차 실행하고, 명시적으로 고른 Codex Steer만 현재 exact turn의 방향을 수정
+- Provider 전환은 기본적으로 빈 새 대화를 만들고, 명시적 Fork에서만 전송 범위·제외 항목·예상 token·비용·privacy를 터치 검토한 뒤 bounded 컨텍스트를 승계
 - 단말·프로젝트·대화별 로컬 작업 저널과 오프라인 프롬프트 대기열
 - 암호화 Companion event journal과 SSE cursor 기반 네트워크·프로세스 재연결 복구, bounded 사용자 보존 정책, 프로젝트별 JSON 내보내기·2단계 기록 삭제
 - PC·프로젝트·Git branch/worktree별 실행 상태와 비용을 모아 보고 목표 이름·고정·보관으로 정리하는 작업 대시보드, 만료·터치 전용 승인함

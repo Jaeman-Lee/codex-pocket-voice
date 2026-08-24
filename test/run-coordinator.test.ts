@@ -4,6 +4,7 @@ import {
   RunCoordinator,
   RunCoordinatorError,
   type RunCoordinatorEvent,
+  type RunOperation,
   type RunProviderRegistry,
 } from "../src/run-coordinator.js";
 import type {
@@ -78,6 +79,53 @@ test("RunCoordinator deduplicates retried requests and rejects conflicting reuse
 
   await assert.rejects(
     coordinator.start({ ...command, prompt: "different payload" }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  assert.equal(providers.starts.length, 1);
+  coordinator.close();
+});
+
+test("RunCoordinator persists Provider fork provenance and binds it to idempotency", async () => {
+  const providers = new FakeRunProviders();
+  const saved: RunOperation[] = [];
+  const coordinator = new RunCoordinator(providers, {
+    createId: () => "operation-forked",
+    stateStore: {
+      load: () => ({ operations: [], idempotency: [] }),
+      saveOperation: (operation) => saved.push(structuredClone(operation)),
+      deleteOperation: () => undefined,
+      deleteOperations: () => undefined,
+    },
+  });
+  const fork = {
+    schema: 1 as const,
+    sourceOperationId: "source-operation",
+    sourceProviderId: "codex",
+    sourceModel: "gpt-source",
+    targetProviderId: "openai",
+    contextDigest: "b".repeat(64),
+    importedCharacters: 500,
+    transferredCharacters: 800,
+    estimatedInputTokens: 200,
+    truncated: false,
+    attachmentCount: 0,
+    previewedAt: "2026-08-24T10:00:00.000Z",
+    confirmedAt: "2026-08-24T10:01:00.000Z",
+  };
+  const command = {
+    providerId: "openai",
+    prompt: "continue independently",
+    input: { cwd: process.cwd(), prompt: "reviewed imported context" },
+    idempotencyKey: "client:fork-request",
+    fork,
+  };
+
+  const started = await coordinator.start(command);
+  assert.deepEqual(started.fork, fork);
+  assert.deepEqual(saved[0]?.fork, fork);
+  assert.equal((await coordinator.start(command)).id, started.id);
+  await assert.rejects(
+    coordinator.start({ ...command, fork: { ...fork, sourceOperationId: "different-source" } }),
     (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
   );
   assert.equal(providers.starts.length, 1);
