@@ -18,6 +18,9 @@ async function close(exitCode: number): Promise<void> {
 
 process.once("SIGINT", () => void close(0));
 process.once("SIGTERM", () => void close(0));
+process.on("SIGUSR1", () => {
+  process.stderr.write(`[codex-pocket-relay] Aggregate stats ${JSON.stringify(relay.stats())}\n`);
+});
 process.once("uncaughtException", (error) => {
   process.stderr.write(`[codex-pocket-relay] ${error instanceof Error ? error.message : "unexpected error"}\n`);
   void close(1);

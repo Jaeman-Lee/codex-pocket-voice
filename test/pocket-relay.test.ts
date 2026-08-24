@@ -61,9 +61,26 @@ test("Pocket relay configuration requires private credentials and a pinned TLS e
     CODEX_POCKET_RELAY_LISTEN_PORT: "9443",
     CODEX_POCKET_RELAY_CERT_FILE: relayIdentity.certificateFile,
     CODEX_POCKET_RELAY_KEY_FILE: relayIdentity.privateKeyFile,
+    CODEX_POCKET_RELAY_RATE_WINDOW_MS: "30000",
+    CODEX_POCKET_RELAY_MAX_CONNECTIONS_PER_IP: "12",
+    CODEX_POCKET_RELAY_MAX_CONNECTION_STARTS_PER_IP: "40",
+    CODEX_POCKET_RELAY_MAX_NEW_SLOTS_PER_IP: "6",
+    CODEX_POCKET_RELAY_MAX_TRACKED_PEERS: "512",
   });
   assert.equal(server.host, "127.0.0.1");
   assert.equal(server.port, 9443);
+  assert.equal(server.rateWindowMs, 30_000);
+  assert.equal(server.maxConnectionsPerIp, 12);
+  assert.equal(server.maxConnectionStartsPerIp, 40);
+  assert.equal(server.maxNewSlotsPerIp, 6);
+  assert.equal(server.maxTrackedPeers, 512);
+
+  await assert.rejects(loadPocketRelayServerConfig({
+    CODEX_POCKET_RELAY_LISTEN_HOST: "127.0.0.1",
+    CODEX_POCKET_RELAY_CERT_FILE: relayIdentity.certificateFile,
+    CODEX_POCKET_RELAY_KEY_FILE: relayIdentity.privateKeyFile,
+    CODEX_POCKET_RELAY_RATE_WINDOW_MS: "999",
+  }), /RATE_WINDOW_MS is invalid/);
 
   await chmod(relayIdentity.privateKeyFile, 0o644);
   await assert.rejects(loadPocketRelayServerConfig({
@@ -180,7 +197,12 @@ test("Pocket relay pairs only the matching opaque slot and carries nested end-to
   });
   t.after(() => connector.close());
   await connector.waitUntilReady(2, 5_000);
-  assert.deepEqual(relay.stats(), { slots: 1, waiting: 2, tunnels: 0 });
+  const readyStats = relay.stats();
+  assert.equal(readyStats.slots, 1);
+  assert.equal(readyStats.waiting, 2);
+  assert.equal(readyStats.tunnels, 0);
+  assert.equal(readyStats.trackedPeers, 1);
+  assert.equal(readyStats.slotLimited, 0);
 
   await assert.rejects(
     connectPocketRelayClient({ ...relayClient, serverName: "wrong-host.test" }),

@@ -25,8 +25,9 @@ prompt, workspace, Provider 응답과 client private key를 복호화할 수 없
 접근할 수 없다.
 
 relay 운영자는 outer TLS endpoint이므로 접속 IP, opaque slot, 연결 시각·지속시간과 byte 크기는 볼 수
-있다. 이는 애플리케이션 본문 비공개와 별개의 metadata 경계다. 실제 공용 서비스를 운영하기 전에는
-보존하지 않는 access-log 정책, abuse rate limit, 지역·운영 주체와 삭제 정책을 별도 release gate로
+있다. 이는 애플리케이션 본문 비공개와 별개의 metadata 경계다. broker 자체는 source address, slot,
+secret과 tunnel별 시각·크기를 access log로 남기지 않고 집계 counter만 메모리에 유지한다. hosting
+provider·방화벽·load balancer의 별도 log와 지역·운영 주체·삭제 정책은 실제 공용 서비스 release gate에서
 검토해야 한다.
 
 ## Relay broker
@@ -51,6 +52,8 @@ private-key 상위 디렉터리는 `0700`, key는 `0600` 단일-link 일반 파�
 
 - TLS 1.2/1.3, session ticket 비활성화, 최대 socket 256개
 - ephemeral slot 64개, slot당 대기 Companion socket 4개
+- source IP당 동시 socket 16개, 60초 fixed window당 연결 시작 60회·새 slot 8개
+- 최대 1,024개 source IP의 현재 window만 메모리에서 추적하고 유휴 window는 제거
 - header 10초, 대기 60초, 무활동 tunnel 2분, tunnel lifetime 24시간
 - slot은 최소 128-bit, 공유 secret은 최소 256-bit base64url 값
 - 틀린 slot과 secret을 같은 `unavailable` 결과로 처리하고 대기 socket을 소비하지 않음
@@ -58,6 +61,30 @@ private-key 상위 디렉터리는 `0700`, key는 `0600` 단일-link 일반 파�
 broker 상태는 메모리에만 있으며 재시작하면 모든 대기·활성 tunnel이 닫힌다. Companion과 Android는
 bounded backoff로 새 outbound 연결을 만들어야 하며 relay가 실패해도 SSH나 다른 Provider로 자동
 전환하지 않는다.
+
+### 공개 endpoint admission control
+
+운영 환경의 정상 NAT 규모와 edge 용량에 맞춰 다음 값을 조정할 수 있다. 모든 값은 양의 정수이고
+window는 1초~10분으로 제한된다.
+
+| 환경 변수 | 기본값 | 의미 |
+| --- | ---: | --- |
+| `CODEX_POCKET_RELAY_RATE_WINDOW_MS` | `60000` | 연결 시작·새 slot fixed window |
+| `CODEX_POCKET_RELAY_MAX_CONNECTIONS_PER_IP` | `16` | 한 source IP의 동시 TCP/TLS socket |
+| `CODEX_POCKET_RELAY_MAX_CONNECTION_STARTS_PER_IP` | `60` | 한 window의 TCP 연결 시작 횟수 |
+| `CODEX_POCKET_RELAY_MAX_NEW_SLOTS_PER_IP` | `8` | 한 window에 처음 만든 opaque slot 수 |
+| `CODEX_POCKET_RELAY_MAX_TRACKED_PEERS` | `1024` | 메모리에 유지하는 source IP state 상한 |
+
+IPv4와 IPv4-mapped IPv6는 같은 source로 정규화한다. 기존 slot의 정상 Companion pool과 client attach는
+새 slot budget을 소비하지 않으며, slot을 source IP에 영구 결합하지 않아 휴대폰 망 전환과 NAT 변경을
+허용한다. 반대로 `X-Forwarded-For`와 PROXY protocol은 신뢰하지 않는다. broker가 직접 outer TLS를
+종료해야 하며 TCP proxy 앞에 둘 경우 모든 연결이 proxy IP 하나의 한도를 공유하므로 edge에서도 별도
+connection/DDoS 제어가 필요하다. 이 in-process 제한은 단일 source의 socket·handshake·임의 slot 고갈을
+줄이는 장치이지 분산 DDoS 방어를 대신하지 않는다.
+
+Linux 운영자는 `SIGUSR1`을 보내 source·slot 식별자가 없는 `slots`, `waiting`, `tunnels`, 현재 연결·추적
+peer 수와 누적 accepted/rejected/rate-limited/slot-limited/paired counter를 stderr에서 확인할 수 있다.
+counter는 process 재시작 때 초기화되며 broker는 정기적으로 개별 접속 정보를 출력하지 않는다.
 
 ### Protocol 1 wire contract
 
@@ -154,6 +181,8 @@ Node 통합 검사는 서로 다른 relay/Companion/Android test certificate를 
 
 - private secret·key 파일 권한과 TLS pin 설정이 없으면 시작하지 않음
 - 잘못된 secret이 기존 Companion waiter를 소비하지 않음
+- IPv4-mapped 주소 정규화, source별 동시 socket·연결 시작·새 slot 상한과 window reset
+- 기존 slot 재사용은 새 slot budget을 소비하지 않고 aggregate stats에 제한 결과만 반영됨
 - 바깥 relay TLS 안에서 별도의 Android client certificate와 Companion certificate로 mTLS가 성립함
 - relay를 통과한 뒤에만 로컬 Companion이 payload를 읽고 응답함
 - Android protocol JVM 검사에서 response field 순서/공백 호환, unknown·duplicate·oversize 거부,
@@ -161,7 +190,7 @@ Node 통합 검사는 서로 다른 relay/Companion/Android test certificate를 
 - Android source contract에서 public CA+hostname+relay SPKI, inner Companion pin+client identity의 분리,
   Keystore encrypted schema migration과 status credential 비노출
 
-아직 남은 Phase E 범위는 Wi-Fi Direct 같은 P2P와 direct/P2P/relay 전체 우선순위 정책, 실제 공용 relay
-운영·부하/남용 방어, Android nested socket의 실기기 네트워크 전환·절전·배터리 acceptance다. 이 항목
-전에는 relay를 출시 transport로 간주하지 않고 기존 LAN PocketLink와 Termux/SSH rollback 경로를
-유지한다.
+아직 남은 Phase E 범위는 Wi-Fi Direct 같은 P2P와 direct/P2P/relay 전체 우선순위 정책, 공용 relay의
+외부 edge DDoS·용량·metadata 보존 정책과 실제 부하 검증, Android nested socket의 실기기 네트워크
+전환·절전·배터리 acceptance다. 이 항목 전에는 relay를 출시 transport로 간주하지 않고 기존 LAN
+PocketLink와 Termux/SSH rollback 경로를 유지한다.

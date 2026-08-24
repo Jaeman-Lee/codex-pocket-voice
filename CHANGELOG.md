@@ -10,6 +10,15 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Public relay admission control과 logless aggregate 운영 지표는 새 server 운영 capability이므로
+  `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
+  `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
+  APK 전달·설치, 실행 중 Companion 재시작과 실제 공용 relay 노출은 하지 않으며 v1.8.2 current 후보,
+  별도 staged v1.8.3과 검증된 v1.8.1 rollback을 그대로 보존한다.
+- broker가 IPv4-mapped 주소를 정규화하고 source별 동시 TLS socket, fixed-window 연결 시작·새 ephemeral
+  slot과 전체 추적 peer state를 제한한다. 기존 slot 재사용과 이동/NAT를 허용하되 source·slot access
+  log는 만들지 않고 `SIGUSR1`에 식별자 없는 현재·누적 counter만 출력한다. 분산 DDoS와 hosting metadata
+  정책은 외부 edge·현장 release gate로 남긴다.
 - Android PocketLink relay enrollment와 native nested-TLS connector는 새 사용자 연결 workflow이므로
   `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
   `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
@@ -35,7 +44,7 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   slot·waiter·timeout을 요구하며 틀린 인증값은 기존 waiter를 소비하지 않는다.
 - relay는 outer TLS 안의 opaque PocketLink mTLS bytes만 전달한다. 서로 다른 합성 Android client와
   Companion certificate를 사용한 통합 검사에서 relay 뒤에도 기존 server pin과 client-certificate
-  proof가 종단간 유지됨을 검증한다. 공용 relay 운영 방어와 현장 network/battery acceptance는 다음
+  proof가 종단간 유지됨을 검증한다. 외부 edge DDoS·실부하와 현장 network/battery acceptance는 다음
   Phase E 단계로 남긴다.
 - 모바일 browser acceptance checkpoint는 production client build와 실제 pairing·Gateway·SSE·run·approval
   경로를 사용하는 새 v2 검증 capability이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 v2 안의

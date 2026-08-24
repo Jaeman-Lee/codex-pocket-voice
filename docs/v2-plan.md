@@ -25,7 +25,7 @@
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker와 보호된 synthetic smoke harness 구현; 실제 model eval 실행·현장 등급 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in process-death native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe 구현; 실기기 background/deep-link acceptance 잔여 |
-| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; Wi-Fi Direct 등 P2P·public relay 운영 방어·background/field release gate 잔여 |
+| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, source별 relay admission/new-slot 제한과 logless aggregate stats, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; Wi-Fi Direct 등 P2P·external edge DDoS/부하·background/field release gate 잔여 |
 
 ## 2. 제품 정의
 
@@ -452,8 +452,11 @@ certificate를 사용한 nested TLS 통합 검사는 통과했다. Android 연�
 선택하고 endpoint·TLS hostname·SPKI pin·slot·secret을 Keystore AES-GCM 설정에 등록한다. native client는
 platform CA+hostname+relay SPKI로 outer TLS 1.2/1.3을 검증하고 bounded protocol 1 attach 뒤 같은 socket
 위에서 기존 Companion pin과 Android client certificate를 쓰는 inner mTLS를 수행한다. schema 1 direct
-설정은 schema 2에서 계속 읽고, relay 실패를 direct/SSH로 자동 우회하지 않는다. Wi-Fi Direct 등 P2P,
-public relay 운영 방어와 실기기 background release gate는 남아 있다.
+설정은 schema 2에서 계속 읽고, relay 실패를 direct/SSH로 자동 우회하지 않는다. broker는 IPv4-mapped
+주소를 정규화하고 source별 동시 socket, fixed-window 연결 시작과 새 ephemeral slot을 제한하며 최대
+추적 peer state도 bounded memory로 유지한다. source·slot access log 대신 aggregate counter만 메모리에
+두고 `SIGUSR1`에서 확인한다. Wi-Fi Direct 등 P2P, 외부 edge DDoS·실부하와 metadata 정책, 실기기
+background release gate는 남아 있다.
 
 Android CI는 APK와 SBOM의 SHA-256·크기, package, SemVer/versionCode, commit을 담은 canonical
 `update-manifest.json`을 생성한다. official signed build는 APK release key로 manifest 원문에 RSA/ECDSA
@@ -495,7 +498,8 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - 공식 Release의 잘못된 repo/tag/중복 asset/digest/content-type, oversized JSON/ZIP, HTTP·외부-host redirect와 조회 token 만료 차단
 - DNS-SD의 wrong service/TXT, public·loopback 주소, 후보 flood·중복·만료·Unicode control과 pin/TXT smuggling 차단
 - relay의 private secret/key, TLS hostname+SPKI pin, 틀린 slot/secret 비소비, connection/slot/waiter/frame/
-  timeout 상한과 relay 안쪽 Android↔Companion mTLS 보존 검사 — Node 자동 검사 구현
+  timeout 상한, source IP 정규화·동시 연결·fixed-window 시작/new-slot 제한과 relay 안쪽
+  Android↔Companion mTLS 보존 검사 — Node 자동 검사 구현
 - Android relay protocol의 exact frame, unknown/duplicate/oversize 거부, 내부 TLS byte 비소비와
   direct/relay source·JVM contract 검사 — 자동 검사 구현; 실제 Android nested socket은 실기기 gate 잔여
 

@@ -301,6 +301,14 @@ PC 이름·TLS port·protocol version을 내보내고 신뢰 pin·pairing code·
 APK를 현장 전달·설치하거나 Companion을 재시작·LAN에 노출하지 않고, current v1 후보 1.8.2와 별도
 staged 1.8.3, 검증된 rollback 1.8.1을 그대로 보존한다.
 
+PocketLink public relay admission checkpoint decision: source별 동시 연결·fixed-window 연결 시작/new-slot
+제한과 식별자 없는 aggregate 운영 지표를 추가하는 새 server 운영 capability이므로 `feature`로 분류한다.
+아직 현장 전달하지 않은 incompatible v2 범위 안에서 SemVer `2.0.0`/Android `versionCode 20000`, 대상
+`feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. broker는 source·slot access log를
+만들지 않으며 실제 공용 endpoint 노출과 edge DDoS·실부하 검증은 release gate 전까지 수행하지 않는다.
+APK 전달·설치와 실행 중 Companion 재시작도 하지 않고 current v1 후보 1.8.2, 별도 staged v1.8.3과
+검증된 rollback 1.8.1을 그대로 보존한다.
+
 PocketLink bootstrap state checkpoint decision: QR/LAN bootstrap의 분산 UI 상태를 순수 reducer로
 분리하고 stale·동시 전이를 fail-closed로 바꾸는 internal compatibility `patch`다. 아직 전달하지 않은
 v2 안의 변경이므로 SemVer `2.0.0`/Android `versionCode 20000`과 대상

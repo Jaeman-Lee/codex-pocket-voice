@@ -30,6 +30,11 @@ const DEFAULT_TUNNEL_LIFETIME_MS = 24 * 60 * 60_000;
 const DEFAULT_MAX_CONNECTIONS = 256;
 const DEFAULT_MAX_SLOTS = 64;
 const DEFAULT_MAX_WAITERS_PER_SLOT = 4;
+const DEFAULT_RATE_WINDOW_MS = 60_000;
+const DEFAULT_MAX_CONNECTIONS_PER_IP = 16;
+const DEFAULT_MAX_CONNECTION_STARTS_PER_IP = 60;
+const DEFAULT_MAX_NEW_SLOTS_PER_IP = 8;
+const DEFAULT_MAX_TRACKED_PEERS = 1_024;
 
 export interface PocketRelayClientConfig {
   host: string;
@@ -57,6 +62,12 @@ export interface PocketRelayServerConfig {
   maxConnections?: number;
   maxSlots?: number;
   maxWaitersPerSlot?: number;
+  rateWindowMs?: number;
+  maxConnectionsPerIp?: number;
+  maxConnectionStartsPerIp?: number;
+  maxNewSlotsPerIp?: number;
+  maxTrackedPeers?: number;
+  now?: () => number;
 }
 
 export interface PocketRelayCompanionOptions {
@@ -70,8 +81,22 @@ export interface PocketRelayCompanionOptions {
 export interface PocketRelayServer {
   host: string;
   port: number;
-  stats(): { slots: number; waiting: number; tunnels: number };
+  stats(): PocketRelayServerStats;
   close(): Promise<void>;
+}
+
+export interface PocketRelayServerStats {
+  slots: number;
+  waiting: number;
+  tunnels: number;
+  openConnections: number;
+  trackedPeers: number;
+  acceptedConnections: number;
+  admissionRejected: number;
+  requestRejected: number;
+  rateLimited: number;
+  slotLimited: number;
+  pairedTunnels: number;
 }
 
 export interface PocketRelayCompanion {
@@ -107,6 +132,23 @@ interface RelaySlot {
   secretHash: Buffer;
   waiters: Set<RelayWaiter>;
   activeTunnels: number;
+}
+
+interface RelayPeerState {
+  openConnections: number;
+  windowStartedAt: number;
+  connectionStarts: number;
+  newSlots: number;
+  lastSeenAt: number;
+}
+
+interface RelayCounters {
+  acceptedConnections: number;
+  admissionRejected: number;
+  requestRejected: number;
+  rateLimited: number;
+  slotLimited: number;
+  pairedTunnels: number;
 }
 
 interface ReadyWaiter {
@@ -202,16 +244,76 @@ export async function loadPocketRelayServerConfig(
   } catch {
     throw configError("Pocket relay certificate is invalid or expired");
   }
-  return { host, port, certificate, privateKey };
+  return {
+    host,
+    port,
+    certificate,
+    privateKey,
+    rateWindowMs: optionalBoundedInteger(
+      environment.CODEX_POCKET_RELAY_RATE_WINDOW_MS,
+      "CODEX_POCKET_RELAY_RATE_WINDOW_MS",
+      DEFAULT_RATE_WINDOW_MS,
+      1_000,
+      10 * 60_000,
+    ),
+    maxConnectionsPerIp: optionalBoundedInteger(
+      environment.CODEX_POCKET_RELAY_MAX_CONNECTIONS_PER_IP,
+      "CODEX_POCKET_RELAY_MAX_CONNECTIONS_PER_IP",
+      DEFAULT_MAX_CONNECTIONS_PER_IP,
+      1,
+      DEFAULT_MAX_CONNECTIONS,
+    ),
+    maxConnectionStartsPerIp: optionalBoundedInteger(
+      environment.CODEX_POCKET_RELAY_MAX_CONNECTION_STARTS_PER_IP,
+      "CODEX_POCKET_RELAY_MAX_CONNECTION_STARTS_PER_IP",
+      DEFAULT_MAX_CONNECTION_STARTS_PER_IP,
+      1,
+      10_000,
+    ),
+    maxNewSlotsPerIp: optionalBoundedInteger(
+      environment.CODEX_POCKET_RELAY_MAX_NEW_SLOTS_PER_IP,
+      "CODEX_POCKET_RELAY_MAX_NEW_SLOTS_PER_IP",
+      DEFAULT_MAX_NEW_SLOTS_PER_IP,
+      1,
+      DEFAULT_MAX_SLOTS,
+    ),
+    maxTrackedPeers: optionalBoundedInteger(
+      environment.CODEX_POCKET_RELAY_MAX_TRACKED_PEERS,
+      "CODEX_POCKET_RELAY_MAX_TRACKED_PEERS",
+      DEFAULT_MAX_TRACKED_PEERS,
+      1,
+      10_000,
+    ),
+  };
 }
 
 export async function startPocketRelayServer(config: PocketRelayServerConfig): Promise<PocketRelayServer> {
   validateServerLimits(config);
+  const now = config.now ?? Date.now;
+  const maxConnections = config.maxConnections ?? DEFAULT_MAX_CONNECTIONS;
+  const maxSlots = config.maxSlots ?? DEFAULT_MAX_SLOTS;
+  const maxWaitersPerSlot = config.maxWaitersPerSlot ?? DEFAULT_MAX_WAITERS_PER_SLOT;
+  const rateWindowMs = config.rateWindowMs ?? DEFAULT_RATE_WINDOW_MS;
+  const maxConnectionsPerIp = config.maxConnectionsPerIp ?? DEFAULT_MAX_CONNECTIONS_PER_IP;
+  const maxConnectionStartsPerIp = config.maxConnectionStartsPerIp ?? DEFAULT_MAX_CONNECTION_STARTS_PER_IP;
+  const maxNewSlotsPerIp = config.maxNewSlotsPerIp ?? DEFAULT_MAX_NEW_SLOTS_PER_IP;
+  const maxTrackedPeers = config.maxTrackedPeers ?? DEFAULT_MAX_TRACKED_PEERS;
   const slots = new Map<string, RelaySlot>();
+  const peers = new Map<string, RelayPeerState>();
   const pendingSockets = new Set<TLSSocket>();
   const tunnelSockets = new Set<TLSSocket>();
+  const counters: RelayCounters = {
+    acceptedConnections: 0,
+    admissionRejected: 0,
+    requestRejected: 0,
+    rateLimited: 0,
+    slotLimited: 0,
+    pairedTunnels: 0,
+  };
   let tunnelCount = 0;
+  let openConnectionCount = 0;
   let closing = false;
+  let peerCleanup: NodeJS.Timeout | undefined;
 
   const server = createTlsServer({
     cert: config.certificate,
@@ -226,9 +328,10 @@ export async function startPocketRelayServer(config: PocketRelayServerConfig): P
     socket.setNoDelay(true);
     socket.setKeepAlive(true, 30_000);
     socket.once("close", () => pendingSockets.delete(socket));
-    void handleRelayRequest(socket).catch(() => rejectSocket(socket));
+    void handleRelayRequest(socket).catch(() => rejectRequest(socket));
   });
-  server.maxConnections = config.maxConnections ?? DEFAULT_MAX_CONNECTIONS;
+  server.maxConnections = maxConnections;
+  server.prependListener("connection", admitConnection);
   server.on("tlsClientError", () => undefined);
   server.on("resumeSession", (_sessionId, callback) => callback(null, null));
 
@@ -236,9 +339,6 @@ export async function startPocketRelayServer(config: PocketRelayServerConfig): P
   const waiterTimeoutMs = config.waiterTimeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
   const tunnelIdleTimeoutMs = config.tunnelIdleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const tunnelLifetimeMs = config.tunnelLifetimeMs ?? DEFAULT_TUNNEL_LIFETIME_MS;
-  const maxSlots = config.maxSlots ?? DEFAULT_MAX_SLOTS;
-  const maxWaitersPerSlot = config.maxWaitersPerSlot ?? DEFAULT_MAX_WAITERS_PER_SLOT;
-
   async function handleRelayRequest(socket: TLSSocket): Promise<void> {
     const request = parseRelayRequest(await readFrame(socket, headerTimeoutMs));
     if (request.role === "companion") {
@@ -252,13 +352,14 @@ export async function startPocketRelayServer(config: PocketRelayServerConfig): P
     const candidateHash = hashSecret(request.secret);
     let slot = slots.get(request.slot);
     if (!slot) {
-      if (slots.size >= maxSlots) return rejectSocket(socket);
+      if (slots.size >= maxSlots) return rejectRequest(socket);
+      if (!consumeNewSlot(socket)) return rejectSlotLimited(socket);
       slot = { secretHash: candidateHash, waiters: new Set(), activeTunnels: 0 };
       slots.set(request.slot, slot);
     } else if (!timingSafeEqual(slot.secretHash, candidateHash)) {
-      return rejectSocket(socket);
+      return rejectRequest(socket);
     }
-    if (slot.waiters.size >= maxWaitersPerSlot) return rejectSocket(socket);
+    if (slot.waiters.size >= maxWaitersPerSlot) return rejectRequest(socket);
 
     let waiter!: RelayWaiter;
     const onClose = () => removeWaiter(request.slot, waiter);
@@ -278,10 +379,10 @@ export async function startPocketRelayServer(config: PocketRelayServerConfig): P
   async function attachClient(socket: TLSSocket, request: RelayRequest): Promise<void> {
     const slot = slots.get(request.slot);
     if (!slot || !timingSafeEqual(slot.secretHash, hashSecret(request.secret))) {
-      return unavailableSocket(socket);
+      return unavailableRequest(socket);
     }
     const waiter = slot.waiters.values().next().value as RelayWaiter | undefined;
-    if (!waiter) return unavailableSocket(socket);
+    if (!waiter) return unavailableRequest(socket);
     removeWaiter(request.slot, waiter, false);
     slot.activeTunnels += 1;
     try {
@@ -290,6 +391,7 @@ export async function startPocketRelayServer(config: PocketRelayServerConfig): P
         writeFrame(waiter.socket, { version: RELAY_PROTOCOL_VERSION, status: "paired" }),
       ]);
     } catch {
+      counters.requestRejected += 1;
       slot.activeTunnels -= 1;
       cleanupSlot(request.slot, slot);
       socket.destroy();
@@ -301,6 +403,7 @@ export async function startPocketRelayServer(config: PocketRelayServerConfig): P
     tunnelSockets.add(socket);
     tunnelSockets.add(waiter.socket);
     tunnelCount += 1;
+    counters.pairedTunnels += 1;
     bridge(socket, waiter.socket, () => {
       tunnelSockets.delete(socket);
       tunnelSockets.delete(waiter.socket);
@@ -322,7 +425,102 @@ export async function startPocketRelayServer(config: PocketRelayServerConfig): P
     if (slot.waiters.size === 0 && slot.activeTunnels === 0) slots.delete(slotId);
   }
 
+  function admitConnection(socket: Socket): void {
+    const timestamp = now();
+    const address = normalizePocketRelayPeerAddress(socket.remoteAddress);
+    if (!address) {
+      counters.admissionRejected += 1;
+      socket.destroy();
+      return;
+    }
+    let peer = peers.get(address);
+    if (!peer) {
+      if (peers.size >= maxTrackedPeers) cleanupPeers(timestamp);
+      if (peers.size >= maxTrackedPeers) {
+        counters.admissionRejected += 1;
+        socket.destroy();
+        return;
+      }
+      peer = {
+        openConnections: 0,
+        windowStartedAt: timestamp,
+        connectionStarts: 0,
+        newSlots: 0,
+        lastSeenAt: timestamp,
+      };
+      peers.set(address, peer);
+    }
+    resetPeerWindow(peer, timestamp);
+    peer.lastSeenAt = timestamp;
+    if (peer.connectionStarts >= maxConnectionStartsPerIp) {
+      counters.admissionRejected += 1;
+      counters.rateLimited += 1;
+      socket.destroy();
+      return;
+    }
+    peer.connectionStarts += 1;
+    if (peer.openConnections >= maxConnectionsPerIp) {
+      counters.admissionRejected += 1;
+      socket.destroy();
+      return;
+    }
+    peer.openConnections += 1;
+    openConnectionCount += 1;
+    counters.acceptedConnections += 1;
+    let released = false;
+    socket.once("close", () => {
+      if (released) return;
+      released = true;
+      peer!.openConnections = Math.max(0, peer!.openConnections - 1);
+      peer!.lastSeenAt = now();
+      openConnectionCount = Math.max(0, openConnectionCount - 1);
+    });
+  }
+
+  function consumeNewSlot(socket: TLSSocket): boolean {
+    const address = normalizePocketRelayPeerAddress(socket.remoteAddress);
+    const peer = address ? peers.get(address) : undefined;
+    if (!peer) return false;
+    const timestamp = now();
+    resetPeerWindow(peer, timestamp);
+    peer.lastSeenAt = timestamp;
+    if (peer.newSlots >= maxNewSlotsPerIp) return false;
+    peer.newSlots += 1;
+    return true;
+  }
+
+  function resetPeerWindow(peer: RelayPeerState, timestamp: number): void {
+    if (timestamp >= peer.windowStartedAt && timestamp - peer.windowStartedAt < rateWindowMs) return;
+    peer.windowStartedAt = timestamp;
+    peer.connectionStarts = 0;
+    peer.newSlots = 0;
+  }
+
+  function cleanupPeers(timestamp = now()): void {
+    for (const [address, peer] of peers) {
+      if (peer.openConnections === 0 && timestamp >= peer.lastSeenAt
+          && timestamp - peer.lastSeenAt >= rateWindowMs) peers.delete(address);
+    }
+  }
+
+  function rejectRequest(socket: TLSSocket): Promise<void> {
+    counters.requestRejected += 1;
+    return rejectSocket(socket);
+  }
+
+  function rejectSlotLimited(socket: TLSSocket): Promise<void> {
+    counters.slotLimited += 1;
+    return rejectRequest(socket);
+  }
+
+  function unavailableRequest(socket: TLSSocket): Promise<void> {
+    counters.requestRejected += 1;
+    return unavailableSocket(socket);
+  }
+
   const port = await listenTlsServer(server, config.port, config.host);
+  peerCleanup = setInterval(cleanupPeers, Math.min(rateWindowMs, 60_000));
+  peerCleanup.unref();
   return {
     host: config.host,
     port,
@@ -330,10 +528,14 @@ export async function startPocketRelayServer(config: PocketRelayServerConfig): P
       slots: slots.size,
       waiting: [...slots.values()].reduce((sum, slot) => sum + slot.waiters.size, 0),
       tunnels: tunnelCount,
+      openConnections: openConnectionCount,
+      trackedPeers: peers.size,
+      ...counters,
     }),
     async close() {
       if (closing) return;
       closing = true;
+      if (peerCleanup) clearInterval(peerCleanup);
       for (const socket of [...pendingSockets, ...tunnelSockets]) socket.destroy();
       pendingSockets.clear();
       tunnelSockets.clear();
@@ -341,6 +543,7 @@ export async function startPocketRelayServer(config: PocketRelayServerConfig): P
         for (const waiter of slot.waiters) clearTimeout(waiter.timer);
       }
       slots.clear();
+      peers.clear();
       if (!server.listening) return;
       await new Promise<void>((resolvePromise, reject) => {
         server.close((error) => error ? reject(error) : resolvePromise());
@@ -463,6 +666,31 @@ export function startPocketRelayCompanion(options: PocketRelayCompanionOptions):
 export async function connectPocketRelayClient(config: PocketRelayClientConfig): Promise<TLSSocket> {
   validateClientConfig({ ...config, standbyConnections: 1 });
   return connectRelay(config, "client");
+}
+
+export function normalizePocketRelayPeerAddress(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (isIP(value) === 4) return value;
+  if (isIP(value) !== 6) return undefined;
+
+  const zoneIndex = value.indexOf("%");
+  const address = zoneIndex >= 0 ? value.slice(0, zoneIndex) : value;
+  const zone = zoneIndex >= 0 ? value.slice(zoneIndex + 1) : undefined;
+  if (zone !== undefined && !/^[A-Za-z0-9_.-]{1,64}$/u.test(zone)) return undefined;
+  let canonical: string;
+  try {
+    const hostname = new URL(`http://[${address}]/`).hostname.toLowerCase();
+    canonical = hostname.startsWith("[") && hostname.endsWith("]")
+      ? hostname.slice(1, -1)
+      : hostname;
+  } catch {
+    return undefined;
+  }
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/u.exec(canonical);
+  if (!mapped) return zone ? `${canonical}%${zone}` : canonical;
+  const high = Number.parseInt(mapped[1]!, 16);
+  const low = Number.parseInt(mapped[2]!, 16);
+  return `${high >>> 8}.${high & 0xff}.${low >>> 8}.${low & 0xff}`;
 }
 
 async function connectRelay(
@@ -763,6 +991,24 @@ function validateServerLimits(config: PocketRelayServerConfig): void {
   boundedInteger(config.maxConnections, DEFAULT_MAX_CONNECTIONS, 1, 2_048, "maxConnections");
   boundedInteger(config.maxSlots, DEFAULT_MAX_SLOTS, 1, 1_024, "maxSlots");
   boundedInteger(config.maxWaitersPerSlot, DEFAULT_MAX_WAITERS_PER_SLOT, 1, 16, "maxWaitersPerSlot");
+  boundedDuration(config.rateWindowMs, DEFAULT_RATE_WINDOW_MS, 1_000, 10 * 60_000, "rateWindowMs");
+  boundedInteger(
+    config.maxConnectionsPerIp,
+    DEFAULT_MAX_CONNECTIONS_PER_IP,
+    1,
+    2_048,
+    "maxConnectionsPerIp",
+  );
+  boundedInteger(
+    config.maxConnectionStartsPerIp,
+    DEFAULT_MAX_CONNECTION_STARTS_PER_IP,
+    1,
+    10_000,
+    "maxConnectionStartsPerIp",
+  );
+  boundedInteger(config.maxNewSlotsPerIp, DEFAULT_MAX_NEW_SLOTS_PER_IP, 1, 1_024, "maxNewSlotsPerIp");
+  boundedInteger(config.maxTrackedPeers, DEFAULT_MAX_TRACKED_PEERS, 1, 10_000, "maxTrackedPeers");
+  if (config.now !== undefined && typeof config.now !== "function") throw configError("now is invalid");
 }
 
 function hashSecret(value: string): Buffer {
