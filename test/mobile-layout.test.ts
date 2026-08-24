@@ -59,6 +59,29 @@ test("project speech glossary uses bounded encrypted mobile controls", async () 
   assert.doesNotMatch(journal, /SPEECH_GLOSSARY_STORE/);
 });
 
+test("spoken settings use a bounded touch-review overlay and cannot apply from recognition alone", async () => {
+  const [app, css] = await Promise.all([
+    readFile(new URL("../client/src/App.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../client/src/styles.css", import.meta.url), "utf8"),
+  ]);
+  const overlay = css.match(/\.voice-setting-review \{([^}]+)\}/)?.[1] ?? "";
+  const card = css.match(/\.voice-setting-review-card \{([^}]+)\}/)?.[1] ?? "";
+  const change = css.match(/\.voice-setting-change \{([^}]+)\}/)?.[1] ?? "";
+
+  assert.match(overlay, /grid-template-rows:\s*minmax\(0,\s*1fr\)/);
+  assert.match(overlay, /overflow:\s*hidden/);
+  assert.match(card, /max-width:\s*100%/);
+  assert.match(card, /max-height:\s*100%/);
+  assert.match(card, /overflow-x:\s*hidden/);
+  assert.match(card, /overflow-y:\s*auto/);
+  assert.match(change, /minmax\(0,\s*1fr\)/);
+  assert.match(app, /voiceSettingRef\.current\.phase === "listening"[\s\S]*dispatchVoiceSetting\(\{ type: "transcript"/);
+  assert.match(app, /parseVoiceSettingCommand\(voiceSettingTranscriptRef\.current, catalog\)/);
+  assert.match(app, /aria-label="검토한 설정을 화면 터치로 확정"/);
+  assert.match(app, /voiceSettingOwnerMatches\(owner, currentVoiceSettingOwner\(\)\)/);
+  assert.match(app, /const target = catalog\[proposal\.kind\]\.find/);
+});
+
 test("operations dashboard and approval details stay inside the mobile viewport", async () => {
   const css = await readFile(new URL("../client/src/styles.css", import.meta.url), "utf8");
   const overlay = css.match(/\.operations-dashboard \{([^}]+)\}/)?.[1] ?? "";

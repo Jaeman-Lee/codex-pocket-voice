@@ -17,7 +17,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | V2 development component | Version / revision | State |
 | --- | --- | --- |
 | Source version | `2.0.0` / Android `versionCode 20000` | development only; not field installed |
-| Target branch | `feature/v2-control-plane` | common Provider contract/failure suite, fail-closed model/upstream grade gate, user-approved strict-ZDR OpenRouter routing, approved crash-recoverable text change tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, process-death notifications, connection/run/journal/voice/media state machines and encrypted project speech glossary, live branch/worktree identity, staged PocketLink rotations, reviewed same-LAN/P2P discovery, Android outbound Wi-Fi Direct, fail-closed LAN→P2P→relay policy and standalone Linux P2P group-owner lifecycle implemented; real P2P/mobile field acceptance and protected model eval execution next |
+| Target branch | `feature/v2-control-plane` | common Provider contract/failure suite, fail-closed model/upstream grade gate, user-approved strict-ZDR OpenRouter routing, approved crash-recoverable text change tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, process-death notifications, connection/run/journal/voice/media state machines, encrypted project speech glossary and touch-reviewed spoken settings, live branch/worktree identity, staged PocketLink rotations, reviewed same-LAN/P2P discovery, Android outbound Wi-Fi Direct, fail-closed LAN→P2P→relay policy and standalone Linux P2P group-owner lifecycle implemented; real P2P/mobile field acceptance and protected model eval execution next |
 | Gateway protocol | maximum 3, minimum 2 | v1 rollout compatibility retained |
 | Codex app-server schema | `codex-cli 0.149.0` | generated bindings and no-model real integration verified |
 | Current v1 APK | 1.8.2 candidate | signed APK/checksum/SBOM prepared from hotfix PR #4; install not performed |
@@ -37,6 +37,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Multi-Companion Fleet | maximum 8 exact registered device targets | authenticated server-authored count-only summary, isolated per-device token failures and explicit device handoff implemented; multi-PC device acceptance pending |
 | Codex Queue/Steer | exact active operation + `turn/steer` | Queue remains the mobile default; explicit Steer is bound to the server-owned thread/turn, idempotently journaled and hidden for unsupported API Providers; synthetic acceptance only |
 | Project speech glossary | maximum 32 reviewed terms per device+workspace | encrypted hashed-scope storage, bounded non-chaining transcript correction and optional API 33 native recognition hints implemented; production browser/Android CI and physical voice acceptance pending |
+| Spoken settings review | one exact project/provider/model command | dedicated one-shot capture, ambiguity rejection, inert current→target review, touch-only apply and stale owner/catalog revalidation implemented; Chromium CI and physical voice acceptance pending |
 | Mobile browser acceptance | Playwright Chromium on Node 22 | production build plus real pairing/Gateway/SSE/run/approval path covers 320/360/412px, 150% text, keyboard resize, rotation and long diff; synthetic only, device acceptance still pending |
 | Android work notifications | opt-in connectedDevice service | maximum 8 encrypted loopback subscriptions, notification-only authenticated SSE, durable cursor/replay freshness and generic retained-operation navigation implemented; API 30 token/bounds/consume/extra-scrub Intent path automated, field tray-tap/process-kill acceptance pending |
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
@@ -44,6 +45,17 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, standalone Linux GO/PBC + memory-only DHCP cleanup lifecycle, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; actual P2P field validation pending |
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+Spoken settings touch-review checkpoint decision: 프로젝트·AI 연결·모델의 음성 선택은 새 user-visible v2
+workflow이므로 `feature`로 분류한다. 아직 전달하지 않은 incompatible v2 안에서 SemVer `2.0.0`/Android
+`versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
+일반 받아쓰기는 selector로 해석하지 않으며 별도 단발 모드의 한 가지 strict command만 exact alias로
+검사한다. unknown·duplicate·ambiguous·oversized 명령은 추측하지 않고, 음성 종료 뒤에도 선택값은 그대로
+둔다. 화면의 인식문과 현재→대상을 직접 터치한 경우에만 exact device/workspace/provider/model owner,
+active run/Fork 상태와 최신 catalog를 다시 검사해 적용한다. Provider model catalog는 현재 선택을 바꾸기
+전에 먼저 불러와 실패 시 기존 설정을 원자적으로 유지한다. Node 합성 검사만 수행했고 실제 마이크·Provider
+호출, APK 전달·설치와 Companion 재시작은 하지 않았다. current v1 후보 1.8.2, staged v1.8.4와 검증된
+rollback 1.8.1은 변경·삭제하지 않는다.
 
 Project speech glossary checkpoint decision: PC·프로젝트별 받아쓰기 보정은 새 user-visible v2 workflow이므로
 `feature`로 분류한다. 아직 전달하지 않은 incompatible v2 안에서 SemVer `2.0.0`/Android

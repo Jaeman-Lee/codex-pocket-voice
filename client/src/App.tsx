@@ -63,6 +63,17 @@ import {
 } from "./active-run-state";
 import { initialVoiceInputState, reduceVoiceInput } from "./voice-input-state";
 import {
+  initialVoiceSettingState,
+  parseVoiceSettingCommand,
+  reduceVoiceSetting,
+  voiceSettingCatalog,
+  voiceSettingHints,
+  voiceSettingOwnerMatches,
+  type VoiceSettingAction,
+  type VoiceSettingKind,
+  type VoiceSettingOwner,
+} from "./voice-setting-selection";
+import {
   initialMediaComposerState,
   MAX_COMPOSER_ATTACHMENTS,
   mediaComposerBusy,
@@ -259,6 +270,7 @@ export function App() {
   const [effort, setEffort] = useState("");
   const [voiceInput, dispatchVoiceInput] = useReducer(reduceVoiceInput, initialVoiceInputState);
   const { dictating, handsFree, supported: speechSupported } = voiceInput;
+  const [voiceSetting, dispatchVoiceSettingState] = useReducer(reduceVoiceSetting, initialVoiceSettingState);
   const [speechGlossary, setSpeechGlossary] = useState<SpeechGlossaryEntry[]>([]);
   const [speechGlossaryLoading, setSpeechGlossaryLoading] = useState(false);
   const [speechGlossarySaving, setSpeechGlossarySaving] = useState(false);
@@ -394,6 +406,10 @@ export function App() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const dictationBaseRef = useRef("");
   const nativeFinalRef = useRef("");
+  const voiceSettingRef = useRef(initialVoiceSettingState);
+  const voiceSettingTranscriptRef = useRef("");
+  const finalizeVoiceSettingRef = useRef<() => void>(() => undefined);
+  const failVoiceSettingRef = useRef<(message: string) => void>(() => undefined);
   const handsFreeRef = useRef(false);
   const speechLanguageRef = useRef(speechLanguage);
   const speechGlossaryRef = useRef<SpeechGlossaryEntry[]>([]);
@@ -439,6 +455,16 @@ export function App() {
   const dispatchMediaComposer = (action: MediaComposerAction) => {
     mediaComposerRef.current = reduceMediaComposer(mediaComposerRef.current, action);
     dispatchMediaComposerState(action);
+  };
+
+  const dispatchVoiceSetting = (action: VoiceSettingAction) => {
+    const current = voiceSettingRef.current;
+    const next = reduceVoiceSetting(current, action);
+    if (next !== current) {
+      voiceSettingRef.current = next;
+      dispatchVoiceSettingState(action);
+    }
+    return next;
   };
 
   useEffect(() => { workspaceRef.current = workspace; }, [workspace]);
@@ -1136,7 +1162,13 @@ export function App() {
     };
     const updateTranscript = (tail: string) => {
       const transcript = mergeSpeechSegments([nativeFinalRef.current, tail]);
-      setPrompt(joinDictation(dictationBaseRef.current, applySpeechGlossary(transcript, speechGlossaryRef.current)));
+      const corrected = applySpeechGlossary(transcript, speechGlossaryRef.current);
+      if (voiceSettingRef.current.phase === "listening") {
+        voiceSettingTranscriptRef.current = corrected;
+        dispatchVoiceSetting({ type: "transcript", transcript: corrected });
+      } else {
+        setPrompt(joinDictation(dictationBaseRef.current, corrected));
+      }
     };
 
     void keep(NativeSpeech.addListener("speechPartial", (event: NativeSpeechResult) => {
@@ -1151,13 +1183,17 @@ export function App() {
         dispatchVoiceInput({ type: "recognition_active" });
       } else {
         dispatchVoiceInput({ type: "recognition_idle" });
+        if (event.state === "stopped" && voiceSettingRef.current.phase === "listening") {
+          finalizeVoiceSettingRef.current();
+        }
       }
     }));
     void keep(NativeSpeech.addListener("speechError", (event: NativeSpeechError) => {
       if (!event.recoverable) {
         handsFreeRef.current = false;
         dispatchVoiceInput({ type: "fatal_error" });
-        showToast(event.message);
+        if (voiceSettingRef.current.phase === "listening") failVoiceSettingRef.current(event.message);
+        else showToast(event.message);
       }
     }));
 
@@ -1190,16 +1226,30 @@ export function App() {
         segments.push(event.results[index]?.[0]?.transcript ?? "");
       }
       const transcript = mergeSpeechSegments(segments);
-      setPrompt(joinDictation(dictationBaseRef.current, applySpeechGlossary(transcript, speechGlossaryRef.current)));
+      const corrected = applySpeechGlossary(transcript, speechGlossaryRef.current);
+      if (voiceSettingRef.current.phase === "listening") {
+        voiceSettingTranscriptRef.current = corrected;
+        dispatchVoiceSetting({ type: "transcript", transcript: corrected });
+      } else {
+        setPrompt(joinDictation(dictationBaseRef.current, corrected));
+      }
     };
     recognition.onerror = (event) => {
+      const settingCapture = voiceSettingRef.current.phase === "listening";
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        showToast("마이크 권한을 허용해 주세요.");
+        if (settingCapture) failVoiceSettingRef.current("마이크 권한을 허용한 뒤 다시 시도해 주세요.");
+        else showToast("마이크 권한을 허용해 주세요.");
       } else if (event.error !== "no-speech" && event.error !== "aborted") {
-        showToast(`음성 인식 오류: ${event.error}`);
+        if (settingCapture) failVoiceSettingRef.current(`음성 인식 오류: ${event.error}`);
+        else showToast(`음성 인식 오류: ${event.error}`);
       }
     };
     recognition.onend = () => {
+      if (voiceSettingRef.current.phase === "listening") {
+        dispatchVoiceInput({ type: "recognition_idle" });
+        finalizeVoiceSettingRef.current();
+        return;
+      }
       if (handsFreeRef.current) {
         window.setTimeout(() => {
           if (!handsFreeRef.current) return;
@@ -2917,20 +2967,34 @@ export function App() {
     if (info) persistRoutingSlot(deviceRef.current, info.id, "backup", nextBackup);
   }
 
-  async function selectProvider(nextProvider: ProviderId) {
-    if (nextProvider === providerRef.current) return;
+  async function selectProvider(nextProvider: ProviderId): Promise<boolean> {
+    if (nextProvider === providerRef.current) return true;
     if (pendingRunForkRetryRef.current) {
       showToast("응답이 불확실한 Fork를 먼저 같은 확인으로 재시도해 주세요.");
-      return;
+      return false;
     }
     if (activeRunRef.current.operation || activeRunRef.current.requestId) {
       showToast("현재 작업 상태를 확인한 뒤 AI 제공자를 바꿔 주세요.");
-      return;
+      return false;
     }
     const info = providers.find((item) => item.id === nextProvider);
     if (!info?.available) {
       showToast(info?.detail ?? "이 AI 연결은 현재 사용할 수 없습니다.");
-      return;
+      return false;
+    }
+    const selectedDevice = deviceRef.current;
+    const previousProvider = providerRef.current;
+    let modelData: ModelResponse;
+    try {
+      modelData = await api<ModelResponse>(`/api/models?provider=${encodeURIComponent(nextProvider)}`);
+    } catch (error) {
+      showToast(`AI 연결의 모델 목록을 불러오지 못했습니다: ${errorMessage(error)}`);
+      return false;
+    }
+    if (deviceRef.current !== selectedDevice || providerRef.current !== previousProvider
+        || activeRunRef.current.operation || activeRunRef.current.requestId || pendingRunForkRetryRef.current) {
+      showToast("확인 중 작업 상태가 달라져 AI 연결을 바꾸지 않았습니다.");
+      return false;
     }
     const retainedSource = forkSource && forkSource.cwd === workspaceRef.current
       ? forkSource
@@ -2944,7 +3008,6 @@ export function App() {
       ? retainedSource
       : null);
     setRunForkReview(null);
-    const selectedDevice = deviceRef.current;
     setProvider(nextProvider);
     providerRef.current = nextProvider;
     const selectionScope = resetActiveRun(selectedDevice);
@@ -2952,9 +3015,8 @@ export function App() {
     const nextAccount = info.accounts.find((item) => item.connected) ?? info.accounts[0];
     setAccountId(nextAccount?.id ?? "");
     if (nextAccount) localStorage.setItem(storageKey("account", deviceRef.current), nextAccount.id);
-    const modelData = await api<ModelResponse>(`/api/models?provider=${encodeURIComponent(nextProvider)}`);
     if (deviceRef.current !== selectedDevice || providerRef.current !== nextProvider
-        || !activeRunScopeMatches(activeRunRef.current, selectionScope)) return;
+        || !activeRunScopeMatches(activeRunRef.current, selectionScope)) return false;
     setModels(modelData.models);
     const nextModel = nextProvider === "codex" ? "" : defaultModel(modelData.models)?.id ?? "";
     setModel(nextModel);
@@ -3003,6 +3065,7 @@ export function App() {
         setMessages(restored);
       }
     }
+    return true;
   }
 
   function selectAccount(nextAccount: string) {
@@ -3222,7 +3285,7 @@ export function App() {
   }
 
   async function startDictation(continuous: boolean) {
-    if (!speechSupported || dictating || handsFreeRef.current) return;
+    if (!speechSupported || dictating || handsFreeRef.current || voiceSettingRef.current.phase !== "idle") return;
     dictationBaseRef.current = prompt.trim();
     nativeFinalRef.current = "";
     handsFreeRef.current = continuous;
@@ -3273,6 +3336,160 @@ export function App() {
       return;
     }
     recognitionRef.current?.stop();
+  }
+
+  function currentVoiceSettingOwner(): VoiceSettingOwner {
+    return {
+      device: deviceRef.current,
+      workspace: workspaceRef.current,
+      provider: providerRef.current,
+      model,
+    };
+  }
+
+  function currentVoiceSettingId(kind: VoiceSettingKind): string {
+    if (kind === "workspace") return workspaceRef.current;
+    if (kind === "provider") return providerRef.current;
+    return model;
+  }
+
+  function currentVoiceSettingLabel(kind: VoiceSettingKind): string {
+    if (kind === "workspace") return workspaces.find((item) => item.path === workspace)?.name ?? workspaceName(workspace);
+    if (kind === "provider") return activeProvider(providers, provider)?.name ?? provider;
+    if (!model) return `${defaultModel(models)?.displayName ?? "Codex"} · 자동`;
+    return models.find((item) => item.id === model)?.displayName ?? model;
+  }
+
+  async function startVoiceSettingCapture() {
+    if (!speechSupported || dictating || handsFreeRef.current || voiceSettingRef.current.applying) return;
+    if (connection !== "online") {
+      showToast("Companion 연결을 확인한 뒤 설정을 말해 주세요.");
+      return;
+    }
+    if (activeRunRef.current.operation || activeRunRef.current.requestId) {
+      showToast("현재 작업 상태를 확인한 뒤 설정을 바꿔 주세요.");
+      return;
+    }
+    if (pendingRunForkRetryRef.current) {
+      showToast("응답이 불확실한 Fork를 먼저 같은 확인으로 재시도해 주세요.");
+      return;
+    }
+
+    const catalog = voiceSettingCatalog(workspaces, providers, models);
+    voiceSettingTranscriptRef.current = "";
+    nativeFinalRef.current = "";
+    handsFreeRef.current = false;
+    dispatchVoiceSetting({ type: "start", owner: currentVoiceSettingOwner() });
+    dispatchVoiceInput({ type: "begin", continuous: false });
+    textareaRef.current?.blur();
+
+    if (isNativeApp()) {
+      try {
+        await NativeSpeech.start({
+          language: speechLanguageRef.current,
+          continuous: false,
+          phrases: voiceSettingHints(catalog),
+        });
+      } catch (error) {
+        dispatchVoiceInput({ type: "fatal_error" });
+        failVoiceSettingCapture(`음성 인식 오류: ${errorMessage(error)}`);
+      }
+      return;
+    }
+
+    const recognition = recognitionRef.current;
+    if (!recognition) {
+      dispatchVoiceInput({ type: "fatal_error" });
+      failVoiceSettingCapture("이 브라우저에서는 설정 음성 인식을 사용할 수 없습니다.");
+      return;
+    }
+    try {
+      recognition.lang = speechLanguageRef.current;
+      recognition.continuous = false;
+      recognition.start();
+    } catch (error) {
+      dispatchVoiceInput({ type: "fatal_error" });
+      failVoiceSettingCapture(`음성 인식 오류: ${errorMessage(error)}`);
+    }
+  }
+
+  function finalizeVoiceSettingCapture() {
+    if (voiceSettingRef.current.phase !== "listening") return;
+    handsFreeRef.current = false;
+    const catalog = voiceSettingCatalog(workspaces, providers, models);
+    const result = parseVoiceSettingCommand(voiceSettingTranscriptRef.current, catalog);
+    dispatchVoiceSetting({ type: "review", result });
+  }
+
+  function failVoiceSettingCapture(message: string) {
+    if (voiceSettingRef.current.phase === "idle") return;
+    handsFreeRef.current = false;
+    dispatchVoiceSetting({ type: "invalidate", message });
+  }
+
+  finalizeVoiceSettingRef.current = finalizeVoiceSettingCapture;
+  failVoiceSettingRef.current = failVoiceSettingCapture;
+
+  async function cancelVoiceSettingReview() {
+    const wasListening = voiceSettingRef.current.phase === "listening";
+    dispatchVoiceSetting({ type: "reset" });
+    voiceSettingTranscriptRef.current = "";
+    handsFreeRef.current = false;
+    if (!wasListening) return;
+    dispatchVoiceInput({ type: "stop" });
+    if (isNativeApp()) {
+      try {
+        await NativeSpeech.stop();
+      } catch (error) {
+        showToast(`음성 입력을 중지하지 못했습니다: ${errorMessage(error)}`);
+      }
+    } else {
+      recognitionRef.current?.abort();
+    }
+  }
+
+  async function confirmVoiceSetting() {
+    const pending = voiceSettingRef.current;
+    const proposal = pending.proposal;
+    const owner = pending.owner;
+    if (pending.phase !== "review" || pending.applying || !proposal || !owner) return;
+    if (!voiceSettingOwnerMatches(owner, currentVoiceSettingOwner())) {
+      dispatchVoiceSetting({ type: "invalidate", message: "검토 중 작업 대상이 달라졌습니다. 현재 화면에서 다시 말해 주세요." });
+      return;
+    }
+    if (connection !== "online" || activeRunRef.current.operation || activeRunRef.current.requestId
+        || pendingRunForkRetryRef.current) {
+      dispatchVoiceSetting({ type: "invalidate", message: "현재 작업 상태가 달라져 적용하지 않았습니다. 상태를 확인한 뒤 다시 시도해 주세요." });
+      return;
+    }
+    const catalog = voiceSettingCatalog(workspaces, providers, models);
+    const target = catalog[proposal.kind].find((item) => item.id === proposal.targetId);
+    if (!target || target.label !== proposal.targetLabel) {
+      dispatchVoiceSetting({ type: "invalidate", message: "선택 목록이 달라져 적용하지 않았습니다. 현재 목록으로 다시 말해 주세요." });
+      return;
+    }
+    if (currentVoiceSettingId(proposal.kind) === proposal.targetId) {
+      dispatchVoiceSetting({ type: "reset" });
+      showToast(`${voiceSettingKindLabel(proposal.kind)}은 이미 선택되어 있습니다.`);
+      return;
+    }
+
+    dispatchVoiceSetting({ type: "apply_begin" });
+    setControlsCollapsed(false);
+    try {
+      if (proposal.kind === "workspace") await selectWorkspace(proposal.targetId);
+      else if (proposal.kind === "provider") {
+        const applied = await selectProvider(proposal.targetId);
+        if (!applied) {
+          dispatchVoiceSetting({ type: "apply_failed", message: "AI 연결을 바꾸지 않았습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요." });
+          return;
+        }
+      } else selectModel(proposal.targetId);
+      dispatchVoiceSetting({ type: "reset" });
+      showToast(`${voiceSettingKindLabel(proposal.kind)}을 ${proposal.targetLabel}(으)로 변경했습니다.`);
+    } catch (error) {
+      dispatchVoiceSetting({ type: "apply_failed", message: `적용하지 못했습니다: ${errorMessage(error)}` });
+    }
   }
 
   async function addSpeechGlossaryTerm() {
@@ -4245,6 +4462,66 @@ export function App() {
         />
       )}
 
+      {voiceSetting.phase !== "idle" && (
+        <section className="voice-setting-review" role="dialog" aria-modal="true" aria-labelledby="voice-setting-review-title">
+          <div className="voice-setting-review-card">
+            <header>
+              <div>
+                <strong id="voice-setting-review-title">
+                  {voiceSetting.phase === "listening" ? "설정 한 가지를 말해 주세요" : "말한 설정을 화면에서 확인하세요"}
+                </strong>
+                <small>음성만으로는 프로젝트·AI 연결·모델이 바뀌지 않습니다.</small>
+              </div>
+            </header>
+            {voiceSetting.phase === "listening" ? (
+              <>
+                <p className="voice-setting-example">예: “프로젝트 stock explorer 선택” · “AI 연결 OpenRouter 선택” · “모델 GPT 5.6 선택”</p>
+                <div className="voice-setting-listening" role="status" aria-live="polite">
+                  <span aria-hidden="true">🎙</span>
+                  <p>{voiceSetting.transcript || "듣고 있습니다…"}</p>
+                </div>
+                <div className="voice-setting-actions">
+                  <button type="button" className="secondary" onClick={() => void cancelVoiceSettingReview()}>취소</button>
+                  <button type="button" onClick={() => void stopDictation()}>말하기 끝내기</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="voice-setting-transcript">
+                  <strong>인식한 말</strong>
+                  <p>{voiceSetting.transcript || "인식된 말 없음"}</p>
+                </div>
+                {voiceSetting.error && <p className="voice-setting-error" role="alert">{voiceSetting.error}</p>}
+                {voiceSetting.proposal && (
+                  <div className="voice-setting-change" aria-label="설정 변경 검토">
+                    <span><strong>항목</strong>{voiceSettingKindLabel(voiceSetting.proposal.kind)}</span>
+                    <span><strong>현재</strong>{currentVoiceSettingLabel(voiceSetting.proposal.kind)}</span>
+                    <b aria-hidden="true">→</b>
+                    <span className="target"><strong>변경 후</strong>{voiceSetting.proposal.targetLabel}</span>
+                    {voiceSetting.proposal.kind === "provider" && (
+                      <small>AI 연결을 바꾸면 해당 Provider의 모델과 대화 선택을 새로 불러옵니다.</small>
+                    )}
+                  </div>
+                )}
+                <div className="voice-setting-actions">
+                  <button type="button" className="secondary" disabled={voiceSetting.applying} onClick={() => void cancelVoiceSettingReview()}>취소</button>
+                  <button type="button" className="secondary" disabled={voiceSetting.applying} onClick={() => void startVoiceSettingCapture()}>다시 말하기</button>
+                  {voiceSetting.proposal && (
+                    <button
+                      type="button"
+                      className="confirm"
+                      disabled={voiceSetting.applying}
+                      aria-label="검토한 설정을 화면 터치로 확정"
+                      onClick={() => void confirmVoiceSetting()}
+                    >{voiceSetting.applying ? "적용 중…" : "화면 터치로 확정"}</button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+      )}
+
       {pendingRunPolicyReview && (
         <section className="run-policy-review" role="dialog" aria-modal="true" aria-labelledby="run-policy-review-title">
           <div className="run-policy-review-card">
@@ -5173,6 +5450,7 @@ export function App() {
                 <span>{tr("model")}</span>
                 <select
                   value={model}
+                  disabled={operation !== null || activeRun.requestId !== null}
                   aria-label="AI 모델"
                   onChange={(event) => selectModel(event.target.value)}
                 >
@@ -5342,6 +5620,13 @@ export function App() {
           </div>
           <div className={`voice-help${handsFree ? " active" : ""}`}>
             <span>{handsFree ? tr("speechActive") : tr("speechHelp")}</span>
+            <button
+              type="button"
+              disabled={!speechSupported || dictating || connection !== "online"
+                || operation !== null || activeRun.requestId !== null}
+              aria-label="프로젝트 AI 연결 또는 모델 설정 말하기"
+              onClick={() => void startVoiceSettingCapture()}
+            >설정 말하기</button>
             <button
               type="button"
               disabled={!workspace || dictating || speechGlossaryLoading}
@@ -5656,6 +5941,12 @@ function providerStatusLabel(provider: ProviderOption): string {
   if (provider.status === "connected") return provider.available ? "사용 가능" : "계정 연결됨";
   if (provider.status === "login_required") return "로그인 필요";
   return "설치 필요";
+}
+
+function voiceSettingKindLabel(kind: VoiceSettingKind): string {
+  if (kind === "workspace") return "프로젝트";
+  if (kind === "provider") return "AI 연결";
+  return "모델";
 }
 
 function loginStatusLabel(status: ProviderLoginSession["status"]): string {

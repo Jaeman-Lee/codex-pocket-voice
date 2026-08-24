@@ -68,6 +68,42 @@ test("project speech terms stay encrypted, persist across reload, and fit a 320p
   await expectShellContained(page);
 });
 
+test("spoken settings require exact matching and a separate touch review at 320px", async ({ page }) => {
+  await installSpeechRecognitionFixture(page);
+  await bootPairedApp(page, { width: 320, height: 740 });
+
+  const prompt = page.getByLabel("Codex에게 보낼 요청");
+  const model = page.getByLabel("AI 모델", { exact: true });
+  await prompt.fill("입력 중인 요청은 그대로 유지");
+  await expect(model).toHaveValue("");
+
+  await page.getByRole("button", { name: "프로젝트 AI 연결 또는 모델 설정 말하기" }).click();
+  const review = page.locator(".voice-setting-review");
+  await expect(review).toBeVisible();
+  await expect(review).toContainText("설정 한 가지를 말해 주세요");
+  await emitSpeechRecognition(page, "모델 Browser acceptance model 선택");
+  await expect(page.getByRole("dialog", { name: "말한 설정을 화면에서 확인하세요" })).toBeVisible();
+  await expect(review).toContainText("Browser acceptance model");
+  await expect(model).toHaveValue("");
+  await expect(prompt).toHaveValue("입력 중인 요청은 그대로 유지");
+  await expectElementContained(page, review.locator(".voice-setting-review-card"));
+  await expectShellContained(page);
+
+  await review.getByRole("button", { name: "검토한 설정을 화면 터치로 확정" }).click();
+  await expect(review).toBeHidden();
+  await expect(model).toHaveValue("browser-model");
+  await expect(prompt).toHaveValue("입력 중인 요청은 그대로 유지");
+
+  await page.getByRole("button", { name: "프로젝트 AI 연결 또는 모델 설정 말하기" }).click();
+  await emitSpeechRecognition(page, "모델 browser 선택");
+  await expect(review).toContainText("정확히 일치하지 않습니다");
+  await expect(review.getByRole("button", { name: "검토한 설정을 화면 터치로 확정" })).toHaveCount(0);
+  await expect(model).toHaveValue("browser-model");
+  await review.getByRole("button", { name: "취소" }).click();
+  await expect(review).toBeHidden();
+  await expectShellContained(page);
+});
+
 test("the mobile Fleet shows bounded summaries for another Companion without exposing its work", async ({ page }) => {
   const fleetToken = `F${"f".repeat(42)}`;
   const fleetPaths: string[] = [];
@@ -321,6 +357,53 @@ async function bootPairedApp(page: Page, viewport: { width: number; height: numb
   await expect(pairing).toBeHidden();
   await expect(page.locator(".status-dot.online")).toBeVisible();
   await expectShellContained(page);
+}
+
+async function installSpeechRecognitionFixture(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    type ResultHandler = ((event: { results: { length: number; [index: number]: { [index: number]: { transcript?: string } } } }) => void) | null;
+    class BrowserSpeechRecognition {
+      lang = "ko-KR";
+      continuous = false;
+      interimResults = true;
+      maxAlternatives = 1;
+      onstart: (() => void) | null = null;
+      onresult: ResultHandler = null;
+      onerror: ((event: { error: string }) => void) | null = null;
+      onend: (() => void) | null = null;
+
+      start() {
+        (window as typeof window & { __activeSpeechRecognition?: BrowserSpeechRecognition }).__activeSpeechRecognition = this;
+        this.onstart?.();
+      }
+
+      stop() {
+        this.onend?.();
+      }
+
+      abort() {
+        this.onerror?.({ error: "aborted" });
+        this.onend?.();
+      }
+
+      emit(transcript: string) {
+        const result = { 0: { transcript } };
+        this.onresult?.({ results: { 0: result, length: 1 } });
+        this.onend?.();
+      }
+    }
+    (window as typeof window & { SpeechRecognition?: typeof BrowserSpeechRecognition }).SpeechRecognition = BrowserSpeechRecognition;
+  });
+}
+
+async function emitSpeechRecognition(page: Page, transcript: string): Promise<void> {
+  await page.evaluate((value) => {
+    const recognition = (window as typeof window & {
+      __activeSpeechRecognition?: { emit(transcript: string): void };
+    }).__activeSpeechRecognition;
+    if (!recognition) throw new Error("speech recognition fixture is not active");
+    recognition.emit(value);
+  }, transcript);
 }
 
 async function settleLayout(page: Page): Promise<void> {

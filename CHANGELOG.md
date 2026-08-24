@@ -10,6 +10,19 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Spoken settings touch review는 프로젝트·AI 연결·모델을 음성으로 선택하는 새 user-visible workflow이므로
+  `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
+  `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
+  APK 전달·설치, 실제 Provider 호출과 실행 중 Companion 재시작은 하지 않으며 current v1 후보
+  1.8.2, staged v1.8.4와 검증된 v1.8.1 rollback을 그대로 보존한다.
+- 일반 받아쓰기는 요청문만 편집하고, 별도 `설정 말하기` 단발 모드에서만
+  `프로젝트/AI 연결/모델 + 정확한 현재 이름 + 선택·변경·전환` 한 가지를 해석한다. separator만
+  정규화한 exact alias가 없거나 둘 이상이면 추측하지 않고 거절하며 최대 transcript·후보·native hint를
+  제한한다. 음성 종료는 inert review만 만들고 선택값과 입력 중 prompt를 변경하지 않는다.
+- 검토 화면은 인식문과 현재→대상을 320px 내부 scroll sheet에 표시하고 명시적인 화면 터치 뒤에만
+  적용한다. 확인 시 exact device·workspace·Provider·model owner, active run/Fork 상태와 최신 selectable
+  catalog를 다시 검사한다. Provider 모델 목록은 기존 선택을 바꾸기 전에 먼저 읽어 실패 시 원자적으로
+  유지하며, 선택 중 작업 상태가 달라져도 적용하지 않는다.
 - Project speech glossary는 PC·프로젝트별 받아쓰기 보정을 추가하는 새 user-visible workflow이므로
   `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
   `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.

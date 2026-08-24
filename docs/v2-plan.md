@@ -21,7 +21,7 @@
 
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
-| Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Codex exact-turn Steer와 durable idempotency, terminal operation 기반 명시적 Provider context Fork와 redacted provenance, Tool/Approval 계약, 세 Provider 공용 contract·stream failure fixture, protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신 및 프로젝트별 음성 용어 사전 구현; production build·실제 pairing/Gateway/SSE/run/approval 기반 Playwright 모바일 회귀 통과, 새 glossary CI·실기기 음성 회귀 잔여 |
+| Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Codex exact-turn Steer와 durable idempotency, terminal operation 기반 명시적 Provider context Fork와 redacted provenance, Tool/Approval 계약, 세 Provider 공용 contract·stream failure fixture, protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신, 프로젝트별 음성 용어 사전 및 strict 설정 말하기→터치 검토 구현; production build·실제 pairing/Gateway/SSE/run/approval 기반 Playwright 모바일 회귀 통과, 새 설정 음성 Chromium CI·실기기 음성 회귀 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only systemd encrypted credential, 암호화 durable multi-turn, server-authored output/total token·비용 hard limit과 실제/추정 비용 accounting, model-grade 기반 read/coding tool gate, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구, 격리 npm 검증, 보호된 2-call smoke와 단계별 합성 프로젝트 grade harness 구현; 실제 모델 workflow 실행·현장 프로젝트 acceptance 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가장 비싼 승인 route 기준 사전 비용검사, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker, 보호된 synthetic smoke와 단계별 합성 프로젝트 grade harness 및 exact model/upstream grade enforcement 구현; 실제 model/upstream workflow 실행·현장 acceptance 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror와 schema 2 glossary, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, 최대 8대의 redacted read-only Multi-Companion Fleet와 명시적 PC 전환, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, 모바일 기본 Queue·명시적 Codex Steer, Provider 전환의 기본 빈 대화와 touch-reviewed bounded Fork, durable 기록, bounded retention 및 API 비용 정책 설정, touch-only 월 비용 확인, opt-in process-death native 알림·retained run 열기, API 30 token-gated notification Intent 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed 구현; 실기기 multi-PC/background/tray-tap deep-link/voice acceptance 잔여 |
@@ -292,6 +292,14 @@ Android 13 이상에는 고유 replacement를 recognition bias로도 전달하�
 후처리 결과가 기준이다. Android journal schema 1→2는 기존 conversation·queue row를 보존하며 늦은 다른
 프로젝트 load와 중복 save는 현재 사전을 덮어쓰지 않는다. browser IndexedDB version/store는 올리지 않아
 1.8.1 rollback reader를 유지한다. 실제 Android recognizer 품질은 실기기 gate에 남는다.
+
+별도 `설정 말하기`는 일반 prompt 받아쓰기와 분리된 one-shot mode다. `프로젝트`, `AI 연결`, `모델` 중
+한 가지 prefix와 현재 화면에 있는 정확한 이름 및 `선택/변경/전환` suffix만 받으며, 구두점·separator
+정규화 외의 fuzzy matching은 하지 않는다. unknown 또는 같은 alias가 여러 target에 해당하면 화면 선택을
+안내하고 아무 값도 바꾸지 않는다. 인식 종료는 현재→대상 review만 만들고, exact device·workspace·Provider·
+model owner, active run/Fork 상태와 최신 catalog가 그대로인지를 화면 터치 시 다시 확인한 뒤 적용한다.
+일반 음성 prompt와 직접 입력 중인 textarea는 이 흐름으로 수정되지 않는다. 실제 Android recognizer와
+좁은 화면의 touch flow는 실기기 gate에 남는다.
 
 ## 11. 구현 단계와 완료 조건
 
@@ -566,6 +574,9 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - 프로젝트 음성 용어의 strict schema·개수/길이·중복·단어 경계·non-chaining 보정, exact device/workspace
   scope의 AES-GCM ciphertext와 hash index, Android SQLite schema 1→2·API 33 bounded bias 및 320px
   추가/삭제·reload 복원을 검증 — Node/Chromium/Android CI 자동 검사 구현; 실제 음성 품질은 실기기 gate 잔여
+- 설정 음성의 단일 strict command, exact/unknown/ambiguous/oversize 결과, inert review와 stale owner/catalog
+  거부, Provider catalog 선조회 원자성, 기존 prompt 비변경 및 320px touch-only 적용을 검증 — Node 검사 구현,
+  production Chromium CI와 실제 Android 음성·터치 gate 잔여
 - Android API 30 managed-device instrumentation에서 Keystore config/identity, background encrypted cursor·
   변조 거부와 notification Intent token/bounds/extra scrub/one-time consume 검증 — CI 자동 검사 구현;
   실제 tray tap, background reconnect와 음성 확인은 실기기 gate 잔여
