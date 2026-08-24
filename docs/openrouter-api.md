@@ -21,10 +21,11 @@ export CODEX_POCKET_OPENROUTER_DEFAULT_MODEL=vendor/model-a
 
 ## 모델과 개인정보 경계
 
-Companion은 인증된 `/models/user` 결과와 `/models?zdr=true` 결과의 교집합에서만 허용 목록 모델을
-노출한다. catalog의 `supported_parameters`에 `tools`가 있는 모델만 공통 읽기 전용 ToolBroker를
-받고, 나머지는 chat-only로 제한한다. 이미지 입력도 catalog의 `image` modality가 확인된 모델에만
-보낸다.
+Companion은 인증된 `/models/user`, `/models?zdr=true`와 `/endpoints/zdr` 결과의 교집합에서만 허용
+목록 모델을 노출한다. ZDR endpoint가 보고한 exact `tag`만 모바일 upstream 선택지로 사용하며 임의로
+입력한 tag는 실행 직전에 최신 cache와 다시 대조한다. catalog의 `supported_parameters`에 `tools`가
+있는 모델만 공통 ToolBroker를 받고, 나머지는 chat-only로 제한한다. 이미지 입력도 catalog의
+`image` modality가 확인된 모델에만 보낸다.
 
 모든 inference 요청은 다음 profile을 강제한다.
 
@@ -39,8 +40,13 @@ Companion은 인증된 `/models/user` 결과와 `/models?zdr=true` 결과의 교
 }
 ```
 
-한 요청에는 모델 ID 하나만 넣고 upstream fallback을 허용하지 않는다. 응답이 보고한 실제 upstream
-Provider는 run 결과에 기록하지만, Provider 또는 모델 실패를 다른 유료 경로로 자동 우회하지 않는다.
+한 요청에는 모델 ID 하나만 넣는다. 기본은 OpenRouter가 ZDR endpoint 하나를 고르되 fallback을
+허용하지 않는다. 사용자가 모바일에서 1차 upstream을 고르면 `order`와 `only`를 같은 단일 tag로
+고정한다. 백업도 직접 고른 경우에만 두 tag를 같은 순서로 `order`와 `only`에 넣고
+`allow_fallbacks:true`를 사용한다. 따라서 선택하지 않은 Provider 또는 다른 모델로는 우회하지 않는다.
+선택은 offline queue와 Companion 암호화 operation에 보존하며, 같은 대화를 이어가는 중에는 바꿀 수
+없다. 응답이 보고한 실제 upstream, 요청한 순서, fallback 허용 여부와 strict privacy profile은 성공과
+실패 run 결과에 기록한다.
 OpenRouter의 ZDR와 data-collection 설정은 upstream 내용 보존을 제한하는 routing 조건이며 token,
 비용, latency 같은 OpenRouter metadata까지 없앤다는 뜻은 아니다.
 
@@ -51,11 +57,12 @@ OpenRouter의 ZDR와 data-collection 설정은 upstream 내용 보존을 제한�
 - `workspace_list`, `workspace_read`, `workspace_search`, `git_status`, `git_diff` 읽기 도구
 - strict JSON schema, `parallel_tool_calls: false`, 한 run 최대 8회 도구 호출
 - API key 확인과 user/ZDR 모델 교집합만 읽는 비과금 연결 테스트
+- ZDR endpoint 기반 1차 upstream 고정과 사용자가 승인한 단일 backup 범위
 - 원시 OpenRouter chunk와 도구 결과를 제거한 공통 ProviderEvent
 
-아직 대화 재개, 파일 변경, patch, 임의 명령, network 도구, Provider 선택과 fallback opt-in은
-비활성화되어 있다. 모델별 실제 저비용 contract/eval과 durable journal이 준비되기 전에는 이 범위를
-넓히지 않는다.
+대화 재개와 승인형 파일 변경·검증 도구는 공통 암호화 journal/ToolBroker 계약으로 활성화되어 있다.
+임의 명령, network 도구, 개인정보 조건 완화와 모델 fallback은 비활성화되어 있다. 모델별 실제 저비용
+contract/eval과 현장 검증 전에는 이 범위를 넓히지 않는다.
 
 공개 CI는 가짜 HTTP/SSE와 모델 catalog만 사용하며 실제 API key나 유료 inference를 사용하지 않는다.
 
@@ -65,5 +72,6 @@ OpenRouter의 ZDR와 data-collection 설정은 upstream 내용 보존을 제한�
 - [Tool calling](https://openrouter.ai/docs/guides/features/tool-calling)
 - [Models API와 supported parameters](https://openrouter.ai/docs/guides/overview/models)
 - [Provider routing과 ZDR](https://openrouter.ai/docs/guides/routing/provider-selection)
+- [ZDR endpoint 목록 API](https://openrouter.ai/docs/api/api-reference/endpoints/list-endpoints-zdr)
 - [Usage accounting](https://openrouter.ai/docs/cookbook/administration/usage-accounting)
 - [Data collection](https://openrouter.ai/docs/guides/privacy/data-collection)

@@ -579,6 +579,11 @@ select:focus, textarea:focus { border-color: rgba(157, 242, 213, 0.62); box-shad
 .model-bar label { min-width: 0; }
 .model-bar label > span { display: block; margin: 0 0 0.18rem 0.35rem; color: var(--muted); font-size: 0.58rem; font-weight: 750; letter-spacing: 0.05em; }
 .model-bar select { height: 2rem; padding-left: 0.55rem; border-radius: 0.58rem; font-size: 0.69rem; }
+.routing-bar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.38rem; min-width: 0; padding: 0 0.15rem 0.45rem; }
+.routing-bar label { min-width: 0; }
+.routing-bar label > span { display: block; margin: 0 0 0.18rem 0.35rem; color: var(--muted); font-size: 0.58rem; font-weight: 750; letter-spacing: 0.05em; }
+.routing-bar select { width: 100%; min-width: 0; height: 2rem; padding-left: 0.55rem; border-radius: 0.58rem; font-size: 0.66rem; }
+.routing-bar > small { grid-column: 1 / -1; min-width: 0; padding: 0 0.35rem; color: var(--muted); font-size: 0.58rem; line-height: 1.35; overflow-wrap: anywhere; }
 .attachment-tray { display: grid; gap: 0.4rem; max-height: 12rem; overflow-y: auto; padding: 0.2rem 0.2rem 0.45rem; }
 .attachment-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.55rem; min-height: 3.1rem; padding: 0.38rem 0.45rem; border: 1px solid var(--line); border-radius: 0.72rem; background: rgba(24, 36, 46, 0.76); }
 .attachment-card.analyzing, .attachment-card.queued { border-color: rgba(255, 203, 136, 0.34); }
@@ -639,6 +644,8 @@ textarea::placeholder { color: #6f8285; }
   .selectors { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); max-height: min(12rem, 36dvh); overflow-x: hidden; overflow-y: auto; padding-inline: 0.7rem; }
   .model-bar { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); }
   .model-bar > label:last-child { grid-column: 1 / -1; }
+  .routing-bar { grid-template-columns: minmax(0, 1fr); }
+  .routing-bar > small { grid-column: auto; }
   .transcript { padding-inline: 0.75rem; }
   .network-toggle { display: none; }
   .composer-bar { gap: 0.5rem; padding-left: 0.25rem; }

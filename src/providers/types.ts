@@ -2,6 +2,11 @@ export type ProviderId = string;
 
 export type ProviderRunStatus = "completed" | "interrupted" | "failed";
 
+export interface ProviderRoutingSelection {
+  upstreams: string[];
+  allowFallbacks: boolean;
+}
+
 export interface ProviderRunInput {
   conversationId?: string;
   cwd: string;
@@ -11,6 +16,7 @@ export interface ProviderRunInput {
   model?: string;
   effort?: string;
   timeoutMs?: number;
+  routing?: ProviderRoutingSelection;
   resumeState?: ProviderResumeState;
 }
 
@@ -85,6 +91,7 @@ export interface ProviderModel {
   isDefault: boolean;
   defaultEffort: string;
   efforts: Array<{ id: string; description: string }>;
+  routingOptions?: Array<{ id: string; displayName: string }>;
 }
 
 export interface ProviderAccount {

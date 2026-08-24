@@ -113,6 +113,11 @@ function openRouterFetch(chatResponse: () => Response): typeof fetch {
     const url = String(input);
     if (url.includes("/models/user")) return jsonResponse({ data: [rawModel()] });
     if (url.includes("/models?zdr=true")) return jsonResponse({ data: [rawModel()] });
+    if (url.includes("/endpoints/zdr")) return jsonResponse({ data: [{
+      model_id: "vendor/failure-fixture",
+      provider_name: "Failure Fixture",
+      tag: "failure-fixture",
+    }] });
     if (url.endsWith("/chat/completions")) return chatResponse();
     if (url.endsWith("/key")) return jsonResponse({ data: {} });
     return new Response(null, { status: 404 });
@@ -149,6 +154,13 @@ function assertFailureContract(completion: ProviderRunCompletion, events: readon
   assert.equal(events[0]?.kind, "run.started");
   assert.equal(events.at(-1)?.kind, "run.failed");
   assert.equal(events.filter((event) => event.kind === "run.failed").length, 1);
+  if (completion.result.providerId === "openrouter") {
+    assert.deepEqual(completion.result.routing, {
+      profile: "strict-zdr",
+      requestedUpstreams: [],
+      allowFallbacks: false,
+    });
+  }
   assert.doesNotMatch(JSON.stringify({ completion, events }), new RegExp(`${secret}|Authorization|Bearer`));
 }
 

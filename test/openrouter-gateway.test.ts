@@ -73,6 +73,34 @@ test("gateway exposes OpenRouter only through safe common events and strict rout
   assert.equal(connection.test.modelCount, 1);
   assert.equal(apiClient.chatCalls, 0);
 
+  const duplicateRouting = await fetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json", Origin: "http://localhost" },
+    body: JSON.stringify({
+      prompt: "invalid duplicate route",
+      cwd,
+      provider: "openrouter",
+      accountId: "api-default",
+      model: "vendor/gateway-tool",
+      routing: { upstreams: ["strict-primary", "strict-primary"], allowFallbacks: true },
+    }),
+  });
+  assert.equal(duplicateRouting.status, 400);
+  const untrustedRouting = await fetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json", Origin: "http://localhost" },
+    body: JSON.stringify({
+      prompt: "invalid untrusted route",
+      cwd,
+      provider: "openrouter",
+      accountId: "api-default",
+      model: "vendor/gateway-tool",
+      routing: { upstreams: ["untrusted-provider"], allowFallbacks: false },
+    }),
+  });
+  assert.equal(untrustedRouting.status, 409);
+  assert.equal(apiClient.chatCalls, 0);
+
   const streamAbort = new AbortController();
   const stream = await fetch(`${base}/api/events`, { headers, signal: streamAbort.signal });
   const reader = stream.body!.getReader();
@@ -88,7 +116,12 @@ test("gateway exposes OpenRouter only through safe common events and strict rout
       provider: "openrouter",
       accountId: "api-default",
       model: "vendor/gateway-tool",
+      routing: { upstreams: ["strict-primary", "strict-backup"], allowFallbacks: true },
     }),
+  });
+  assert.deepEqual(started.operation.routing, {
+    upstreams: ["strict-primary", "strict-backup"],
+    allowFallbacks: true,
   });
   const frames = await readUntil(reader, (value) => value.includes(`\"id\":\"${started.operation.id}\"`)
     && value.includes('"action":"completed"'));
@@ -109,12 +142,31 @@ test("gateway exposes OpenRouter only through safe common events and strict rout
   assert.doesNotMatch(frames, /resumeState/);
   assert.equal(apiClient.requests.length, 2);
   assert.deepEqual(apiClient.requests[0]?.provider, {
-    allow_fallbacks: false,
+    allow_fallbacks: true,
     require_parameters: true,
     data_collection: "deny",
     zdr: true,
+    order: ["strict-primary", "strict-backup"],
+    only: ["strict-primary", "strict-backup"],
   });
   assert.match(JSON.stringify(apiClient.requests[1]?.messages), /function_call_output|hiddenSensitivePaths/);
+
+  const changedConversationRouting = await fetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json", Origin: "http://localhost" },
+    body: JSON.stringify({
+      requestId: "openrouter-gateway-changed-routing",
+      prompt: "Change the upstream mid-conversation",
+      cwd,
+      provider: "openrouter",
+      accountId: "api-default",
+      model: "vendor/gateway-tool",
+      conversationId: operation.conversationId,
+      routing: { upstreams: ["strict-backup"], allowFallbacks: false },
+    }),
+  });
+  assert.equal(changedConversationRouting.status, 409);
+  assert.equal(apiClient.requests.length, 2);
 
   const continued = await jsonFetch(`${base}/api/runs`, {
     method: "POST",
@@ -130,12 +182,14 @@ test("gateway exposes OpenRouter only through safe common events and strict rout
     }),
   });
   assert.equal(continued.operation.conversationId, operation.conversationId);
+  assert.deepEqual(continued.operation.routing, started.operation.routing);
   const continuedOperation = await waitForOperation(base, headers, continued.operation.id, "completed");
   assert.equal(continuedOperation.resumable, true);
   const replayedMessages = JSON.stringify(apiClient.requests[2]?.messages);
   assert.match(replayedMessages, /Inspect Git status/);
   assert.match(replayedMessages, /OpenRouter gateway complete/);
   assert.match(replayedMessages, /Summarize that result/);
+  assert.deepEqual(apiClient.requests[2]?.provider, apiClient.requests[0]?.provider);
   const listed = await jsonFetch(`${base}/api/runs`, { headers });
   const conversationRuns = listed.operations.filter((item: any) => item.conversationId === operation.conversationId);
   assert.equal(conversationRuns.filter((item: any) => item.resumable).length, 1);
@@ -157,6 +211,10 @@ class GatewayOpenRouterClient implements OpenRouterClient {
       name: "Gateway Tool Model",
       supportedParameters: ["tools"],
       inputModalities: ["text"],
+      upstreams: [
+        { id: "strict-primary", name: "Strict Primary" },
+        { id: "strict-backup", name: "Strict Backup" },
+      ],
     }];
   }
 

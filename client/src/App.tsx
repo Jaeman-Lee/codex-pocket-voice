@@ -119,6 +119,7 @@ import type {
   ProviderConnectionTest,
   ProviderLoginSession,
   ProviderOption,
+  ProviderRoutingSelection,
   ProviderResponse,
   QueuedPrompt,
   RunResult,
@@ -201,6 +202,8 @@ export function App() {
   const [provider, setProvider] = useState<ProviderId>("codex");
   const [accountId, setAccountId] = useState("cli-default");
   const [model, setModel] = useState("");
+  const [routingPrimary, setRoutingPrimary] = useState("");
+  const [routingBackup, setRoutingBackup] = useState("");
   const [effort, setEffort] = useState("");
   const [voiceInput, dispatchVoiceInput] = useReducer(reduceVoiceInput, initialVoiceInputState);
   const { dictating, handsFree, supported: speechSupported } = voiceInput;
@@ -725,6 +728,7 @@ export function App() {
         ? storedEffort
         : "";
       setEffort(selectedEffort);
+      restoreRoutingSelection(selectedProviderId, selectedModelInfo);
       setNewProjectParent((current) => workspaceData.creationLocations.some((item) => item.path === current)
         ? current
         : (workspaceData.creationLocations[0]?.path ?? ""));
@@ -1159,6 +1163,12 @@ export function App() {
         usage.totalTokens == null ? null : `합계 ${usage.totalTokens.toLocaleString()}`,
         usage.costCredits == null ? null : `비용 ${usage.costCredits.toFixed(6)} credits`,
       ].filter(Boolean).join(" · "));
+    }
+    if (result.routing) {
+      const requested = result.routing.requestedUpstreams.length > 0
+        ? result.routing.requestedUpstreams.join(" → ")
+        : "OpenRouter 자동 선택";
+      lines.push(`라우팅 · strict ZDR · ${requested} · ${result.routing.allowFallbacks ? "승인 목록 내 fallback" : "fallback 없음"}${result.routing.actualProvider ? ` · 실제 ${result.routing.actualProvider}` : ""}`);
     }
     if (latestDiff) lines.push(`\n--- diff ---\n${latestDiff}`);
     return lines.join("\n");
@@ -1878,6 +1888,7 @@ export function App() {
       effort,
       provider,
       accountId,
+      routing: selectedRouting(provider, routingPrimary, routingBackup),
       attachments: [...attachments],
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
@@ -1939,6 +1950,7 @@ export function App() {
           effort: queued.effort || undefined,
           provider: queued.provider,
           accountId: queued.accountId,
+          routing: queued.routing,
           attachments: queued.attachments.map((item) => item.id),
         },
       });
@@ -2240,6 +2252,8 @@ export function App() {
     setAccountId("cli-default");
     setModel("");
     setEffort("");
+    setRoutingPrimary("");
+    setRoutingBackup("");
     setMessages([]);
     messagesRef.current = [];
     resetActiveRun(nextDevice);
@@ -2272,7 +2286,42 @@ export function App() {
     const info = models.find((item) => item.id === nextModel)
       ?? models.find((item) => item.isDefault)
       ?? models[0];
+    restoreRoutingSelection(providerRef.current, info);
     if (effort && !info?.efforts.some((item) => item.id === effort)) selectEffort("");
+  }
+
+  function restoreRoutingSelection(nextProvider: ProviderId, info: ModelOption | undefined) {
+    if (nextProvider !== "openrouter" || !info?.routingOptions?.length) {
+      setRoutingPrimary("");
+      setRoutingBackup("");
+      return;
+    }
+    const allowed = new Set(info.routingOptions.map((option) => option.id));
+    const storedPrimary = localStorage.getItem(routingStorageKey(deviceRef.current, info.id, "primary")) ?? "";
+    const primary = allowed.has(storedPrimary) ? storedPrimary : "";
+    const storedBackup = localStorage.getItem(routingStorageKey(deviceRef.current, info.id, "backup")) ?? "";
+    const backup = primary && storedBackup !== primary && allowed.has(storedBackup) ? storedBackup : "";
+    setRoutingPrimary(primary);
+    setRoutingBackup(backup);
+  }
+
+  function selectRoutingPrimary(nextPrimary: string) {
+    const info = activeModel(models, model);
+    if (!info?.routingOptions?.some((option) => option.id === nextPrimary)) nextPrimary = "";
+    setRoutingPrimary(nextPrimary);
+    if (info) persistRoutingSlot(deviceRef.current, info.id, "primary", nextPrimary);
+    if (!nextPrimary || nextPrimary === routingBackup) {
+      setRoutingBackup("");
+      if (info) persistRoutingSlot(deviceRef.current, info.id, "backup", "");
+    }
+  }
+
+  function selectRoutingBackup(nextBackup: string) {
+    const info = activeModel(models, model);
+    if (!routingPrimary || nextBackup === routingPrimary
+        || !info?.routingOptions?.some((option) => option.id === nextBackup)) nextBackup = "";
+    setRoutingBackup(nextBackup);
+    if (info) persistRoutingSlot(deviceRef.current, info.id, "backup", nextBackup);
   }
 
   async function selectProvider(nextProvider: ProviderId) {
@@ -2299,6 +2348,7 @@ export function App() {
     setModels(modelData.models);
     setModel("");
     setEffort("");
+    restoreRoutingSelection(nextProvider, defaultModel(modelData.models));
     setThreadId("");
     threadRef.current = "";
     setMessages([]);
@@ -3216,6 +3266,8 @@ export function App() {
     }
     setModel(nextOperation.model ?? "");
     setEffort(nextOperation.effort ?? "");
+    setRoutingPrimary(nextOperation.routing?.upstreams[0] ?? "");
+    setRoutingBackup(nextOperation.routing?.upstreams[1] ?? "");
     setNetworkAccess(nextOperation.networkAccess === true);
     setWorkspace(nextOperation.cwd);
     workspaceRef.current = nextOperation.cwd;
@@ -4087,7 +4139,7 @@ export function App() {
         )}
         <div className={`composer${handsFree ? " hands-free" : ""}`}>
           {models.length > 0 && (
-            <div className="model-bar" aria-label="Codex 모델 설정">
+            <div className="model-bar" aria-label="AI 모델 설정">
               <label>
                 <span>{tr("account")}</span>
                 <select value={accountId} aria-label="AI 계정 프로필" onChange={(event) => selectAccount(event.target.value)}>
@@ -4122,6 +4174,39 @@ export function App() {
                   ))}
                 </select>
               </label>
+            </div>
+          )}
+          {provider === "openrouter" && (activeModel(models, model)?.routingOptions?.length ?? 0) > 0 && (
+            <div className="routing-bar" aria-label="OpenRouter strict ZDR upstream 설정">
+              <label>
+                <span>UPSTREAM</span>
+                <select
+                  value={routingPrimary}
+                  disabled={operation !== null || activeRun.requestId !== null}
+                  aria-label="OpenRouter 1차 upstream"
+                  onChange={(event) => selectRoutingPrimary(event.target.value)}
+                >
+                  <option value="">자동 · ZDR · fallback 없음</option>
+                  {(activeModel(models, model)?.routingOptions ?? []).map((item) => (
+                    <option key={item.id} value={item.id}>{item.displayName} · {item.id}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>승인한 백업</span>
+                <select
+                  value={routingBackup}
+                  disabled={!routingPrimary || operation !== null || activeRun.requestId !== null}
+                  aria-label="OpenRouter 승인한 fallback upstream"
+                  onChange={(event) => selectRoutingBackup(event.target.value)}
+                >
+                  <option value="">없음 · 1차 고정</option>
+                  {(activeModel(models, model)?.routingOptions ?? [])
+                    .filter((item) => item.id !== routingPrimary)
+                    .map((item) => <option key={item.id} value={item.id}>{item.displayName} · {item.id}</option>)}
+                </select>
+              </label>
+              <small>ZDR·데이터 비수집을 강제하며, 백업을 골라도 승인한 두 upstream 밖으로는 우회하지 않습니다.</small>
             </div>
           )}
           {attachments.length > 0 && (
@@ -4435,6 +4520,28 @@ function loginStatusLabel(status: ProviderLoginSession["status"]): string {
 
 function storageKey(kind: "workspace" | "thread" | "model" | "effort" | "provider" | "account", device: DeviceId): string {
   return `codex-pocket-${kind}-${device}`;
+}
+
+function routingStorageKey(device: DeviceId, model: string, slot: "primary" | "backup"): string {
+  return `codex-pocket-openrouter-routing-${slot}-${device}-${encodeURIComponent(model)}`;
+}
+
+function persistRoutingSlot(device: DeviceId, model: string, slot: "primary" | "backup", value: string): void {
+  const key = routingStorageKey(device, model, slot);
+  if (value) localStorage.setItem(key, value);
+  else localStorage.removeItem(key);
+}
+
+function selectedRouting(
+  provider: ProviderId,
+  primary: string,
+  backup: string,
+): ProviderRoutingSelection | undefined {
+  if (provider !== "openrouter" || !primary) return undefined;
+  return {
+    upstreams: backup ? [primary, backup] : [primary],
+    allowFallbacks: Boolean(backup),
+  };
 }
 
 function activeProvider(providers: ProviderOption[], provider: ProviderId): ProviderOption | undefined {

@@ -85,6 +85,12 @@ export interface ModelOption {
   isDefault: boolean;
   defaultEffort: string;
   efforts: Array<{ id: string; description: string }>;
+  routingOptions?: Array<{ id: string; displayName: string }>;
+}
+
+export interface ProviderRoutingSelection {
+  upstreams: string[];
+  allowFallbacks: boolean;
 }
 
 export interface ModelResponse {
@@ -199,6 +205,13 @@ export interface RunResult {
     totalTokens?: number;
     costCredits?: number;
   };
+  routedProvider?: string;
+  routing?: {
+    profile: "strict-zdr";
+    requestedUpstreams: string[];
+    allowFallbacks: boolean;
+    actualProvider?: string;
+  };
 }
 
 export interface Operation {
@@ -214,6 +227,7 @@ export interface Operation {
   model?: string;
   effort?: string;
   networkAccess?: boolean;
+  routing?: ProviderRoutingSelection;
   workspaceIdentity?: WorkspaceIdentity;
   status: OperationStatus;
   startedAt?: string;
@@ -314,6 +328,7 @@ export interface QueuedPrompt {
   effort: string;
   provider: ProviderId;
   accountId: string;
+  routing?: ProviderRoutingSelection;
   attachments: PendingAttachment[];
   displayed?: boolean;
   createdAt?: string;

@@ -531,6 +531,7 @@ function OperationCard({
   }, [editingName, operation.goalName]);
   const usage = operation.result?.usage;
   const model = operation.model || stringResult(operation.result, "model") || "기본 모델";
+  const routedProvider = operation.result?.routing?.actualProvider ?? operation.result?.routedProvider;
   const status = waiting ? "waiting" : operation.status;
   const archiveBlocked = waiting || operation.status === "running"
     || (operation.status === "unknown" && !operation.acknowledgedAt);
@@ -548,6 +549,8 @@ function OperationCard({
       <div className="operation-facts">
         <span>{operation.providerId ?? "codex"}</span>
         <span>{model}</span>
+        {routedProvider && <span>실제 {routedProvider}</span>}
+        {operation.routing?.allowFallbacks && <span>승인 fallback {operation.routing.upstreams.length}개</span>}
         <span>{workspaceIdentityLabel(identity)}</span>
         {usage?.totalTokens !== undefined && <span>{usage.totalTokens.toLocaleString()} tokens</span>}
         {usage?.costCredits !== undefined && <span>{usage.costCredits.toFixed(6)} credits</span>}

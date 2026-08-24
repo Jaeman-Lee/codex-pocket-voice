@@ -4,6 +4,7 @@ import type {
   ProviderResumeState,
   ProviderRun,
   ProviderRunInput,
+  ProviderRoutingSelection,
   ProviderRunStatus,
 } from "./providers/types.js";
 import { ProviderRunEventGate } from "./provider-event-contract.js";
@@ -27,6 +28,7 @@ export interface RunOperation {
   model?: string;
   effort?: string;
   networkAccess?: boolean;
+  routing?: ProviderRoutingSelection;
   workspaceIdentity?: WorkspaceIdentity;
   status: RunOperationStatus;
   startedAt: string;
@@ -387,6 +389,7 @@ export class RunCoordinator {
         model: providerInput.model,
         effort: providerInput.effort,
         networkAccess: providerInput.networkAccess === true,
+        ...(providerInput.routing ? { routing: structuredClone(providerInput.routing) } : {}),
         ...(command.workspaceIdentity ? { workspaceIdentity: structuredClone(command.workspaceIdentity) } : {}),
         status: "running",
         startedAt: new Date(this.now()).toISOString(),
@@ -455,10 +458,18 @@ export class RunCoordinator {
     if (command.accountId && latest.accountId && command.accountId !== latest.accountId) {
       throw new RunCoordinatorError(409, "기존 API Provider 대화의 계정은 중간에 변경할 수 없습니다.");
     }
+    if (command.input.routing && latest.routing
+        && JSON.stringify(command.input.routing) !== JSON.stringify(latest.routing)) {
+      throw new RunCoordinatorError(409, "기존 API Provider 대화의 upstream routing은 중간에 변경할 수 없습니다.");
+    }
+    if (command.input.routing && !latest.routing) {
+      throw new RunCoordinatorError(409, "기존 API Provider 대화에 새 upstream routing을 중간에 추가할 수 없습니다.");
+    }
     return {
       input: {
         ...command.input,
         model: state.model,
+        ...(latest.routing ? { routing: structuredClone(latest.routing) } : {}),
         resumeState: structuredClone(state),
       },
       accountId: command.accountId ?? latest.accountId,

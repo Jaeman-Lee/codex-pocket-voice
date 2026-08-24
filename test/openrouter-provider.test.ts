@@ -331,6 +331,61 @@ test("OpenRouter pauses a change tool until touch approval and reports the resul
   assert.match(JSON.stringify(client.requests[1]?.messages), /completed|changed/);
 });
 
+test("OpenRouter locks routing to the user-approved strict ZDR upstream order", async () => {
+  const client = new FakeOpenRouterClient([[
+    chunk({
+      provider: "Provider B",
+      choices: [{ delta: { content: "routed" }, finish_reason: "stop" }],
+      usage: usage(2, 1, 0, 0.001),
+    }),
+  ]], models());
+  const adapter = new OpenRouterProviderAdapter({
+    credentials: staticCredentials(secret),
+    clientFactory: () => client,
+    modelAllowlist: ["vendor/tool-model"],
+    defaultModel: "vendor/tool-model",
+  });
+  const run = await adapter.startRun({
+    cwd: process.cwd(),
+    prompt: "route safely",
+    model: "vendor/tool-model",
+    routing: { upstreams: ["provider-a", "provider-b"], allowFallbacks: true },
+  });
+  const completion = await run.completion;
+  assert.deepEqual(client.requests[0]?.provider, {
+    allow_fallbacks: true,
+    require_parameters: true,
+    data_collection: "deny",
+    zdr: true,
+    order: ["provider-a", "provider-b"],
+    only: ["provider-a", "provider-b"],
+  });
+  assert.deepEqual(completion.result.routing, {
+    profile: "strict-zdr",
+    requestedUpstreams: ["provider-a", "provider-b"],
+    allowFallbacks: true,
+    actualProvider: "Provider B",
+  });
+  await assert.rejects(
+    adapter.startRun({
+      cwd: process.cwd(),
+      prompt: "untrusted route",
+      model: "vendor/tool-model",
+      routing: { upstreams: ["untrusted-provider"], allowFallbacks: false },
+    }),
+    /strict ZDR 목록/,
+  );
+  await assert.rejects(
+    adapter.startRun({
+      cwd: process.cwd(),
+      prompt: "invalid fallback",
+      model: "vendor/tool-model",
+      routing: { upstreams: ["provider-a"], allowFallbacks: true },
+    }),
+    /두 개 이상/,
+  );
+});
+
 test("OpenRouter rejects models outside the allowlist or current strict ZDR catalog", async () => {
   const client = new FakeOpenRouterClient([], models());
   const adapter = new OpenRouterProviderAdapter({
@@ -441,6 +496,11 @@ test("OpenRouter HTTP client intersects user models with ZDR and parses SSE with
       rawModel("vendor/non-zdr", [], ["text"]),
     ] });
     if (url.includes("/models?zdr=true")) return jsonResponse({ data: [rawModel("vendor/tool-model", ["tools"], ["text"])] });
+    if (url.includes("/endpoints/zdr")) return jsonResponse({ data: [{
+      model_id: "vendor/tool-model",
+      provider_name: "Strict Provider",
+      tag: "strict-provider",
+    }] });
     if (url.endsWith("/chat/completions")) {
       const stream = [
         `data: ${JSON.stringify({ id: "generation-http", choices: [{ delta: { content: "hello" }, finish_reason: null }] })}\n\n`,
@@ -455,6 +515,7 @@ test("OpenRouter HTTP client intersects user models with ZDR and parses SSE with
   assert.equal((await client.testKey()).limitRemaining, 8);
   const listed = await client.listModels();
   assert.deepEqual(listed.map((model) => model.id), ["vendor/tool-model"]);
+  assert.deepEqual(listed[0]?.upstreams, [{ id: "strict-provider", name: "Strict Provider" }]);
   const request: OpenRouterChatRequest = {
     model: "vendor/tool-model",
     messages: [{ role: "user", content: "hello" }],
@@ -545,12 +606,17 @@ function models(): OpenRouterModelRecord[] {
       contextLength: 100_000,
       supportedParameters: ["tools", "tool_choice"],
       inputModalities: ["text", "image"],
+      upstreams: [
+        { id: "provider-a", name: "Provider A" },
+        { id: "provider-b", name: "Provider B" },
+      ],
     },
     {
       id: "vendor/chat-model",
       name: "Chat Model",
       supportedParameters: [],
       inputModalities: ["text"],
+      upstreams: [{ id: "provider-a", name: "Provider A" }],
     },
   ];
 }

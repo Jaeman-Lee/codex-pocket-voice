@@ -16,14 +16,14 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | V2 development component | Version / revision | State |
 | --- | --- | --- |
 | Source version | `2.0.0` / Android `versionCode 20000` | development only; not field installed |
-| Target branch | `feature/v2-control-plane` | common Provider contract/failure suite, approved crash-recoverable text change tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, process-death notifications, connection/run/journal/voice/media state machines, live branch/worktree identity, staged PocketLink rotations and reviewed same-LAN discovery implemented; P2P/relay, mobile field acceptance and model eval next |
+| Target branch | `feature/v2-control-plane` | common Provider contract/failure suite, user-approved strict-ZDR OpenRouter routing, approved crash-recoverable text change tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, process-death notifications, connection/run/journal/voice/media state machines, live branch/worktree identity, staged PocketLink rotations and reviewed same-LAN discovery implemented; P2P/relay, mobile field acceptance and model eval next |
 | Gateway protocol | maximum 3, minimum 2 | v1 rollout compatibility retained |
 | Codex app-server schema | `codex-cli 0.149.0` | generated bindings and no-model real integration verified |
 | Current v1 APK | 1.8.2 candidate | signed APK/checksum/SBOM prepared from hotfix PR #4; install not performed |
 | Staged v1 hotfix APK | 1.8.3 candidate | writer-release PR #5 checks and signed artifact verified; kept separate and not installed |
 | Existing rollback APK | 1.8.1 | user-validated APK and running Companion preserved |
 | OpenAI API milestone | official SDK 6.49.0 | encrypted bounded `store:false` multi-turn replay and fake tool-loop/SSE/Models tests; no API key configured and no paid request sent |
-| OpenRouter milestone | Chat Completions + Models HTTP API | encrypted bounded multi-turn replay and fake strict-routing/tool-loop/SSE tests; no API key configured and no paid request sent |
+| OpenRouter milestone | Chat Completions + user/ZDR model and endpoint APIs | encrypted bounded multi-turn replay, exact upstream lock/approved backup allowlist and fake routing/tool-loop/SSE tests; no API key configured and no paid request sent |
 | Provider runtime contract | exact run ownership + ordered single-terminal events | Codex/OpenAI/OpenRouter shared success/partial-failure/cancel/timeout suite and fake 401/403/429/5xx/malformed SSE fixtures passing |
 | Android journal milestone | app-owned SQLite schema 1 | encrypted snapshot migration and rollback mirror implemented; CI-only, no device migration performed |
 | Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, HMAC-authenticated bounded user retention, workspace JSON export and protected delete implemented; no field restart performed |
@@ -40,6 +40,14 @@ failure 차이를 수정하는 internal compatibility `patch`다. 아직 전달�
 CI-only v2 artifact를 대체한다. Gateway protocol과 journal schema는 바꾸지 않는다. 공개 검사는 fake
 runtime/HTTP/SSE만 사용하며 실제 API key·유료 inference·APK 설치·전달·Companion 재시작을 수행하지
 않는다. current v1 후보 1.8.2, 별도 staged 1.8.3과 검증된 rollback 1.8.1을 변경하지 않는다.
+
+OpenRouter selectable routing checkpoint decision: ZDR endpoint 기반 upstream lock과 사용자가 승인한 backup
+선택은 새 user-visible v2 기능이므로 `feature`로 분류한다. 이미 진행 중인 incompatible v2 범위 안의
+변경이어서 SemVer `2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전
+CI-only v2 artifact를 대체한다. Gateway protocol과 journal schema는 그대로 두고 encrypted operation
+payload에 additive routing field만 기록한다. 실제 API key·유료 inference·APK 설치·전달·Companion
+재시작은 수행하지 않는다. current v1 후보 1.8.2, 별도 staged 1.8.3과 검증된 rollback 1.8.1은 변경하거나
+삭제하지 않는다.
 
 App run/journal state checkpoint decision: App 내부 경합과 복원 데이터 유실을 막는 v2 internal
 compatibility 조정이므로 기존 `breaking`/`2.0.0`, Android `versionCode 20000`, 대상

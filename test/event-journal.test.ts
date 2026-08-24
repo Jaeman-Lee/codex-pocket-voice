@@ -35,7 +35,11 @@ test("encrypted event journal restores running work as unknown and preserves ide
     providerId: "fake",
     accountId: "account-a",
     prompt: "super-private-prompt",
-    input: { cwd: "/private/workspace", prompt: "super-private-prompt" },
+    input: {
+      cwd: "/private/workspace",
+      prompt: "super-private-prompt",
+      routing: { upstreams: ["strict-primary", "strict-backup"], allowFallbacks: true },
+    },
     workspaceIdentity: {
       kind: "git" as const,
       branch: "feature/private-identity",
@@ -78,6 +82,7 @@ test("encrypted event journal restores running work as unknown and preserves ide
   const recovered = restoredCoordinator.get(running.id);
   assert.equal(recovered?.status, "unknown");
   assert.equal(recovered?.workspaceIdentity?.branch, "feature/private-identity");
+  assert.deepEqual(recovered?.routing, { upstreams: ["strict-primary", "strict-backup"], allowFallbacks: true });
   assert.match(recovered?.error ?? "", /최종 상태/);
   assert.equal((await restoredCoordinator.start(command)).id, running.id);
   assert.equal(restoredProviders.starts.length, 0);

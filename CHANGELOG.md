@@ -57,9 +57,14 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 - OpenRouter의 server-only key와 `0600` key 파일, user/ZDR 모델 catalog 교집합, 명시적 allowlist,
   Chat Completions SSE와 usage·credit 비용 기록을 추가했다. 도구 capability가 확인된 모델만
   공통 ToolBroker를 받고 나머지는 chat-only로 제한한다.
-- OpenRouter 요청은 모델 하나, `allow_fallbacks:false`, `require_parameters:true`,
-  `data_collection:deny`, `zdr:true`로 고정한다. 실제 upstream은 결과에 기록하지만 다른 모델이나
-  Provider로 자동 우회하지 않으며, 공개 검사는 가짜 HTTP/SSE만 사용한다.
+- OpenRouter 요청은 모델 하나와 기본 `allow_fallbacks:false`, `require_parameters:true`,
+  `data_collection:deny`, `zdr:true` profile로 고정한다. 실제 upstream은 결과에 기록하고 다른 모델로는
+  자동 우회하지 않으며, 공개 검사는 가짜 HTTP/SSE만 사용한다.
+- OpenRouter의 인증된 ZDR endpoint catalog에서 exact upstream tag를 모바일에 노출한다. 기본 자동
+  routing은 fallback 없이 유지하고, 사용자가 1차와 backup을 직접 고른 경우에만 `order`와 `only`를
+  같은 승인 목록으로 고정해 그 안의 fallback을 허용한다. 선택은 offline queue와 암호화 operation에
+  보존하고 같은 대화 중 변경을 거부하며, strict profile·요청 순서·실제 upstream을 성공/실패 결과와
+  모바일 대시보드에 표시한다.
 - Android의 암호화된 `WorkJournal` conversation·queue snapshot을 앱 전용 SQLite로 옮기는
   `PocketJournal` 플러그인을 추가했다. SQLite는 AES-GCM envelope만 받고 원래 workspace/device
   식별자 대신 domain-separated SHA-256 index를 바인딩하며 payload 크기를 제한한다.

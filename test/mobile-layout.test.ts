@@ -13,6 +13,17 @@ test("AI connection center stays inside the mobile viewport and scrolls internal
   assert.match(sheet, /overflow-y:\s*auto/);
 });
 
+test("OpenRouter routing controls collapse to one bounded column on phones", async () => {
+  const css = await readFile(new URL("../client/src/styles.css", import.meta.url), "utf8");
+  const routing = css.match(/\.routing-bar \{([^}]+)\}/)?.[1] ?? "";
+  const select = css.match(/\.routing-bar select \{([^}]+)\}/)?.[1] ?? "";
+  assert.match(routing, /minmax\(0,\s*1fr\)/);
+  assert.match(routing, /min-width:\s*0/);
+  assert.match(select, /width:\s*100%/);
+  assert.match(select, /min-width:\s*0/);
+  assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.routing-bar \{[^}]*minmax\(0,\s*1fr\)/);
+});
+
 test("operations dashboard and approval details stay inside the mobile viewport", async () => {
   const css = await readFile(new URL("../client/src/styles.css", import.meta.url), "utf8");
   const overlay = css.match(/\.operations-dashboard \{([^}]+)\}/)?.[1] ?? "";

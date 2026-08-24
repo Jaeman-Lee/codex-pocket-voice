@@ -718,6 +718,7 @@ function assertStoredOperation(value: StoredOperationPayload, expectedId: string
     || (operation.model !== undefined && !boundedString(operation.model, 200))
     || (operation.effort !== undefined && !boundedString(operation.effort, 40))
     || (operation.networkAccess !== undefined && typeof operation.networkAccess !== "boolean")
+    || !validRoutingSelection(operation.routing)
     || !validWorkspaceIdentity(operation.workspaceIdentity)
     || !validStatus
     || !boundedTimestamp(operation.startedAt)
@@ -738,6 +739,19 @@ function assertStoredOperation(value: StoredOperationPayload, expectedId: string
     || !/^[a-f0-9]{64}$/.test(value.idempotency.fingerprint)
     || value.idempotency.operationId !== expectedId
   )) throw new Error("Encrypted event journal idempotency record is invalid");
+}
+
+function validRoutingSelection(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const routing = value as Record<string, unknown>;
+  if (!Array.isArray(routing.upstreams) || routing.upstreams.length === 0 || routing.upstreams.length > 4
+      || typeof routing.allowFallbacks !== "boolean") return false;
+  const upstreams = routing.upstreams;
+  if (!upstreams.every((item) => typeof item === "string" && item.length <= 120
+      && /^[a-z0-9][a-z0-9._/-]*$/.test(item))) return false;
+  if (new Set(upstreams).size !== upstreams.length) return false;
+  return routing.allowFallbacks ? upstreams.length >= 2 : upstreams.length === 1;
 }
 
 function validResumeState(value: unknown, providerId: unknown, model: unknown): boolean {

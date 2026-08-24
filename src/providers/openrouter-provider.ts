@@ -18,6 +18,7 @@ import {
   type ProviderRun,
   type ProviderRunCompletion,
   type ProviderRunInput,
+  type ProviderRoutingSelection,
   type ProviderResumeState,
   type ProviderRuntime,
   type ProviderUsage,
@@ -47,6 +48,12 @@ export interface OpenRouterModelRecord {
   contextLength?: number;
   supportedParameters: readonly string[];
   inputModalities: readonly string[];
+  upstreams?: readonly OpenRouterUpstreamRecord[];
+}
+
+export interface OpenRouterUpstreamRecord {
+  id: string;
+  name: string;
 }
 
 export interface OpenRouterKeyInfo {
@@ -103,10 +110,12 @@ export interface OpenRouterChatRequest {
   messages: OpenRouterChatMessage[];
   stream: true;
   provider: {
-    allow_fallbacks: false;
+    allow_fallbacks: boolean;
     require_parameters: true;
     data_collection: "deny";
     zdr: true;
+    order?: string[];
+    only?: string[];
   };
   tools?: Array<{
     type: "function";
@@ -272,6 +281,12 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
         isDefault: this.defaultModel ? model.id === this.defaultModel : index === 0,
         defaultEffort: "",
         efforts: [],
+        ...(model.upstreams?.length ? {
+          routingOptions: model.upstreams.map((upstream) => ({
+            id: upstream.id,
+            displayName: upstream.name,
+          })),
+        } : {}),
       };
     });
   }
@@ -308,6 +323,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     if (!model) {
       throw new ProviderError(409, "선택한 모델은 현재 계정의 strict ZDR routing에서 사용할 수 없습니다.");
     }
+    const routing = validateOpenRouterRouting(input.routing, model.upstreams ?? []);
     const toolEnabled = (this.hasReadTools || this.hasApprovalTools) && supportsTools(model);
     const currentMessages = await buildInitialMessages(
       input.prompt,
@@ -335,6 +351,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
           messages,
           historyTruncated: input.resumeState?.truncated === true,
           toolEnabled,
+          routing,
           timeoutMs: input.timeoutMs,
           active,
         }).then(resolve, reject);
@@ -364,6 +381,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     messages: OpenRouterChatMessage[];
     historyTruncated: boolean;
     toolEnabled: boolean;
+    routing?: ProviderRoutingSelection;
     timeoutMs?: number;
     active: ActiveOpenRouterRun;
   }): Promise<ProviderRunCompletion> {
@@ -374,6 +392,15 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     let totalUsage: ProviderUsage | undefined;
     let toolCallCount = 0;
     const completedTools: Array<{ name: string; status: string; paths?: string[] }> = [];
+    const failure = (message: string): ProviderRunCompletion => ({
+      status: "failed",
+      result: {
+        providerId: this.id,
+        model: options.model.id,
+        error: message,
+        routing: routingResult(options.routing, routedProvider),
+      },
+    });
     const emit = (event: ProviderEventPayload) => {
       sequence += 1;
       this.emit({
@@ -403,10 +430,10 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
           messages: options.messages,
           stream: true,
           provider: {
-            allow_fallbacks: false,
             require_parameters: true,
             data_collection: "deny",
             zdr: true,
+            ...openRouterRoutingPolicy(options.routing),
           },
           ...(tools.length > 0 ? {
             tools,
@@ -424,7 +451,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
           if (chunk.error) {
             const message = safeOpenRouterFailure(chunk.error.code);
             emit({ kind: "run.failed", message });
-            return { status: "failed", result: { providerId: this.id, model: options.model.id, error: message } };
+            return failure(message);
           }
           if (chunk.id) remoteResponseId = safeIdentifier(chunk.id, 200);
           if (chunk.provider) routedProvider = safeLabel(chunk.provider, 120);
@@ -436,7 +463,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
             if (finalResponse.length > MAX_RESPONSE_TEXT_CHARS) {
               const message = "OpenRouter 응답이 안전한 텍스트 상한을 초과했습니다.";
               emit({ kind: "run.failed", message });
-              return { status: "failed", result: { providerId: this.id, model: options.model.id, error: message } };
+              return failure(message);
             }
             emit({ kind: "output.delta", delta: delta.content });
           }
@@ -453,7 +480,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
             if (builder.id.length > 200 || builder.name.length > 128 || builder.arguments.length > MAX_TOOL_ARGUMENT_CHARS) {
               const message = "OpenRouter 도구 인자가 안전한 크기 상한을 초과했습니다.";
               emit({ kind: "run.failed", message });
-              return { status: "failed", result: { providerId: this.id, model: options.model.id, error: message } };
+              return failure(message);
             }
             toolCalls.set(fragment.index, builder);
           }
@@ -468,7 +495,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
           if (finishReason === "tool_calls") {
             const message = "OpenRouter가 완성되지 않은 도구 호출을 반환했습니다.";
             emit({ kind: "run.failed", message });
-            return { status: "failed", result: { providerId: this.id, model: options.model.id, error: message } };
+            return failure(message);
           }
           options.messages.push({ role: "assistant", content: roundText, tool_calls: [] });
           const resumeState = buildOpenRouterResumeState(
@@ -489,6 +516,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
               resumeAvailable: resumeState !== undefined,
               ...(resumeState?.truncated ? { resumeTruncated: true } : {}),
               ...(routedProvider ? { routedProvider } : {}),
+              routing: routingResult(options.routing, routedProvider),
               ...(totalUsage ? { usage: totalUsage } : {}),
               ...(completedTools.length > 0 ? { tools: completedTools } : {}),
             },
@@ -498,19 +526,19 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
         if (!options.toolEnabled || !this.toolBroker || tools.length === 0) {
           const message = "선택한 OpenRouter 모델에는 로컬 도구가 활성화되지 않았습니다.";
           emit({ kind: "run.failed", message });
-          return { status: "failed", result: { providerId: this.id, model: options.model.id, error: message } };
+          return failure(message);
         }
         if (completedCalls.length > 1 || toolCallCount + completedCalls.length > this.maxToolCallsPerRun) {
           const message = "OpenRouter 프로젝트 도구 호출이 안전 상한을 초과했습니다.";
           emit({ kind: "run.failed", message });
-          return { status: "failed", result: { providerId: this.id, model: options.model.id, error: message } };
+          return failure(message);
         }
         const assistantCalls: OpenRouterToolCall[] = [];
         for (const call of completedCalls) {
           if (!call.id || !call.name) {
             const message = "OpenRouter가 식별할 수 없는 도구 호출을 반환했습니다.";
             emit({ kind: "run.failed", message });
-            return { status: "failed", result: { providerId: this.id, model: options.model.id, error: message } };
+            return failure(message);
           }
           toolCallCount += 1;
           const paths = safeToolPaths(call.arguments);
@@ -544,12 +572,20 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     } catch (error) {
       if (options.active.cancelled) {
         emit({ kind: "run.completed", status: "interrupted" });
-        return { status: "interrupted", result: { providerId: this.id, model: options.model.id, finalResponse } };
+        return {
+          status: "interrupted",
+          result: {
+            providerId: this.id,
+            model: options.model.id,
+            finalResponse,
+            routing: routingResult(options.routing, routedProvider),
+          },
+        };
       }
       if (options.active.timedOut) {
         const message = "OpenRouter 응답 시간이 초과되었습니다.";
         emit({ kind: "run.failed", message });
-        return { status: "failed", result: { providerId: this.id, model: options.model.id, error: message } };
+        return failure(message);
       }
       const classified = classifyOpenRouterError(error);
       emit({ kind: "run.failed", message: classified.message });
@@ -561,6 +597,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
           error: classified.message,
           errorStatus: classified.statusCode,
           finalResponse,
+          routing: routingResult(options.routing, routedProvider),
         },
       };
     } finally {
@@ -638,16 +675,35 @@ export class OpenRouterHttpClient implements OpenRouterClient {
   }
 
   async listModels(): Promise<readonly OpenRouterModelRecord[]> {
-    const [userValue, zdrValue] = await Promise.all([
+    const [userValue, zdrValue, endpointValue] = await Promise.all([
       this.getJson(`${OPENROUTER_API_BASE}/models/user`),
       this.getJson(`${OPENROUTER_API_BASE}/models?zdr=true`),
+      this.getJson(`${OPENROUTER_API_BASE}/endpoints/zdr`),
     ]);
     const zdrIds = new Set(array(zdrValue.data)
       .map((value) => record(value)?.id)
       .filter((id): id is string => typeof id === "string"));
+    const upstreamsByModel = new Map<string, Map<string, string>>();
+    for (const value of array(endpointValue.data)) {
+      const endpoint = record(value);
+      const modelId = typeof endpoint?.model_id === "string" ? endpoint.model_id : "";
+      const upstreamId = typeof endpoint?.tag === "string" ? endpoint.tag : "";
+      if (!validOpenRouterUpstreamId(upstreamId) || !zdrIds.has(modelId)) continue;
+      const displayName = safeLabel(
+        typeof endpoint?.provider_name === "string" ? endpoint.provider_name : upstreamId,
+        120,
+      ) ?? upstreamId;
+      const modelUpstreams = upstreamsByModel.get(modelId) ?? new Map<string, string>();
+      modelUpstreams.set(upstreamId, displayName);
+      upstreamsByModel.set(modelId, modelUpstreams);
+    }
     return array(userValue.data).flatMap((value) => {
       const model = record(value);
       if (!model || typeof model.id !== "string" || model.id.length > 200 || !zdrIds.has(model.id)) return [];
+      const upstreams = [...(upstreamsByModel.get(model.id) ?? new Map<string, string>()).entries()]
+        .map(([id, name]) => ({ id, name }))
+        .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+      if (upstreams.length === 0) return [];
       const architecture = record(model.architecture);
       return [{
         id: model.id,
@@ -660,6 +716,7 @@ export class OpenRouterHttpClient implements OpenRouterClient {
         inputModalities: array(architecture?.input_modalities)
           .filter((item): item is string => typeof item === "string" && item.length <= 40)
           .slice(0, 20),
+        upstreams,
       }];
     });
   }
@@ -975,6 +1032,54 @@ function sum(left: number | undefined, right: number | undefined): number | unde
 
 function supportsTools(model: OpenRouterModelRecord): boolean {
   return model.supportedParameters.includes("tools");
+}
+
+function validateOpenRouterRouting(
+  selection: ProviderRoutingSelection | undefined,
+  available: readonly OpenRouterUpstreamRecord[],
+): ProviderRoutingSelection | undefined {
+  if (!selection) return undefined;
+  const allowed = new Set(available.map((upstream) => upstream.id));
+  if (selection.upstreams.length === 0 || selection.upstreams.length > 4
+      || new Set(selection.upstreams).size !== selection.upstreams.length
+      || selection.upstreams.some((upstream) => !allowed.has(upstream))) {
+    throw new ProviderError(409, "선택한 OpenRouter upstream은 현재 모델의 strict ZDR 목록에 없습니다.");
+  }
+  if (selection.allowFallbacks && selection.upstreams.length < 2) {
+    throw new ProviderError(400, "OpenRouter fallback을 사용하려면 승인할 upstream을 두 개 이상 선택해 주세요.");
+  }
+  if (!selection.allowFallbacks && selection.upstreams.length !== 1) {
+    throw new ProviderError(400, "OpenRouter upstream 고정은 정확히 한 provider만 선택해야 합니다.");
+  }
+  return structuredClone(selection);
+}
+
+function openRouterRoutingPolicy(selection: ProviderRoutingSelection | undefined): Pick<
+  OpenRouterChatRequest["provider"],
+  "allow_fallbacks" | "order" | "only"
+> {
+  if (!selection) return { allow_fallbacks: false };
+  return {
+    allow_fallbacks: selection.allowFallbacks,
+    order: [...selection.upstreams],
+    only: [...selection.upstreams],
+  };
+}
+
+function routingResult(
+  selection: ProviderRoutingSelection | undefined,
+  actualProvider: string | undefined,
+): Record<string, unknown> {
+  return {
+    profile: "strict-zdr",
+    requestedUpstreams: selection ? [...selection.upstreams] : [],
+    allowFallbacks: selection?.allowFallbacks === true,
+    ...(actualProvider ? { actualProvider } : {}),
+  };
+}
+
+function validOpenRouterUpstreamId(value: string): boolean {
+  return value.length <= 120 && /^[a-z0-9][a-z0-9._/-]*$/.test(value);
 }
 
 function imageMimeType(path: string): string | null {

@@ -362,12 +362,15 @@ update이며 APK를 새 current 후보로 배포하지 않는다. `store:false` 
 - 모델별 contract/eval 결과에 따른 코딩·읽기·대화 등급
 - 비용·quota·rate-limit 오류 분류
 
-현재 checkpoint에서는 server-only key, authenticated user model과 ZDR model의 교집합, 명시적
-allowlist, chat SSE와 동일한 승인형 tool loop를 구현했다. `allow_fallbacks: false`,
-`require_parameters: true`, `data_collection: deny`, `zdr: true`를 강제하고 upstream Provider와
-token/credit usage를 공통 run 결과에 기록한다. 실제 모델별 contract/eval과 사용자가 확인하는
-routing 선택지는 남아 있다. OpenRouter 다중 턴 transcript도 같은 암호화 journal·최신 상태 소유권·
-12턴/900 KiB 상한을 적용하고 모델·account·workspace 변경이나 자동 Provider 전환을 허용하지 않는다.
+현재 checkpoint에서는 server-only key, authenticated user/ZDR model과 ZDR endpoint catalog의 교집합,
+명시적 allowlist, chat SSE와 동일한 승인형 tool loop를 구현했다. 기본은 `allow_fallbacks: false`,
+`require_parameters: true`, `data_collection: deny`, `zdr: true`다. 사용자가 ZDR endpoint의 exact tag를
+1차 upstream으로 고르면 `order`/`only`를 그 tag로 고정하고, backup도 직접 고른 경우에만 두 tag 안에서
+fallback을 허용한다. 임의 tag, 중복·형식 오류와 대화 중 routing 변경은 실패-폐쇄로 거부한다. 요청
+순서·fallback 정책·실제 upstream·token/credit usage는 암호화 operation과 공통 run 결과에 남고 모바일
+대시보드에서 보인다. OpenRouter 다중 턴 transcript도 같은 journal·최신 상태 소유권·12턴/900 KiB
+상한을 적용하고 모델·account·workspace 변경이나 무단 Provider 전환을 허용하지 않는다. 남은 Phase C
+핵심은 실제 모델별 contract/eval과 가격·quota 표시다.
 
 완료 조건: 서로 다른 두 upstream 계열의 검증 모델이 같은 Tool Broker 계약을 통과하고,
 지원하지 않는 모델은 코딩 권한을 얻지 못한다.
@@ -532,4 +535,5 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - [OpenRouter tool/function calling](https://openrouter.ai/docs/guides/features/tool-calling)
 - [OpenRouter Models API와 capability metadata](https://openrouter.ai/docs/guides/overview/models)
 - [OpenRouter Provider routing, ZDR와 데이터 수집 제어](https://openrouter.ai/docs/guides/routing/provider-selection)
+- [OpenRouter ZDR endpoint 목록 API](https://openrouter.ai/docs/api/api-reference/endpoints/list-endpoints-zdr)
 - [OpenRouter 데이터 수집 정책](https://openrouter.ai/docs/guides/privacy/data-collection)

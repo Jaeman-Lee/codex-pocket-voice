@@ -9,7 +9,7 @@ import type { ThreadListResponse } from "../generated/app-server/v2/ThreadListRe
 import type { ThreadReadResponse } from "../generated/app-server/v2/ThreadReadResponse";
 import type { ThreadUnsubscribeResponse } from "../generated/app-server/v2/ThreadUnsubscribeResponse";
 import type { CodexProviderClient } from "./providers/codex-provider.js";
-import type { ProviderEvent } from "./providers/types.js";
+import type { ProviderEvent, ProviderRoutingSelection } from "./providers/types.js";
 import { PathPolicy } from "./path-policy.js";
 import { compactThread, presentThread } from "./result.js";
 import { MediaError, MediaManager } from "./media-manager.js";
@@ -113,6 +113,7 @@ interface RunBody {
   attachments?: unknown;
   provider?: unknown;
   accountId?: unknown;
+  routing?: unknown;
 }
 
 interface CreateProjectBody {
@@ -948,6 +949,10 @@ async function handleApi(
       "effort",
     );
     const model = optionalString(body.model, "model", 200);
+    const routing = optionalRoutingSelection(body.routing);
+    if (routing && provider !== "openrouter") {
+      throw new HttpError(400, "upstream routing is only available for OpenRouter");
+    }
     const networkAccess = body.networkAccess === true;
     const timeoutSeconds = optionalInteger(body.timeoutSeconds, 30, 3600, 900, "timeoutSeconds");
     const attachmentIds = optionalStringArray(body.attachments, "attachments", 4, 200);
@@ -964,6 +969,7 @@ async function handleApi(
         networkAccess,
         model,
         effort,
+        routing,
         timeoutMs: timeoutSeconds * 1_000,
       },
       workspaceIdentity: await inspectWorkspaceIdentity(cwd),
@@ -1552,6 +1558,23 @@ function optionalStringArray(
     if (typeof item !== "string" || !item || item.length > maxLength) throw new HttpError(400, `${name} is invalid`);
     return item;
   });
+}
+
+function optionalRoutingSelection(value: unknown): ProviderRoutingSelection | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value) || !hasExactKeys(value, ["upstreams", "allowFallbacks"])) {
+    throw new HttpError(400, "routing is invalid");
+  }
+  const upstreams = optionalStringArray(value.upstreams, "routing.upstreams", 4, 120);
+  if (upstreams.length === 0 || new Set(upstreams).size !== upstreams.length
+      || upstreams.some((upstream) => !/^[a-z0-9][a-z0-9._/-]*$/.test(upstream))) {
+    throw new HttpError(400, "routing.upstreams is invalid");
+  }
+  if (typeof value.allowFallbacks !== "boolean") throw new HttpError(400, "routing.allowFallbacks is invalid");
+  if (value.allowFallbacks ? upstreams.length < 2 : upstreams.length !== 1) {
+    throw new HttpError(400, "routing fallback policy does not match the selected upstreams");
+  }
+  return { upstreams, allowFallbacks: value.allowFallbacks };
 }
 
 function isLoopbackHostHeader(host: string): boolean {
