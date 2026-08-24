@@ -12,8 +12,10 @@ writer lock을 유지해 PC의 resume를 막는 연결 장애이므로 `patch`/`
 `versionCode 10803`으로 분류한다. 대상 브랜치는 `hotfix/1.8.3-writer-release`이다.
 CI 검증과 현장 승인이 끝나기 전에는 1.8.2를 current 설치 후보, 사용자 검증 1.8.1을
 rollback으로 함께 보존한다. 1.8.3 설치 후에는 1.8.2를 rollback으로 전환하고 1.8.1은
-복구 가능한 archive로 이동한다. Companion 재시작은 활성 Codex turn이 없고 사용자가
-확인한 뒤에만 수행한다.
+복구 가능한 archive로 이동한다. Companion 재시작은 활성 Codex turn이 없음을 확인한 뒤에만
+수행하며, 활성 turn을 중단하려면 사용자 확인을 받는다. 2026-08-24에는 target thread가 `task_complete`이고 Companion이
+연 다른 thread가 없음을 확인한 뒤 PC Companion만 검증된 1.8.3 전용 worktree로 전환했다.
+Android 1.8.3 APK는 여전히 staged이며 current 1.8.2와 rollback 1.8.1은 교체하지 않았다.
 
 Session scope hotfix decision: 다른 프로젝트의 인계 세션이 현재 프로젝트의 세션 종료·반납 대상으로
 보이는 버그이므로 `patch`/`1.8.2`, Android `versionCode 10802`로 분류한다. 대상 브랜치는
@@ -57,13 +59,13 @@ candidate로 분류한다. 실행 중인 Codex turn을 끊지 않기 위해 Linu
 | Component | Version / revision | State |
 | --- | --- | --- |
 | Runtime code baseline | `e0f6ea1` on `hotfix/1.8.3-writer-release` | pushed; local release gate and CI passing |
-| Primary development workspace | Linux PC Git clone; v2 worktree active | 1.8.3 hotfix is isolated in a separate PC worktree |
+| Primary development workspace | Linux PC Git clone; v2 worktree active | 1.8.3 hotfix runtime is isolated in a separate versioned PC worktree |
 | Termux workspace | lightweight Git mirror at `f08d9e7` | reproducible dependencies and build output scheduled for removal |
 | Pull request | Draft PR #5 into `hotfix/1.8.2-session-scope` | Linux Node 20/22 and Android checks passing; stacked until the 1.8.2 base is merged |
 | Android staged APK | 1.8.3 signed candidate | Actions run `32671707088`; checksum-verified in separate PC candidate folder; not installed |
 | Android current APK | 1.8.2 signed candidate | current installer set preserved unchanged |
 | Android rollback APK | 1.8.1 signed candidate | rollback set prepared from Actions run `32645200906`; already field-tested by the user |
-| Linux Companion | 1.8.1 | active for the user's other project; restart to a verified hotfix deferred until explicit confirmation |
+| Linux Companion | 1.8.3 at `e0f6ea1` | active from the separate hotfix runtime; target writer released and loopback listener healthy |
 | Pairing | one Android client | paired; secrets remain outside Git |
 | Previous Companion | 0.2.0 directory snapshot | retained temporarily for rollback |
 | Superseded Companion | 1.7.4 working directory | moved to recoverable trash after the 1.8.0 cutover |
@@ -84,8 +86,10 @@ release gate에 포함한다. 1.8.2 APK와 Companion에는 이 바인딩이나 w
 검증된 1.8.3 source로 전환해야 한다.
 
 `1.8.3`은 아직 정식 Release가 아니다. 사용자 현장 테스트가 끝난 뒤 선행 hotfix와 PR을
-병합하고 최종 병합 커밋에 `v1.8.3` 태그와 GitHub Release를 만들어야 한다. Companion을 1.8.3으로 재시작하면
-실행 중인 기존 run이 중단될 수 있으므로, 활성 작업이 없을 때만 배포한다.
+병합하고 최종 병합 커밋에 `v1.8.3` 태그와 GitHub Release를 만들어야 한다. 2026-08-24 PC
+Companion 전환에서는 마지막 이벤트가 `task_complete`인 target thread 하나만 기존 app-server가
+열고 있음을 확인했다. 전환 후 해당 session file의 writer holder가 0이고 1.8.3 loopback listener가
+정상임을 검증했다. 이후 Companion 재배포도 활성 작업이 없을 때만 수행한다.
 
 ## Artifact classes
 
