@@ -1,0 +1,48 @@
+name: OpenRouter protected smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Exact allowlisted OpenRouter model ID
+        required: true
+        type: string
+      upstream:
+        description: Exact ZDR endpoint tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    environment: provider-smoke
+    timeout-minutes: 5
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENROUTER_SMOKE_MODELS: ${{ vars.OPENROUTER_SMOKE_MODELS }}
+      OPENROUTER_SMOKE_MODEL: ${{ inputs.model }}
+      OPENROUTER_SMOKE_UPSTREAM: ${{ inputs.upstream }}
+      OPENROUTER_SMOKE_MAX_USD: "0.02"
+      OPENROUTER_SMOKE_REPORT: ${{ runner.temp }}/openrouter-smoke-report.json
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Run bounded synthetic smoke
+        run: node scripts/openrouter-smoke.mjs
+
+      - name: Upload redacted grade report
+        uses: actions/upload-artifact@v6
+        with:
+          name: openrouter-smoke-${{ github.run_id }}
+          path: ${{ runner.temp }}/openrouter-smoke-report.json
+          if-no-files-found: error
+          retention-days: 14

@@ -85,7 +85,31 @@ export interface ModelOption {
   isDefault: boolean;
   defaultEffort: string;
   efforts: Array<{ id: string; description: string }>;
-  routingOptions?: Array<{ id: string; displayName: string }>;
+  capabilities?: {
+    tools: boolean;
+    imageInput: boolean;
+  };
+  pricing?: ProviderCatalogPricing;
+  expiresAt?: string;
+  routingOptions?: ProviderRoutingOption[];
+}
+
+export interface ProviderCatalogPricing {
+  inputPerMillionUsd?: number;
+  outputPerMillionUsd?: number;
+  requestUsd?: number;
+  imageUsd?: number;
+}
+
+export interface ProviderRoutingOption {
+  id: string;
+  displayName: string;
+  pricing?: ProviderCatalogPricing;
+  latencyP50Ms?: number;
+  throughputP50?: number;
+  uptime30m?: number;
+  quantization?: string;
+  supportsTools?: boolean;
 }
 
 export interface ProviderRoutingSelection {
@@ -211,6 +235,7 @@ export interface RunResult {
     requestedUpstreams: string[];
     allowFallbacks: boolean;
     actualProvider?: string;
+    actualUpstream?: string;
   };
 }
 

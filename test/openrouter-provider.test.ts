@@ -200,11 +200,17 @@ test("OpenRouter runs strict ZDR project tools and keeps unsupported models chat
   assert.equal(descriptor.capabilities.commandExecution, true);
   const connection = await adapter.testConnection();
   assert.equal(connection.modelCount, 2);
+  assert.match(connection.detail, /남은 key 한도 10 credits/);
   assert.equal(client.keyCalls, 1);
   assert.equal(client.chatCalls, 0);
   const listed = await adapter.listModels();
   assert.match(listed.find((model) => model.id === "vendor/tool-model")!.description, /approved/);
   assert.match(listed.find((model) => model.id === "vendor/chat-model")!.description, /chat-only/);
+  assert.deepEqual(listed.find((model) => model.id === "vendor/tool-model")!.pricing, {
+    inputPerMillionUsd: 1,
+    outputPerMillionUsd: 2,
+  });
+  assert.equal(listed.find((model) => model.id === "vendor/tool-model")!.capabilities?.tools, true);
 
   const run = await adapter.startRun({
     cwd: process.cwd(),
@@ -334,7 +340,12 @@ test("OpenRouter pauses a change tool until touch approval and reports the resul
 test("OpenRouter locks routing to the user-approved strict ZDR upstream order", async () => {
   const client = new FakeOpenRouterClient([[
     chunk({
-      provider: "Provider B",
+      provider: "Legacy Provider Field",
+      openrouter_metadata: {
+        requested: "vendor/tool-model",
+        attempt: 1,
+        endpoints: { available: [{ provider: "Provider B", model: "vendor/tool-model", selected: true }] },
+      },
       choices: [{ delta: { content: "routed" }, finish_reason: "stop" }],
       usage: usage(2, 1, 0, 0.001),
     }),
@@ -365,6 +376,7 @@ test("OpenRouter locks routing to the user-approved strict ZDR upstream order", 
     requestedUpstreams: ["provider-a", "provider-b"],
     allowFallbacks: true,
     actualProvider: "Provider B",
+    actualUpstream: "provider-b",
   });
   await assert.rejects(
     adapter.startRun({
@@ -384,6 +396,35 @@ test("OpenRouter locks routing to the user-approved strict ZDR upstream order", 
     }),
     /두 개 이상/,
   );
+
+  const unverifiable = new FakeOpenRouterClient([[
+    chunk({
+      provider: "Provider A",
+      openrouter_metadata: {
+        requested: "vendor/other-model",
+        attempt: 1,
+        endpoints: { available: [{ provider: "Provider A", model: "vendor/other-model", selected: true }] },
+      },
+      choices: [{ delta: { content: "unverified metadata" }, finish_reason: "stop" }],
+    }),
+  ]], models());
+  const unverifiableAdapter = new OpenRouterProviderAdapter({
+    credentials: staticCredentials(secret),
+    clientFactory: () => unverifiable,
+    modelAllowlist: ["vendor/tool-model"],
+    defaultModel: "vendor/tool-model",
+  });
+  const unverifiableRun = await unverifiableAdapter.startRun({
+    cwd: process.cwd(),
+    prompt: "do not claim an unverified route",
+    model: "vendor/tool-model",
+    routing: { upstreams: ["provider-a"], allowFallbacks: false },
+  });
+  assert.deepEqual((await unverifiableRun.completion).result.routing, {
+    profile: "strict-zdr",
+    requestedUpstreams: ["provider-a"],
+    allowFallbacks: false,
+  });
 });
 
 test("OpenRouter rejects models outside the allowlist or current strict ZDR catalog", async () => {
@@ -490,7 +531,14 @@ test("OpenRouter HTTP client intersects user models with ZDR and parses SSE with
   const fakeFetch: typeof fetch = async (input, init) => {
     const url = String(input);
     requests.push({ url, init });
-    if (url.endsWith("/key")) return jsonResponse({ data: { label: "safe-key", limit_remaining: 8 } });
+    if (url.endsWith("/key")) return jsonResponse({ data: {
+      label: "safe-key",
+      limit: 20,
+      limit_remaining: 8,
+      usage: 12,
+      limit_reset: "monthly",
+      expires_at: "2027-12-31T23:59:59Z",
+    } });
     if (url.includes("/models/user")) return jsonResponse({ data: [
       rawModel("vendor/tool-model", ["tools"], ["text"]),
       rawModel("vendor/non-zdr", [], ["text"]),
@@ -500,11 +548,26 @@ test("OpenRouter HTTP client intersects user models with ZDR and parses SSE with
       model_id: "vendor/tool-model",
       provider_name: "Strict Provider",
       tag: "strict-provider",
+      pricing: { prompt: "0.0000015", completion: "0.000003", request: "0.01", image: "0" },
+      latency_last_30m: { p50: 0.25 },
+      throughput_last_30m: { p50: 45.2 },
+      uptime_last_30m: 99.5,
+      quantization: "fp16",
+      supported_parameters: ["tools", "max_tokens"],
     }] });
     if (url.endsWith("/chat/completions")) {
       const stream = [
         `data: ${JSON.stringify({ id: "generation-http", choices: [{ delta: { content: "hello" }, finish_reason: null }] })}\n\n`,
-        `data: ${JSON.stringify({ id: "generation-http", choices: [{ delta: {}, finish_reason: "stop" }], usage: usage(1, 1, 0, 0.1) })}\n\n`,
+        `data: ${JSON.stringify({
+          id: "generation-http",
+          choices: [{ delta: {}, finish_reason: "stop" }],
+          usage: usage(1, 1, 0, 0.1),
+          openrouter_metadata: {
+            requested: "vendor/tool-model",
+            attempt: 1,
+            endpoints: { available: [{ provider: "Strict Provider", model: "vendor/tool-model", selected: true }] },
+          },
+        })}\n\n`,
         "data: [DONE]\n\n",
       ].join("");
       return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
@@ -512,10 +575,28 @@ test("OpenRouter HTTP client intersects user models with ZDR and parses SSE with
     return new Response(null, { status: 404 });
   };
   const client = new OpenRouterHttpClient(secret, fakeFetch);
-  assert.equal((await client.testKey()).limitRemaining, 8);
+  assert.deepEqual(await client.testKey(), {
+    label: "safe-key",
+    limit: 20,
+    limitRemaining: 8,
+    usage: 12,
+    limitReset: "monthly",
+    expiresAt: "2027-12-31T23:59:59.000Z",
+  });
   const listed = await client.listModels();
   assert.deepEqual(listed.map((model) => model.id), ["vendor/tool-model"]);
-  assert.deepEqual(listed[0]?.upstreams, [{ id: "strict-provider", name: "Strict Provider" }]);
+  assert.deepEqual(listed[0]?.pricing, { inputPerMillionUsd: 1, outputPerMillionUsd: 2 });
+  assert.equal(listed[0]?.expiresAt, "2027-12-31T23:59:59.000Z");
+  assert.deepEqual(listed[0]?.upstreams, [{
+    id: "strict-provider",
+    name: "Strict Provider",
+    pricing: { inputPerMillionUsd: 1.5, outputPerMillionUsd: 3, requestUsd: 0.01, imageUsd: 0 },
+    latencyP50Ms: 250,
+    throughputP50: 45.2,
+    uptime30m: 99.5,
+    quantization: "fp16",
+    supportsTools: true,
+  }]);
   const request: OpenRouterChatRequest = {
     model: "vendor/tool-model",
     messages: [{ role: "user", content: "hello" }],
@@ -527,6 +608,8 @@ test("OpenRouter HTTP client intersects user models with ZDR and parses SSE with
   assert.equal(chunks.length, 2);
   assert.equal(chunks[0]?.choices?.[0]?.delta?.content, "hello");
   assert.equal(requests.every((item) => item.init?.headers !== undefined), true);
+  const chatRequest = requests.find((item) => item.url.endsWith("/chat/completions"));
+  assert.equal(new Headers(chatRequest?.init?.headers).get("X-OpenRouter-Metadata"), "enabled");
   assert.equal(requests.some((item) => String(item.init?.body ?? "").includes(secret)), false);
 });
 
@@ -606,8 +689,10 @@ function models(): OpenRouterModelRecord[] {
       contextLength: 100_000,
       supportedParameters: ["tools", "tool_choice"],
       inputModalities: ["text", "image"],
+      pricing: { inputPerMillionUsd: 1, outputPerMillionUsd: 2 },
+      expiresAt: "2027-12-31T23:59:59.000Z",
       upstreams: [
-        { id: "provider-a", name: "Provider A" },
+        { id: "provider-a", name: "Provider A", latencyP50Ms: 250, supportsTools: true },
         { id: "provider-b", name: "Provider B" },
       ],
     },
@@ -650,6 +735,8 @@ function rawModel(id: string, supportedParameters: string[], inputModalities: st
     name: id,
     supported_parameters: supportedParameters,
     architecture: { input_modalities: inputModalities },
+    pricing: { prompt: "0.000001", completion: "0.000002" },
+    expiration_date: "2027-12-31T23:59:59Z",
   };
 }
 

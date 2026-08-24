@@ -17,10 +17,16 @@ test("OpenRouter routing controls collapse to one bounded column on phones", asy
   const css = await readFile(new URL("../client/src/styles.css", import.meta.url), "utf8");
   const routing = css.match(/\.routing-bar \{([^}]+)\}/)?.[1] ?? "";
   const select = css.match(/\.routing-bar select \{([^}]+)\}/)?.[1] ?? "";
+  const insight = css.match(/\.model-insight \{([^}]+)\}/)?.[1] ?? "";
+  const facts = css.match(/\.routing-facts \{([^}]+)\}/)?.[1] ?? "";
   assert.match(routing, /minmax\(0,\s*1fr\)/);
   assert.match(routing, /min-width:\s*0/);
   assert.match(select, /width:\s*100%/);
   assert.match(select, /min-width:\s*0/);
+  assert.match(insight, /flex-wrap:\s*wrap/);
+  assert.match(insight, /min-width:\s*0/);
+  assert.match(facts, /min-width:\s*0/);
+  assert.match(css, /\.model-insight > small[^}]*overflow-wrap:\s*anywhere/);
   assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.routing-bar \{[^}]*minmax\(0,\s*1fr\)/);
 });
 

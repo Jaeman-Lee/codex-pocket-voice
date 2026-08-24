@@ -13,7 +13,7 @@
 | 변경 분류 | `breaking` — 제공자 실행 계약, Gateway 프로토콜, 작업 저널과 전송 계층을 함께 확장한다. |
 | 목표 버전 | `2.0.0` |
 | 구현 브랜치 | `feature/v2-control-plane` |
-| v1 정책 | 연결 불능을 고치는 `1.8.3` writer-release hotfix를 별도 staged 후보로 유지하고 1.8.1을 검증된 rollback으로 보존한다. 보안, 데이터 유실, 연결 불능만 추가 `1.8.x` hotfix로 다룬다. |
+| v1 정책 | 연결 불능을 고친 `1.8.3` Companion은 별도 runtime으로 운영하고 APK는 staged 후보로 유지하며, 1.8.1을 검증된 rollback으로 보존한다. 보안, 데이터 유실, 연결 불능만 추가 `1.8.x` hotfix로 다룬다. |
 | APK 정책 | 2.0 현장 설치 전에는 1.8.2 current와 별도 staged 1.8.3 후보를 섞지 않고, 1.8.1을 rollback으로 유지한다. 2.0 candidate를 설치할 때도 1.8.1 rollback을 보존한다. |
 | Companion 정책 | 1.x와 2.x 기능 협상을 지원하고, 2.0 검증 중 1.8.1 Companion 복구 지점을 유지한다. |
 
@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, 세 Provider 공용 contract·stream failure fixture, fake Gateway와 protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신 모듈 구현; 실제 모바일 회귀 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구와 격리 npm 검증 구현; 실모델 eval 잔여 |
-| Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
+| Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker와 보호된 synthetic smoke harness 구현; 실제 model eval 실행·현장 등급 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in process-death native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe 구현; 실기기 background/deep-link acceptance 잔여 |
 | Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, user-triggered bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; Wi-Fi Direct 등 P2P·relay·background/field release gate 잔여 |
 
@@ -144,6 +144,8 @@ Chat-only와 read-only가 검증되기 전에는 API 모델에 workspace-write �
 - `tools`, `tool_choice`, 구조화 출력과 reasoning 등 요청에 필요한 기능을 모델이 모두 지원하도록
   `require_parameters: true`를 사용한다.
 - 모델 ID, 실제 upstream Provider, fallback 발생 여부와 usage를 가능한 범위에서 run 기록에 남긴다.
+- opt-in router metadata의 selected provider를 우선 사용하고, exact model과 attempt가 유효할 때 선택한
+  catalog tag로 역매핑해 실제 upstream을 표시한다.
 - 한 run 도중 다른 모델 ID로 자동 전환하지 않는다. 모델 변경은 사용자에게 새 run으로 표시한다.
 
 ### 기본 개인정보 보호 프로필
@@ -369,8 +371,14 @@ update이며 APK를 새 current 후보로 배포하지 않는다. `store:false` 
 fallback을 허용한다. 임의 tag, 중복·형식 오류와 대화 중 routing 변경은 실패-폐쇄로 거부한다. 요청
 순서·fallback 정책·실제 upstream·token/credit usage는 암호화 operation과 공통 run 결과에 남고 모바일
 대시보드에서 보인다. OpenRouter 다중 턴 transcript도 같은 journal·최신 상태 소유권·12턴/900 KiB
-상한을 적용하고 모델·account·workspace 변경이나 무단 Provider 전환을 허용하지 않는다. 남은 Phase C
-핵심은 실제 모델별 contract/eval과 가격·quota 표시다.
+상한을 적용하고 모델·account·workspace 변경이나 무단 Provider 전환을 허용하지 않는다. 모델과 ZDR
+endpoint의 bounded 가격·p50 latency/throughput·uptime·quantization·tool capability, `/key`의 남은 한도와
+만료일을 인증된 모바일 UI에 표시하되 catalog snapshot을 eval 등급으로 부르지 않는다. 수동
+`provider-smoke` environment workflow는 allowlisted model과 exact ZDR upstream, 2회 synthetic 호출,
+호출당 2,048 input/64 output token의 $0.02 catalog 상한, key remaining limit와 strict routing을
+강제한다. 자동 usage의 USD 기준 credit 비용과 opt-in router metadata의 exact model·첫 attempt·선택
+provider도 검증하며 원문 prompt/response 없는 grade report만 남긴다. 남은 Phase C 핵심은 보호된
+workflow의 실제 모델 실행과 프로젝트 read/coding 현장 등급이다.
 
 완료 조건: 서로 다른 두 upstream 계열의 검증 모델이 같은 Tool Broker 계약을 통과하고,
 지원하지 않는 모델은 코딩 권한을 얻지 못한다.
@@ -467,6 +475,7 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - malformed tool argument, symlink 탈출, root 밖 경로, 명령 timeout과 출력 폭주 차단
 - 로그·journal·SSE·diagnostics에 API key와 Authorization 헤더가 없는지 검사
 - OpenRouter model capability 변화와 fallback 정책 fixture
+- OpenRouter 가격 단위·endpoint 성능 상한·quota redaction fixture와 수동 smoke harness loopback 검사
 - OpenAI `store: false` 요청과 로컬 상태 replay 검사
 - API Provider replay 상태의 journal 암호화, API/SSE/export 비노출, 이미지 data URL 제거 검사
 - Playwright에서 320/360/412px, 큰 글자, 키보드, 회전과 긴 diff 검증
@@ -536,4 +545,7 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - [OpenRouter Models API와 capability metadata](https://openrouter.ai/docs/guides/overview/models)
 - [OpenRouter Provider routing, ZDR와 데이터 수집 제어](https://openrouter.ai/docs/guides/routing/provider-selection)
 - [OpenRouter ZDR endpoint 목록 API](https://openrouter.ai/docs/api/api-reference/endpoints/list-endpoints-zdr)
+- [OpenRouter current API key quota](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key)
+- [OpenRouter usage accounting](https://openrouter.ai/docs/cookbook/administration/usage-accounting)
+- [OpenRouter router metadata](https://openrouter.ai/docs/guides/features/router-metadata)
 - [OpenRouter 데이터 수집 정책](https://openrouter.ai/docs/guides/privacy/data-collection)

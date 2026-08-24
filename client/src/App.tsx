@@ -117,9 +117,11 @@ import type {
   PendingAttachment,
   ProviderId,
   ProviderConnectionTest,
+  ProviderCatalogPricing,
   ProviderLoginSession,
   ProviderOption,
   ProviderRoutingSelection,
+  ProviderRoutingOption,
   ProviderResponse,
   QueuedPrompt,
   RunResult,
@@ -1168,7 +1170,10 @@ export function App() {
       const requested = result.routing.requestedUpstreams.length > 0
         ? result.routing.requestedUpstreams.join(" → ")
         : "OpenRouter 자동 선택";
-      lines.push(`라우팅 · strict ZDR · ${requested} · ${result.routing.allowFallbacks ? "승인 목록 내 fallback" : "fallback 없음"}${result.routing.actualProvider ? ` · 실제 ${result.routing.actualProvider}` : ""}`);
+      const actualRoute = result.routing.actualUpstream
+        ? `${result.routing.actualUpstream}${result.routing.actualProvider ? ` (${result.routing.actualProvider})` : ""}`
+        : result.routing.actualProvider;
+      lines.push(`라우팅 · strict ZDR · ${requested} · ${result.routing.allowFallbacks ? "승인 목록 내 fallback" : "fallback 없음"}${actualRoute ? ` · 실제 ${actualRoute}` : ""}`);
     }
     if (latestDiff) lines.push(`\n--- diff ---\n${latestDiff}`);
     return lines.join("\n");
@@ -3341,6 +3346,9 @@ export function App() {
   openOperationFromDashboardRef.current = openOperationFromDashboard;
 
   const pendingApprovalCount = activeApprovals(approvalInbox).length;
+  const selectedModelOption = activeModel(models, model);
+  const selectedPrimaryRoute = selectedModelOption?.routingOptions?.find((item) => item.id === routingPrimary);
+  const selectedBackupRoute = selectedModelOption?.routingOptions?.find((item) => item.id === routingBackup);
   const updateInstallBlockedReason = prompt.trim() || attachments.length > 0
     ? "전송하지 않은 입력·첨부를 먼저 보내거나 지워 주세요."
     : mediaBusy
@@ -4176,7 +4184,18 @@ export function App() {
               </label>
             </div>
           )}
-          {provider === "openrouter" && (activeModel(models, model)?.routingOptions?.length ?? 0) > 0 && (
+          {provider === "openrouter" && selectedModelOption && (
+            <div className="model-insight" aria-label="OpenRouter 모델 catalog 정보">
+              <span>{selectedModelOption.capabilities?.tools ? "프로젝트 도구 metadata 확인" : "chat-only"}</span>
+              <span>{selectedModelOption.capabilities?.imageInput ? "이미지 입력" : "텍스트 입력"}</span>
+              {catalogPricingLabel(selectedModelOption.pricing) && (
+                <span>모델 최저 {catalogPricingLabel(selectedModelOption.pricing)}</span>
+              )}
+              {selectedModelOption.expiresAt && <span>만료 예정 {selectedModelOption.expiresAt.slice(0, 10)}</span>}
+              <small>{selectedModelOption.description} · catalog metadata이며 실제 모델 eval 등급은 아닙니다.</small>
+            </div>
+          )}
+          {provider === "openrouter" && (selectedModelOption?.routingOptions?.length ?? 0) > 0 && (
             <div className="routing-bar" aria-label="OpenRouter strict ZDR upstream 설정">
               <label>
                 <span>UPSTREAM</span>
@@ -4187,8 +4206,8 @@ export function App() {
                   onChange={(event) => selectRoutingPrimary(event.target.value)}
                 >
                   <option value="">자동 · ZDR · fallback 없음</option>
-                  {(activeModel(models, model)?.routingOptions ?? []).map((item) => (
-                    <option key={item.id} value={item.id}>{item.displayName} · {item.id}</option>
+                  {(selectedModelOption?.routingOptions ?? []).map((item) => (
+                    <option key={item.id} value={item.id}>{routingOptionLabel(item)}</option>
                   ))}
                 </select>
               </label>
@@ -4201,11 +4220,17 @@ export function App() {
                   onChange={(event) => selectRoutingBackup(event.target.value)}
                 >
                   <option value="">없음 · 1차 고정</option>
-                  {(activeModel(models, model)?.routingOptions ?? [])
+                  {(selectedModelOption?.routingOptions ?? [])
                     .filter((item) => item.id !== routingPrimary)
-                    .map((item) => <option key={item.id} value={item.id}>{item.displayName} · {item.id}</option>)}
+                    .map((item) => <option key={item.id} value={item.id}>{routingOptionLabel(item)}</option>)}
                 </select>
               </label>
+              {(selectedPrimaryRoute || selectedBackupRoute) && (
+                <div className="routing-facts">
+                  {selectedPrimaryRoute && <span>1차 · {routingRouteFacts(selectedPrimaryRoute)}</span>}
+                  {selectedBackupRoute && <span>백업 · {routingRouteFacts(selectedBackupRoute)}</span>}
+                </div>
+              )}
               <small>ZDR·데이터 비수집을 강제하며, 백업을 골라도 승인한 두 upstream 밖으로는 우회하지 않습니다.</small>
             </div>
           )}
@@ -4542,6 +4567,37 @@ function selectedRouting(
     upstreams: backup ? [primary, backup] : [primary],
     allowFallbacks: Boolean(backup),
   };
+}
+
+function catalogPricingLabel(pricing: ProviderCatalogPricing | undefined): string {
+  if (!pricing) return "";
+  return [
+    pricing.inputPerMillionUsd === undefined ? null : `입력 $${catalogNumber(pricing.inputPerMillionUsd)}/M`,
+    pricing.outputPerMillionUsd === undefined ? null : `출력 $${catalogNumber(pricing.outputPerMillionUsd)}/M`,
+  ].filter(Boolean).join(" · ");
+}
+
+function routingOptionLabel(option: ProviderRoutingOption): string {
+  const pricing = catalogPricingLabel(option.pricing);
+  return `${option.displayName} · ${option.id}${pricing ? ` · ${pricing}` : ""}`;
+}
+
+function routingRouteFacts(option: ProviderRoutingOption): string {
+  return [
+    option.displayName,
+    catalogPricingLabel(option.pricing) || null,
+    option.latencyP50Ms === undefined ? null : `p50 ${catalogNumber(option.latencyP50Ms)}ms`,
+    option.throughputP50 === undefined ? null : `p50 ${catalogNumber(option.throughputP50)} tok/s`,
+    option.uptime30m === undefined ? null : `30분 uptime ${catalogNumber(option.uptime30m)}%`,
+    option.quantization || null,
+    option.supportsTools === false ? "tool 미지원" : null,
+  ].filter(Boolean).join(" · ");
+}
+
+function catalogNumber(value: number): string {
+  return value.toLocaleString("en-US", {
+    maximumFractionDigits: value !== 0 && Math.abs(value) < 0.01 ? 6 : 2,
+  });
 }
 
 function activeProvider(providers: ProviderOption[], provider: ProviderId): ProviderOption | undefined {

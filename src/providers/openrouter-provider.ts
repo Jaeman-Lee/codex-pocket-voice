@@ -10,6 +10,7 @@ import {
 import {
   ProviderError,
   type ModelProviderAdapter,
+  type ProviderCatalogPricing,
   type ProviderConnectionTest,
   type ProviderDescriptor,
   type ProviderEvent,
@@ -48,17 +49,29 @@ export interface OpenRouterModelRecord {
   contextLength?: number;
   supportedParameters: readonly string[];
   inputModalities: readonly string[];
+  pricing?: ProviderCatalogPricing;
+  expiresAt?: string;
   upstreams?: readonly OpenRouterUpstreamRecord[];
 }
 
 export interface OpenRouterUpstreamRecord {
   id: string;
   name: string;
+  pricing?: ProviderCatalogPricing;
+  latencyP50Ms?: number;
+  throughputP50?: number;
+  uptime30m?: number;
+  quantization?: string;
+  supportsTools?: boolean;
 }
 
 export interface OpenRouterKeyInfo {
   label?: string;
+  limit?: number | null;
   limitRemaining?: number | null;
+  usage?: number;
+  limitReset?: string | null;
+  expiresAt?: string | null;
 }
 
 export interface OpenRouterUsage {
@@ -81,6 +94,17 @@ export interface OpenRouterChatChunk {
   id?: string;
   model?: string;
   provider?: string;
+  openrouter_metadata?: {
+    requested?: string;
+    attempt?: number;
+    endpoints?: {
+      available?: Array<{
+        provider?: string;
+        model?: string;
+        selected?: boolean;
+      }>;
+    };
+  };
   choices?: Array<{
     delta?: { content?: string | null; tool_calls?: OpenRouterToolCallDelta[] };
     finish_reason?: string | null;
@@ -281,10 +305,19 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
         isDefault: this.defaultModel ? model.id === this.defaultModel : index === 0,
         defaultEffort: "",
         efforts: [],
+        capabilities: { tools: toolCapable, imageInput: imageCapable },
+        ...(model.pricing ? { pricing: structuredClone(model.pricing) } : {}),
+        ...(model.expiresAt ? { expiresAt: model.expiresAt } : {}),
         ...(model.upstreams?.length ? {
           routingOptions: model.upstreams.map((upstream) => ({
             id: upstream.id,
             displayName: upstream.name,
+            ...(upstream.pricing ? { pricing: structuredClone(upstream.pricing) } : {}),
+            ...(upstream.latencyP50Ms !== undefined ? { latencyP50Ms: upstream.latencyP50Ms } : {}),
+            ...(upstream.throughputP50 !== undefined ? { throughputP50: upstream.throughputP50 } : {}),
+            ...(upstream.uptime30m !== undefined ? { uptime30m: upstream.uptime30m } : {}),
+            ...(upstream.quantization ? { quantization: upstream.quantization } : {}),
+            ...(upstream.supportsTools !== undefined ? { supportsTools: upstream.supportsTools } : {}),
           })),
         } : {}),
       };
@@ -300,11 +333,15 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
   async testConnection(): Promise<ProviderConnectionTest> {
     const credential = await this.requireCredential();
     const client = this.clientFactory(credential.apiKey);
-    await client.testKey().catch((error) => { throw classifyOpenRouterError(error); });
+    const keyInfo = await client.testKey().catch((error) => { throw classifyOpenRouterError(error); });
     const models = await this.loadModelsWithClient(client, true, credentialFingerprint(credential.apiKey));
+    const quota = keyInfo.limitRemaining !== null && keyInfo.limitRemaining !== undefined
+      ? ` 남은 key 한도 ${formatCreditAmount(keyInfo.limitRemaining)} credits.`
+      : "";
+    const expiration = keyInfo.expiresAt ? ` Key 만료 ${keyInfo.expiresAt.slice(0, 10)}.` : "";
     return {
       ok: true,
-      detail: `API key와 strict ZDR 후보 모델 ${models.length}개를 확인했습니다. 유료 AI 요청은 보내지 않았습니다.`,
+      detail: `API key와 strict ZDR 후보 모델 ${models.length}개를 확인했습니다.${quota}${expiration} 유료 AI 요청은 보내지 않았습니다.`,
       checkedAt: new Date(this.now()).toISOString(),
       modelCount: models.length,
     };
@@ -398,7 +435,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
         providerId: this.id,
         model: options.model.id,
         error: message,
-        routing: routingResult(options.routing, routedProvider),
+        routing: routingResult(options.routing, routedProvider, options.model.upstreams),
       },
     });
     const emit = (event: ProviderEventPayload) => {
@@ -454,7 +491,11 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
             return failure(message);
           }
           if (chunk.id) remoteResponseId = safeIdentifier(chunk.id, 200);
-          if (chunk.provider) routedProvider = safeLabel(chunk.provider, 120);
+          const metadataProvider = selectedRouterProvider(chunk.openrouter_metadata, options.model.id);
+          if (metadataProvider) routedProvider = metadataProvider;
+          else if (chunk.openrouter_metadata === undefined && chunk.provider) {
+            routedProvider = safeLabel(chunk.provider, 120);
+          }
           const choice = chunk.choices?.[0];
           const delta = choice?.delta;
           if (typeof delta?.content === "string" && delta.content) {
@@ -516,7 +557,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
               resumeAvailable: resumeState !== undefined,
               ...(resumeState?.truncated ? { resumeTruncated: true } : {}),
               ...(routedProvider ? { routedProvider } : {}),
-              routing: routingResult(options.routing, routedProvider),
+              routing: routingResult(options.routing, routedProvider, options.model.upstreams),
               ...(totalUsage ? { usage: totalUsage } : {}),
               ...(completedTools.length > 0 ? { tools: completedTools } : {}),
             },
@@ -578,7 +619,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
             providerId: this.id,
             model: options.model.id,
             finalResponse,
-            routing: routingResult(options.routing, routedProvider),
+            routing: routingResult(options.routing, routedProvider, options.model.upstreams),
           },
         };
       }
@@ -597,7 +638,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
           error: classified.message,
           errorStatus: classified.statusCode,
           finalResponse,
-          routing: routingResult(options.routing, routedProvider),
+          routing: routingResult(options.routing, routedProvider, options.model.upstreams),
         },
       };
     } finally {
@@ -670,7 +711,13 @@ export class OpenRouterHttpClient implements OpenRouterClient {
     const data = record(value.data);
     return {
       label: typeof data?.label === "string" ? data.label : undefined,
-      limitRemaining: typeof data?.limit_remaining === "number" ? data.limit_remaining : null,
+      limit: nullableCatalogNumber(data?.limit, 1_000_000_000),
+      limitRemaining: nullableCatalogNumber(data?.limit_remaining, 1_000_000_000),
+      usage: boundedCatalogNumber(data?.usage, 1_000_000_000),
+      limitReset: typeof data?.limit_reset === "string" && data.limit_reset.length <= 40
+        ? safeLabel(data.limit_reset, 40)
+        : null,
+      expiresAt: catalogTimestamp(data?.expires_at),
     };
   }
 
@@ -683,28 +730,49 @@ export class OpenRouterHttpClient implements OpenRouterClient {
     const zdrIds = new Set(array(zdrValue.data)
       .map((value) => record(value)?.id)
       .filter((id): id is string => typeof id === "string"));
-    const upstreamsByModel = new Map<string, Map<string, string>>();
+    const upstreamsByModel = new Map<string, Map<string, OpenRouterUpstreamRecord>>();
     for (const value of array(endpointValue.data)) {
       const endpoint = record(value);
-      const modelId = typeof endpoint?.model_id === "string" ? endpoint.model_id : "";
-      const upstreamId = typeof endpoint?.tag === "string" ? endpoint.tag : "";
+      if (!endpoint) continue;
+      const modelId = typeof endpoint.model_id === "string" ? endpoint.model_id : "";
+      const upstreamId = typeof endpoint.tag === "string" ? endpoint.tag : "";
       if (!validOpenRouterUpstreamId(upstreamId) || !zdrIds.has(modelId)) continue;
       const displayName = safeLabel(
         typeof endpoint?.provider_name === "string" ? endpoint.provider_name : upstreamId,
         120,
       ) ?? upstreamId;
-      const modelUpstreams = upstreamsByModel.get(modelId) ?? new Map<string, string>();
-      modelUpstreams.set(upstreamId, displayName);
+      const supportedParameters = array(endpoint.supported_parameters)
+        .filter((item): item is string => typeof item === "string" && item.length <= 80)
+        .slice(0, 100);
+      const pricing = catalogPricing(endpoint.pricing);
+      const latencyP50Ms = catalogMilliseconds(record(endpoint.latency_last_30m)?.p50);
+      const throughputP50 = boundedCatalogNumber(record(endpoint.throughput_last_30m)?.p50, 1_000_000);
+      const uptime30m = boundedPercentage(endpoint.uptime_last_30m);
+      const quantization = typeof endpoint.quantization === "string" && endpoint.quantization.length <= 40
+        ? safeLabel(endpoint.quantization, 40)
+        : undefined;
+      const modelUpstreams = upstreamsByModel.get(modelId) ?? new Map<string, OpenRouterUpstreamRecord>();
+      modelUpstreams.set(upstreamId, {
+        id: upstreamId,
+        name: displayName,
+        ...(pricing ? { pricing } : {}),
+        ...(latencyP50Ms !== undefined ? { latencyP50Ms } : {}),
+        ...(throughputP50 !== undefined ? { throughputP50 } : {}),
+        ...(uptime30m !== undefined ? { uptime30m } : {}),
+        ...(quantization ? { quantization } : {}),
+        supportsTools: supportedParameters.includes("tools"),
+      });
       upstreamsByModel.set(modelId, modelUpstreams);
     }
     return array(userValue.data).flatMap((value) => {
       const model = record(value);
       if (!model || typeof model.id !== "string" || model.id.length > 200 || !zdrIds.has(model.id)) return [];
-      const upstreams = [...(upstreamsByModel.get(model.id) ?? new Map<string, string>()).entries()]
-        .map(([id, name]) => ({ id, name }))
+      const upstreams = [...(upstreamsByModel.get(model.id) ?? new Map<string, OpenRouterUpstreamRecord>()).values()]
         .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
       if (upstreams.length === 0) return [];
       const architecture = record(model.architecture);
+      const pricing = catalogPricing(model.pricing);
+      const expiresAt = catalogTimestamp(model.expiration_date);
       return [{
         id: model.id,
         name: safeLabel(typeof model.name === "string" ? model.name : model.id, 200) ?? model.id,
@@ -716,6 +784,8 @@ export class OpenRouterHttpClient implements OpenRouterClient {
         inputModalities: array(architecture?.input_modalities)
           .filter((item): item is string => typeof item === "string" && item.length <= 40)
           .slice(0, 20),
+        ...(pricing ? { pricing } : {}),
+        ...(expiresAt ? { expiresAt } : {}),
         upstreams,
       }];
     });
@@ -727,6 +797,7 @@ export class OpenRouterHttpClient implements OpenRouterClient {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
+        "X-OpenRouter-Metadata": "enabled",
       },
       body: JSON.stringify(request),
       redirect: "error",
@@ -1069,13 +1140,42 @@ function openRouterRoutingPolicy(selection: ProviderRoutingSelection | undefined
 function routingResult(
   selection: ProviderRoutingSelection | undefined,
   actualProvider: string | undefined,
+  available: readonly OpenRouterUpstreamRecord[] | undefined,
 ): Record<string, unknown> {
+  const actualUpstream = resolveActualUpstream(selection, actualProvider, available ?? []);
   return {
     profile: "strict-zdr",
     requestedUpstreams: selection ? [...selection.upstreams] : [],
     allowFallbacks: selection?.allowFallbacks === true,
     ...(actualProvider ? { actualProvider } : {}),
+    ...(actualUpstream ? { actualUpstream } : {}),
   };
+}
+
+function selectedRouterProvider(
+  metadata: OpenRouterChatChunk["openrouter_metadata"],
+  expectedModel: string,
+): string | undefined {
+  if (!metadata || metadata.requested !== expectedModel || !Number.isSafeInteger(metadata.attempt)
+      || (metadata.attempt ?? 0) < 1) return undefined;
+  const selected = array(metadata.endpoints?.available)
+    .slice(0, 100)
+    .map(record)
+    .filter((endpoint) => endpoint?.selected === true && endpoint.model === expectedModel);
+  if (selected.length !== 1 || typeof selected[0]?.provider !== "string") return undefined;
+  return safeLabel(selected[0].provider, 120);
+}
+
+function resolveActualUpstream(
+  selection: ProviderRoutingSelection | undefined,
+  actualProvider: string | undefined,
+  available: readonly OpenRouterUpstreamRecord[],
+): string | undefined {
+  if (!selection || !actualProvider) return undefined;
+  if (!selection.allowFallbacks && selection.upstreams.length === 1) return selection.upstreams[0];
+  const selected = available.filter((upstream) => selection.upstreams.includes(upstream.id)
+    && upstream.name === actualProvider);
+  return selected.length === 1 ? selected[0]?.id : undefined;
 }
 
 function validOpenRouterUpstreamId(value: string): boolean {
@@ -1139,6 +1239,61 @@ function array(value: unknown): unknown[] {
 
 function nonNegativeNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function boundedCatalogNumber(value: unknown, maximum: number): number | undefined {
+  const parsed = typeof value === "number"
+    ? value
+    : typeof value === "string" && /^(?:0|[1-9]\d*)(?:\.\d+)?(?:e[+-]?\d+)?$/i.test(value)
+      ? Number(value)
+      : Number.NaN;
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= maximum ? parsed : undefined;
+}
+
+function nullableCatalogNumber(value: unknown, maximum: number): number | null {
+  return boundedCatalogNumber(value, maximum) ?? null;
+}
+
+function catalogPricing(value: unknown): ProviderCatalogPricing | undefined {
+  const pricing = record(value);
+  if (!pricing) return undefined;
+  const input = catalogPerMillion(pricing.prompt);
+  const output = catalogPerMillion(pricing.completion);
+  const request = boundedCatalogNumber(pricing.request, 1_000_000);
+  const image = boundedCatalogNumber(pricing.image, 1_000_000);
+  if (input === undefined && output === undefined && request === undefined && image === undefined) return undefined;
+  return {
+    ...(input !== undefined ? { inputPerMillionUsd: input } : {}),
+    ...(output !== undefined ? { outputPerMillionUsd: output } : {}),
+    ...(request !== undefined ? { requestUsd: request } : {}),
+    ...(image !== undefined ? { imageUsd: image } : {}),
+  };
+}
+
+function catalogPerMillion(value: unknown): number | undefined {
+  const perToken = boundedCatalogNumber(value, 1_000);
+  if (perToken === undefined) return undefined;
+  const perMillion = perToken * 1_000_000;
+  return Number.isFinite(perMillion) && perMillion <= 1_000_000_000 ? perMillion : undefined;
+}
+
+function catalogMilliseconds(value: unknown): number | undefined {
+  const seconds = boundedCatalogNumber(value, 3_600);
+  return seconds === undefined ? undefined : Math.round(seconds * 1_000);
+}
+
+function boundedPercentage(value: unknown): number | undefined {
+  return boundedCatalogNumber(value, 100);
+}
+
+function catalogTimestamp(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 40) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
+function formatCreditAmount(value: number): string {
+  return value.toLocaleString("en-US", { maximumFractionDigits: 4 });
 }
 
 function safeIdentifier(value: string, maximum: number): string | undefined {

@@ -9,9 +9,10 @@ Last verified: 2026-08-24 KST
 
 V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저널과 Gateway protocol을
 확장하므로 `breaking`/`2.0.0`으로 분류한다. 대상은 `feature/v2-control-plane` 브랜치이며 첫
-단계에서는 Codex 실행을 공통 runtime 뒤로 옮기되 운영 중인 v1.8.1 설치와 Companion을 교체하지
-않는다. 2.0 APK는 현장 전달 전까지 CI-only artifact로 취급한다. v1.8.2를 current 설치 후보,
-v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치할 때도 1.8.1을 rollback으로 둔다.
+단계에서는 Codex 실행을 공통 runtime 뒤로 옮기되 별도 hotfix로 운영 중인 v1.8.3 Companion을 v2로
+교체하지 않는다. 2.0 APK는 현장 전달 전까지 CI-only artifact로 취급한다. v1.8.2를 current 설치
+후보, v1.8.3 APK를 별도 staged 후보, v1.8.1을 검증된 rollback 세트로 유지하고 첫 2.0 candidate를
+설치할 때도 1.8.1을 rollback으로 둔다.
 
 | V2 development component | Version / revision | State |
 | --- | --- | --- |
@@ -21,12 +22,13 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | Codex app-server schema | `codex-cli 0.149.0` | generated bindings and no-model real integration verified |
 | Current v1 APK | 1.8.2 candidate | signed APK/checksum/SBOM prepared from hotfix PR #4; install not performed |
 | Staged v1 hotfix APK | 1.8.3 candidate | writer-release PR #5 checks and signed artifact verified; kept separate and not installed |
-| Existing rollback APK | 1.8.1 | user-validated APK and running Companion preserved |
+| Existing rollback APK | 1.8.1 | user-validated rollback set preserved |
+| Deployed v1 Companion | 1.8.3 at `e0f6ea1` | separate versioned runtime active; completed target writer release verified |
 | OpenAI API milestone | official SDK 6.49.0 | encrypted bounded `store:false` multi-turn replay and fake tool-loop/SSE/Models tests; no API key configured and no paid request sent |
-| OpenRouter milestone | Chat Completions + user/ZDR model and endpoint APIs | encrypted bounded multi-turn replay, exact upstream lock/approved backup allowlist and fake routing/tool-loop/SSE tests; no API key configured and no paid request sent |
+| OpenRouter milestone | Chat Completions + user/ZDR model, endpoint and key APIs | encrypted bounded multi-turn replay, exact upstream lock/approved backup, bounded price/performance/quota UI, fake routing/tool-loop/SSE and protected 2-call smoke harness; no API key configured and no paid request sent |
 | Provider runtime contract | exact run ownership + ordered single-terminal events | Codex/OpenAI/OpenRouter shared success/partial-failure/cancel/timeout suite and fake 401/403/429/5xx/malformed SSE fixtures passing |
 | Android journal milestone | app-owned SQLite schema 1 | encrypted snapshot migration and rollback mirror implemented; CI-only, no device migration performed |
-| Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, HMAC-authenticated bounded user retention, workspace JSON export and protected delete implemented; no field restart performed |
+| Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, HMAC-authenticated bounded user retention, workspace JSON export and protected delete implemented in v2; not field deployed |
 | Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation, touch-only approvals, durable goal/pin/archive and two-touch history deletion implemented; no field APK handed off |
 | Android work notifications | opt-in connectedDevice service | maximum 8 encrypted loopback subscriptions, notification-only authenticated SSE, durable cursor/replay freshness and generic retained-operation navigation implemented; field process-kill/deep-link acceptance pending |
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
@@ -48,6 +50,16 @@ CI-only v2 artifact를 대체한다. Gateway protocol과 journal schema는 그�
 payload에 additive routing field만 기록한다. 실제 API key·유료 inference·APK 설치·전달·Companion
 재시작은 수행하지 않는다. current v1 후보 1.8.2, 별도 staged 1.8.3과 검증된 rollback 1.8.1은 변경하거나
 삭제하지 않는다.
+
+OpenRouter catalog and smoke-readiness checkpoint decision: 모델/upstream 가격·성능·quota 표시는 새
+user-visible v2 capability이고 보호된 실제 model grade workflow도 추가하므로 `feature`로 분류한다. 아직
+현장 전달하지 않은 incompatible v2 범위 안이어서 SemVer `2.0.0`/Android `versionCode 20000`, 대상
+`feature/v2-control-plane`을 유지하며 이전 CI-only v2 artifact를 대체한다. 수동 workflow는 GitHub
+`provider-smoke` environment, model allowlist, exact ZDR tag, 2회 synthetic 호출과 $0.02 상한 없이는
+실행되지 않는다. 호출당 2,048 input/64 output token ceiling, 자동 usage의 USD 기준 credit 비용과
+opt-in router metadata의 exact model·첫 attempt·선택 provider도 fail-closed로 검사한다. 이
+checkpoint에서는 실제 key·유료 inference·APK 설치·전달·Companion 재시작을 수행하지 않는다.
+current v1 후보 1.8.2, 별도 staged 1.8.3과 검증된 rollback 1.8.1은 그대로 보존한다.
 
 App run/journal state checkpoint decision: App 내부 경합과 복원 데이터 유실을 막는 v2 internal
 compatibility 조정이므로 기존 `breaking`/`2.0.0`, Android `versionCode 20000`, 대상

@@ -65,6 +65,12 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   같은 승인 목록으로 고정해 그 안의 fallback을 허용한다. 선택은 offline queue와 암호화 operation에
   보존하고 같은 대화 중 변경을 거부하며, strict profile·요청 순서·실제 upstream을 성공/실패 결과와
   모바일 대시보드에 표시한다.
+- OpenRouter model/upstream catalog의 bounded USD/1M token 가격, p50 latency/throughput, 30분 uptime,
+  quantization·tool capability와 key의 남은 quota/만료일을 인증된 모바일 화면에 표시한다. catalog
+  metadata를 실제 eval 등급과 구분하며, 실제 등급용 수동 `provider-smoke` workflow는 allowlist·exact
+  ZDR tag·2회 synthetic tool loop·$0.02 상한을 강제하고 prompt/응답/API key 없는 report만 보존한다.
+  Usage cost는 USD 기준 OpenRouter credits로 구분해 기록하고, opt-in router metadata의 exact model,
+  1회 attempt와 catalog provider를 검증해 응답을 실제 승인 upstream에 귀속한다.
 - Android의 암호화된 `WorkJournal` conversation·queue snapshot을 앱 전용 SQLite로 옮기는
   `PocketJournal` 플러그인을 추가했다. SQLite는 AES-GCM envelope만 받고 원래 workspace/device
   식별자 대신 domain-separated SHA-256 index를 바인딩하며 payload 크기를 제한한다.

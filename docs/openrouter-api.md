@@ -27,6 +27,14 @@ Companion은 인증된 `/models/user`, `/models?zdr=true`와 `/endpoints/zdr` �
 있는 모델만 공통 ToolBroker를 받고, 나머지는 chat-only로 제한한다. 이미지 입력도 catalog의
 `image` modality가 확인된 모델에만 보낸다.
 
+모델 catalog의 lowest prompt/completion 가격은 USD/1M token으로 변환하고, ZDR endpoint가 제공하는
+upstream별 가격, p50 latency/throughput, 30분 uptime, quantization과 tool parameter 지원을 함께
+표시한다. 값은 유한한 상한 안에서만 받아들이며 catalog snapshot이라는 점을 UI에 명시한다. 이 값은
+실제 run의 `usage.cost`와 별개이고, 품질 또는 코딩 등급으로 해석하지 않는다. 연결 테스트는 `/key`의
+남은 credit 한도와 만료일만 인증된 화면에 보여 주며 key label이나 원문 key는 반환하지 않는다.
+OpenRouter는 usage를 자동으로 응답에 포함하며 `usage.cost`는 credits 단위다. Credit 기준 통화와 catalog
+API 가격은 USD이지만 report에서는 `actualCostCredits`와 `estimatedMaximumUsd`를 별도 필드로 유지한다.
+
 모든 inference 요청은 다음 profile을 강제한다.
 
 ```json
@@ -58,6 +66,7 @@ OpenRouter의 ZDR와 data-collection 설정은 upstream 내용 보존을 제한�
 - strict JSON schema, `parallel_tool_calls: false`, 한 run 최대 8회 도구 호출
 - API key 확인과 user/ZDR 모델 교집합만 읽는 비과금 연결 테스트
 - ZDR endpoint 기반 1차 upstream 고정과 사용자가 승인한 단일 backup 범위
+- 모델/upstream 가격·성능 snapshot, key quota·만료 가시성
 - 원시 OpenRouter chunk와 도구 결과를 제거한 공통 ProviderEvent
 
 대화 재개와 승인형 파일 변경·검증 도구는 공통 암호화 journal/ToolBroker 계약으로 활성화되어 있다.
@@ -66,12 +75,29 @@ contract/eval과 현장 검증 전에는 이 범위를 넓히지 않는다.
 
 공개 CI는 가짜 HTTP/SSE와 모델 catalog만 사용하며 실제 API key나 유료 inference를 사용하지 않는다.
 
+## 보호된 실제 smoke/eval
+
+실제 모델 contract는 catalog metadata로 추정하지 않는다. GitHub의 `provider-smoke` environment에
+승인 규칙을 설정하고 `OPENROUTER_API_KEY` secret과 쉼표로 구분한 `OPENROUTER_SMOKE_MODELS` variable을
+넣은 뒤에만 `OpenRouter protected smoke` workflow를 수동 실행한다. 실행자는 exact model과 ZDR
+upstream tag를 직접 입력한다.
+
+Harness는 synthetic token만 사용해 강제 tool call과 그 결과를 잇는 대화 2회만 호출한다. endpoint
+가격과 호출당 2,048 input/64 output token ceiling으로 $0.02 상한을 사전 검사하고 key remaining
+credit도 확인하며, `order`/`only`, fallback 차단, ZDR와 data collection 거부를 유지한다. 각 응답의
+자동 usage accounting과 `X-OpenRouter-Metadata: enabled` 결과에서 exact model, 첫 attempt와 catalog
+provider가 일치해야 통과한다. 결과 artifact에는 모델·upstream, USD catalog estimate, USD 기준 credit
+비용, token과 통과/미검사 등급만 남기고 prompt, 응답 text, tool token과 API key는 남기지 않는다.
+`projectRead`와 `coding`은 실제 승인형 프로젝트 현장 시나리오 전까지 `not_tested`로 유지한다.
+
 ## 공식 기준
 
-- [OpenRouter Chat Completions](https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion)
+- [OpenRouter Chat Completions](https://openrouter.ai/docs/api/api-reference/chat/send-chat-completion-request)
 - [Tool calling](https://openrouter.ai/docs/guides/features/tool-calling)
 - [Models API와 supported parameters](https://openrouter.ai/docs/guides/overview/models)
 - [Provider routing과 ZDR](https://openrouter.ai/docs/guides/routing/provider-selection)
 - [ZDR endpoint 목록 API](https://openrouter.ai/docs/api/api-reference/endpoints/list-endpoints-zdr)
 - [Usage accounting](https://openrouter.ai/docs/cookbook/administration/usage-accounting)
+- [Router metadata](https://openrouter.ai/docs/guides/features/router-metadata)
+- [Current API key quota](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key)
 - [Data collection](https://openrouter.ai/docs/guides/privacy/data-collection)

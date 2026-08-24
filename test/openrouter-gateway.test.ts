@@ -72,6 +72,11 @@ test("gateway exposes OpenRouter only through safe common events and strict rout
   });
   assert.equal(connection.test.modelCount, 1);
   assert.equal(apiClient.chatCalls, 0);
+  const modelCatalog = await jsonFetch(`${base}/api/models?provider=openrouter`, { headers });
+  assert.deepEqual(modelCatalog.models[0].pricing, { inputPerMillionUsd: 2, outputPerMillionUsd: 6 });
+  assert.deepEqual(modelCatalog.models[0].capabilities, { tools: true, imageInput: false });
+  assert.equal(modelCatalog.models[0].routingOptions[0].latencyP50Ms, 180);
+  assert.equal(modelCatalog.models[0].routingOptions[0].supportsTools, true);
 
   const duplicateRouting = await fetch(`${base}/api/runs`, {
     method: "POST",
@@ -134,7 +139,8 @@ test("gateway exposes OpenRouter only through safe common events and strict rout
 
   const operation = await waitForOperation(base, headers, started.operation.id, "completed");
   assert.equal(operation.result.finalResponse, "OpenRouter gateway complete");
-  assert.equal(operation.result.routedProvider, "Strict Provider");
+  assert.equal(operation.result.routedProvider, "Strict Backup");
+  assert.equal(operation.result.routing.actualUpstream, "strict-backup");
   assert.equal(operation.result.usage.totalTokens, 9);
   assert.equal(operation.result.usage.costCredits, 0.0015);
   assert.equal(operation.resumable, true);
@@ -211,8 +217,18 @@ class GatewayOpenRouterClient implements OpenRouterClient {
       name: "Gateway Tool Model",
       supportedParameters: ["tools"],
       inputModalities: ["text"],
+      pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 6 },
       upstreams: [
-        { id: "strict-primary", name: "Strict Primary" },
+        {
+          id: "strict-primary",
+          name: "Strict Primary",
+          pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 6 },
+          latencyP50Ms: 180,
+          throughputP50: 80,
+          uptime30m: 99.9,
+          quantization: "fp16",
+          supportsTools: true,
+        },
         { id: "strict-backup", name: "Strict Backup" },
       ],
     }];
@@ -223,7 +239,7 @@ class GatewayOpenRouterClient implements OpenRouterClient {
     this.chatCalls += 1;
     const events: OpenRouterChatChunk[] = this.chatCalls === 1 ? [{
       id: "generation-gateway-tool",
-      provider: "Strict Provider",
+      provider: "Strict Backup",
       choices: [{
         delta: { tool_calls: [{
           index: 0,
@@ -236,7 +252,7 @@ class GatewayOpenRouterClient implements OpenRouterClient {
       usage: usage(2, 1, 0.0005),
     }] : [{
       id: "generation-gateway-final",
-      provider: "Strict Provider",
+      provider: "Strict Backup",
       choices: [{ delta: { content: "OpenRouter gateway complete" }, finish_reason: "stop" }],
       usage: usage(3, 3, 0.001),
     }];

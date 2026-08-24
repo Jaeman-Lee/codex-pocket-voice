@@ -531,7 +531,9 @@ function OperationCard({
   }, [editingName, operation.goalName]);
   const usage = operation.result?.usage;
   const model = operation.model || stringResult(operation.result, "model") || "기본 모델";
-  const routedProvider = operation.result?.routing?.actualProvider ?? operation.result?.routedProvider;
+  const routedProvider = operation.result?.routing?.actualUpstream
+    ? `${operation.result.routing.actualUpstream}${operation.result.routing.actualProvider ? ` (${operation.result.routing.actualProvider})` : ""}`
+    : operation.result?.routing?.actualProvider ?? operation.result?.routedProvider;
   const status = waiting ? "waiting" : operation.status;
   const archiveBlocked = waiting || operation.status === "running"
     || (operation.status === "unknown" && !operation.acknowledgedAt);
