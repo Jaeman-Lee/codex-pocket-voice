@@ -127,7 +127,11 @@ export class LocalToolBroker implements ToolBroker {
       });
       const resolution = await this.waitForApproval(handle.request.id, handle.decision, context.signal);
       if (resolution.decision !== "approved") {
-        return { toolCallId: call.toolCallId, status: "denied" };
+        return {
+          toolCallId: call.toolCallId,
+          status: "denied",
+          ...(resolution.feedback ? { error: approvalFeedbackForProvider(resolution.feedback) } : {}),
+        };
       }
     }
 
@@ -176,4 +180,17 @@ function toolCallFingerprint(call: ToolCall, cwd: string): string {
     input: call.input,
     cwd,
   })).digest("hex");
+}
+
+function approvalFeedbackForProvider(feedback: NonNullable<ApprovalResolution["feedback"]>): string {
+  return [
+    "사용자가 이 변경을 거절하고 다음 줄 피드백을 남겼습니다. 같은 run에서 수정안을 다시 만들고 새 승인을 요청하세요.",
+    ...feedback.lines.map((line) => {
+      const location = [
+        line.oldLine === undefined ? null : `old ${line.oldLine}`,
+        line.newLine === undefined ? null : `new ${line.newLine}`,
+      ].filter(Boolean).join(" / ");
+      return `- ${line.path} (${location}) ${JSON.stringify(line.code)}: ${JSON.stringify(line.comment)}`;
+    }),
+  ].join("\n");
 }

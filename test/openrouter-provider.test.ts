@@ -3,7 +3,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { InMemoryApprovalBroker } from "../src/approval-broker.js";
+import { InMemoryApprovalBroker, parseApprovalFeedback } from "../src/approval-broker.js";
 import { PathPolicy } from "../src/path-policy.js";
 import {
   EnvironmentOpenRouterCredentialSource,
@@ -404,6 +404,77 @@ test("OpenRouter pauses a change tool until touch approval and reports the resul
   assert.equal(completion.status, "completed");
   assert.equal(changes, 1);
   assert.match(JSON.stringify(client.requests[1]?.messages), /completed|changed/);
+});
+
+test("OpenRouter returns touch decline line feedback to the same chat run", async (t) => {
+  const paths = await PathPolicy.fromEnvironment(process.cwd());
+  const approvals = new InMemoryApprovalBroker({ createId: () => "approval-openrouter-feedback" });
+  t.after(() => approvals.close());
+  const tool: RegisteredTool<Record<string, never>> = {
+    definition: {
+      name: "workspace_replace_text",
+      description: "Apply one reviewed change",
+      inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+      risk: "change",
+    },
+    validate: () => ({}),
+    approval: () => ({ redactedSummary: "Review replacement", requiresTouch: true }),
+    async execute() { throw new Error("declined change must not execute"); },
+  };
+  const client = new FakeOpenRouterClient([
+    [chunk({
+      id: "router-feedback-call",
+      provider: "Provider A",
+      choices: [{
+        delta: { tool_calls: [{
+          index: 0,
+          id: "router-feedback-tool",
+          type: "function",
+          function: { name: "workspace_replace_text", arguments: "{}" },
+        }] },
+        finish_reason: "tool_calls",
+      }],
+      usage: usage(2, 1, 0, 0.001),
+    })],
+    [chunk({
+      id: "router-feedback-done",
+      provider: "Provider A",
+      choices: [{ delta: { content: "수정안을 다시 준비하겠습니다." }, finish_reason: "stop" }],
+      usage: usage(2, 1, 0, 0.001),
+    })],
+  ], models());
+  const adapter = new OpenRouterProviderAdapter({
+    credentials: staticCredentials(secret),
+    clientFactory: () => client,
+    createId: sequentialIds("router-feedback-conversation", "router-feedback-run"),
+    modelAllowlist: ["vendor/tool-model"],
+    toolBroker: new LocalToolBroker([tool], approvals, paths),
+    modelGrades: openRouterGrades("vendor/tool-model", "provider-a"),
+  });
+  const run = await adapter.startRun({
+    cwd: process.cwd(),
+    prompt: "Review this change",
+    model: "vendor/tool-model",
+    routing: { upstreams: ["provider-a"], allowFallbacks: false },
+  });
+  await waitFor(() => approvals.listPending().length === 1);
+  approvals.resolve(approvals.listPending()[0]!.id, "declined", "touch", parseApprovalFeedback({
+    lines: [{
+      path: "src/review.ts",
+      oldLine: 7,
+      code: "unsafe();",
+      comment: "안전한 helper를 사용해 주세요.",
+    }],
+  }));
+  assert.equal((await run.completion).status, "completed");
+  assert.equal(client.requests.length, 2);
+  assert.match(JSON.stringify(client.requests[0]?.messages), /line review feedback/u);
+  const toolMessage = client.requests[1]?.messages.find((message) => message.role === "tool");
+  assert.equal(typeof toolMessage?.content, "string");
+  const toolResult = JSON.parse(toolMessage!.content as string) as { status?: unknown; error?: unknown };
+  assert.equal(toolResult.status, "denied");
+  assert.match(String(toolResult.error), /src\/review\.ts/u);
+  assert.match(String(toolResult.error), /안전한 helper를 사용해 주세요/u);
 });
 
 test("OpenRouter locks routing to the user-approved strict ZDR upstream order", async () => {

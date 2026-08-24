@@ -87,6 +87,11 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   const overlay = css.match(/\.operations-dashboard \{([^}]+)\}/)?.[1] ?? "";
   const sheet = css.match(/\.operations-sheet \{([^}]+)\}/)?.[1] ?? "";
   const details = css.match(/\.approval-card pre \{([^}]+)\}/)?.[1] ?? "";
+  const diffReview = css.match(/\.approval-diff-review \{([^}]+)\}/)?.[1] ?? "";
+  const diffLines = css.match(/\.approval-diff-lines \{([^}]+)\}/)?.[1] ?? "";
+  const diffRow = css.match(/\.approval-diff-lines li > button, \.approval-diff-lines li > div \{([^}]+)\}/)?.[1] ?? "";
+  const diffCode = css.match(/\.approval-diff-lines code \{([^}]+)\}/)?.[1] ?? "";
+  const diffComment = css.match(/\.approval-diff-lines li > label textarea \{([^}]+)\}/)?.[1] ?? "";
   const handoffPath = css.match(/\.handoff-summary code \{([^}]+)\}/)?.[1] ?? "";
   const journalConfirm = css.match(/\.journal-delete-confirm \{([^}]+)\}/)?.[1] ?? "";
   const journalPath = css.match(/\.journal-delete-confirm > code \{([^}]+)\}/)?.[1] ?? "";
@@ -121,6 +126,16 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   assert.match(details, /max-width:\s*100%/);
   assert.match(details, /white-space:\s*pre-wrap/);
   assert.match(details, /overflow-wrap:\s*anywhere/);
+  assert.match(diffReview, /max-width:\s*100%/);
+  assert.match(diffReview, /overflow:\s*hidden/);
+  assert.match(diffLines, /overflow-x:\s*hidden/);
+  assert.match(diffLines, /overflow-y:\s*auto/);
+  assert.match(diffRow, /minmax\(0,\s*1fr\)/);
+  assert.match(diffRow, /max-width:\s*100%/);
+  assert.match(diffCode, /white-space:\s*pre-wrap/);
+  assert.match(diffCode, /overflow-wrap:\s*anywhere/);
+  assert.match(diffComment, /max-width:\s*100%/);
+  assert.match(diffComment, /min-width:\s*0/);
   assert.match(handoffPath, /min-width:\s*0/);
   assert.match(handoffPath, /overflow-wrap:\s*anywhere/);
   assert.match(journalConfirm, /max-width:\s*100%/);

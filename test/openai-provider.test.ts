@@ -3,7 +3,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { InMemoryApprovalBroker } from "../src/approval-broker.js";
+import { InMemoryApprovalBroker, parseApprovalFeedback } from "../src/approval-broker.js";
 import { PathPolicy } from "../src/path-policy.js";
 import { LocalToolBroker, type RegisteredTool } from "../src/tool-broker.js";
 import type {
@@ -433,6 +433,78 @@ test("OpenAI pauses a change tool until the matching touch approval resolves", a
   assert.equal(completion.status, "completed");
   assert.equal(changes, 1);
   assert.match(JSON.stringify(client.requests[1]?.input), /completed|changed/);
+});
+
+test("OpenAI returns touch decline line feedback to the same Responses run", async (t) => {
+  const paths = await PathPolicy.fromEnvironment(process.cwd());
+  const approvals = new InMemoryApprovalBroker({ createId: () => "approval-openai-feedback" });
+  t.after(() => approvals.close());
+  const tool: RegisteredTool<Record<string, never>> = {
+    definition: {
+      name: "workspace_replace_text",
+      description: "Apply one reviewed change",
+      inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+      risk: "change",
+    },
+    validate: () => ({}),
+    approval: () => ({ redactedSummary: "Review replacement", requiresTouch: true }),
+    async execute() { throw new Error("declined change must not execute"); },
+  };
+  const client = new SequencedOpenAIClient([
+    [event({
+      type: "response.completed",
+      sequence_number: 1,
+      response: {
+        id: "resp-feedback-call",
+        output_text: "",
+        output: [{
+          type: "function_call",
+          id: "feedback-item",
+          call_id: "feedback-call",
+          name: "workspace_replace_text",
+          arguments: "{}",
+          status: "completed",
+        }],
+        usage: usage(2, 1, 0),
+      },
+    })],
+    [event({
+      type: "response.completed",
+      sequence_number: 2,
+      response: { id: "resp-feedback-done", output_text: "수정안을 다시 준비하겠습니다.", output: [], usage: usage(2, 1, 0) },
+    })],
+  ]);
+  const adapter = new OpenAIProviderAdapter({
+    credentials: staticCredentials("sk-test-declined-feedback"),
+    clientFactory: () => client,
+    createId: sequentialIds("feedback-conversation", "feedback-run"),
+    modelAllowlist: ["gpt-tool-test"],
+    toolBroker: new LocalToolBroker([tool], approvals, paths),
+    modelGrades: openAIGrades("gpt-tool-test"),
+  });
+  const run = await adapter.startRun({ cwd: process.cwd(), prompt: "Review this change", model: "gpt-tool-test" });
+  await waitFor(() => approvals.listPending().length === 1);
+  approvals.resolve(approvals.listPending()[0]!.id, "declined", "touch", parseApprovalFeedback({
+    lines: [{
+      path: "src/review.ts",
+      newLine: 9,
+      code: "unsafe();",
+      comment: "안전한 helper를 사용해 주세요.",
+    }],
+  }));
+  assert.equal((await run.completion).status, "completed");
+  assert.equal(client.requests.length, 2);
+  assert.match(JSON.stringify(client.requests[0]), /line review feedback/u);
+  const continuation = client.requests[1]?.input;
+  assert.equal(Array.isArray(continuation), true);
+  const outputItem = (continuation as unknown as Array<Record<string, unknown>>).find((item) => (
+    item.type === "function_call_output"
+  ));
+  assert.equal(typeof outputItem?.output, "string");
+  const toolResult = JSON.parse(outputItem!.output as string) as { status?: unknown; error?: unknown };
+  assert.equal(toolResult.status, "denied");
+  assert.match(String(toolResult.error), /src\/review\.ts/u);
+  assert.match(String(toolResult.error), /안전한 helper를 사용해 주세요/u);
 });
 
 test("OpenAI connection test lists models without creating a paid response", async () => {

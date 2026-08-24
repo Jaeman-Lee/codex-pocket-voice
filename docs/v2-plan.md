@@ -24,7 +24,7 @@
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Codex exact-turn Steer와 durable idempotency, terminal operation 기반 명시적 Provider context Fork와 redacted provenance, Tool/Approval 계약, 세 Provider 공용 contract·stream failure fixture, protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신, 프로젝트별 음성 용어 사전 및 strict 설정 말하기→터치 검토 구현; production build·실제 pairing/Gateway/SSE/run/approval 기반 Playwright 모바일 회귀 통과, 새 설정 음성 Chromium CI·실기기 음성 회귀 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only systemd encrypted credential, 암호화 durable multi-turn, server-authored output/total token·비용 hard limit과 실제/추정 비용 accounting, model-grade 기반 read/coding tool gate, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구, 격리 npm 검증, 보호된 2-call smoke와 단계별 합성 프로젝트 grade harness 구현; 실제 모델 workflow 실행·현장 프로젝트 acceptance 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가장 비싼 승인 route 기준 사전 비용검사, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker, 보호된 synthetic smoke와 단계별 합성 프로젝트 grade harness 및 exact model/upstream grade enforcement 구현; 실제 model/upstream workflow 실행·현장 acceptance 잔여 |
-| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror와 schema 2 glossary, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, 최대 8대의 redacted read-only Multi-Companion Fleet와 명시적 PC 전환, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, 모바일 기본 Queue·명시적 Codex Steer, Provider 전환의 기본 빈 대화와 touch-reviewed bounded Fork, durable 기록, bounded retention 및 API 비용 정책 설정, touch-only 월 비용 확인, opt-in process-death native 알림·retained run 열기, API 30 token-gated notification Intent 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed 구현; 실기기 multi-PC/background/tray-tap deep-link/voice acceptance 잔여 |
+| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror와 schema 2 glossary, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, bounded syntax-highlighted old/new-line diff와 최대 8개 touch-decline same-run feedback, two-touch workspace 복구, 최대 8대의 redacted read-only Multi-Companion Fleet와 명시적 PC 전환, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, 모바일 기본 Queue·명시적 Codex Steer, Provider 전환의 기본 빈 대화와 touch-reviewed bounded Fork, durable 기록, bounded retention 및 API 비용 정책 설정, touch-only 월 비용 확인, opt-in process-death native 알림·retained run 열기, API 30 token-gated notification Intent 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed 구현; artifact 다운로드와 실기기 multi-PC/background/tray-tap deep-link/voice acceptance 잔여 |
 | Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; API 30 ATD에서 Keystore config/identity/background state와 notification Intent 계측 회귀 추가, 실제 P2P group formation·external edge DDoS/실부하·tray-tap/reconnect/voice 실기기 release gate 잔여 |
 
 ## 2. 제품 정의
@@ -453,6 +453,12 @@ IndexedDB/localStorage 기록은 읽기 migration 뒤에도 삭제하지 않으�
 `unknown` 복구·확인 동기화를 구현했다. 모바일 대시보드는 run을 workspace별로 묶고 Provider·모델·
 경과 시간·usage/cost와 승인 대기 상태를 표시한다. 승인함은 matching run의 redacted 정보만 노출하고
 same-origin 터치 approve/decline, 만료와 replay 완료 뒤 snapshot 재동기화를 적용한다.
+unified diff는 파일·hunk·이전/새 줄 번호와 추가·삭제 색을 구분하고 24,000자·300줄·줄당 2,000자
+상한 안에서 긴 줄을 wrap한다. 안전한 프로젝트 상대 경로의 추가·삭제 줄만 최대 8개 선택해 줄당
+600자 의견을 쓸 수 있으며 선택 중 승인은 비활성화된다. Companion은 12 KiB 이하 exact feedback
+schema를 다시 검사해 touch decline에만 묶고, 거절된 Tool Broker 결과로 같은 OpenAI Responses/
+OpenRouter run에 돌려보내 수정안과 새 승인을 요청한다. resolution은 암호화 journal에는 남지만 native
+notification 축약 경계에는 포함하지 않는다.
 현재 workspace catalog는 hook·prompt·optional lock 없이 branch, 12자리 HEAD, dirty 수, upstream
 ahead/behind와 linked worktree를 수집한다. 대시보드와 세션 반납 검토 화면은 전체 경로와 이 identity를
 표시하고 run 시작 시점 snapshot은 암호화 event journal에 함께 보존한다. Gateway는 run/release/claim의
@@ -565,7 +571,8 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - OpenAI `store: false` 요청·로컬 상태 replay와 보호된 2-call smoke harness loopback 검사
 - API Provider replay 상태의 journal 암호화, API/SSE/export 비노출, 이미지 data URL 제거 검사
 - Playwright에서 production client와 실제 pairing·Gateway·SSE·run·approval 경로로 320/360/412px,
-  150% 글자, 키보드 축소, 회전과 긴 prompt·diff·승인 상세 검증 — Chromium CI 자동 검사 구현
+  150% 글자, 키보드 축소, 회전과 긴 prompt·diff·승인 상세, 변경 줄 선택·필수 의견·touch decline payload
+  검증 — Chromium CI 자동 검사 구현
 - production 모바일 경로에서 실행 중 입력의 Queue 기본값, explicit Codex Steer, exact active turn 전달,
   durable 재표시와 320px containment 검증 — 자동 검사 구현
 - production 모바일 경로에서 별도 origin의 두 번째 합성 Companion의 authenticated server-authored

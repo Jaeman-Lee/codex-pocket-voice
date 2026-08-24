@@ -53,6 +53,7 @@ const PROJECT_TOOL_INSTRUCTIONS = [
   "Project tools are restricted to the selected workspace and cannot access credentials.",
   "Observation tools may run immediately; every file-changing or execution tool pauses for explicit on-screen user approval.",
   "Never claim that a change or command ran until the corresponding tool result reports completed.",
+  "If a denied tool result includes line review feedback, revise the proposal in the same run and request a new approval.",
 ].join(" ");
 
 export interface OpenAIModelRecord { id: string }

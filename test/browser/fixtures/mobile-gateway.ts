@@ -25,6 +25,15 @@ const LONG_DIFF = [
   "@@ -1,2 +1,3 @@",
   `+export const syntheticMobileAcceptanceValue = "${"unbroken-layout-token-".repeat(42)}";`,
 ].join("\n");
+const REVIEW_PATH = "src/browser-fixture/review.ts";
+const REVIEW_DIFF = [
+  `diff --git a/${REVIEW_PATH} b/${REVIEW_PATH}`,
+  `--- a/${REVIEW_PATH}`,
+  `+++ b/${REVIEW_PATH}`,
+  "@@ -1 +1 @@",
+  "-export const reviewed = false;",
+  "+export const reviewed = true;",
+].join("\n");
 
 const workspace = resolve(process.cwd());
 const port = Number(process.env.CODEX_POCKET_BROWSER_PORT ?? "41731");
@@ -146,8 +155,8 @@ class MobileAcceptanceClient implements WebCodexClient {
         risk: "high_risk",
         redactedSummary: "긴 경로를 포함한 합성 변경 검토",
         redactedDetails: {
-          paths: [LONG_PATH],
-          diff: LONG_DIFF,
+          paths: [LONG_PATH, REVIEW_PATH],
+          diff: REVIEW_DIFF,
           purpose: "browser-layout-only",
         },
         requiresTouch: true,

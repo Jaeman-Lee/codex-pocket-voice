@@ -10,6 +10,22 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Approval diff line feedback은 모바일 승인함에서 변경 줄을 검토하고 Provider에 수정 의견을 돌려보내는
+  새 user-visible workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위
+  안에서 `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only
+  candidate를 대체한다. APK 전달·설치, 실제 Provider 호출과 실행 중 Companion 재시작은 하지 않으며
+  current v1 후보 1.8.2, staged v1.8.4와 검증된 v1.8.1 rollback을 그대로 보존한다.
+- 승인함의 unified diff를 파일 header·hunk·이전/새 줄 번호·추가·삭제 색으로 구분하고 긴 줄과 경로를
+  내부 wrap/scroll로 제한한다. 최대 24,000자·300줄·줄당 2,000자만 렌더링하며, 서버와 같은 안전한
+  500자 이하 프로젝트 상대 경로의 추가·삭제 줄만 피드백 대상으로 선택할 수 있다.
+- 사용자는 최대 8개 변경 줄에 줄당 600자 의견을 입력할 수 있다. 선택한 모든 줄의 의견이 있어야
+  `거절하고 피드백 전송`이 활성화되고, 선택 중 승인은 비활성화된다. 서버는 12 KiB payload, 경로·
+  줄 번호·한 줄 code·중복·추가 필드를 다시 검사하고 same-origin 화면 터치 거절에만 허용한다.
+- 거절 결과는 별도 run을 만들지 않고 기존 OpenAI Responses `function_call_output` 또는 OpenRouter
+  `tool` message에 전달한다. 두 Provider에는 같은 run에서 제안을 수정하고 fresh approval을 요청하도록
+  공통 지시하며, 거절된 도구는 실행하지 않는다. resolution은 기존 암호화 Companion journal에 남고
+  native 알림에는 피드백·경로·code를 내리지 않는다. diff header 주입을 막기 위해 workspace 변경 경로의
+  제어문자도 승인 생성 전에 거절한다.
 - Spoken settings touch review는 프로젝트·AI 연결·모델을 음성으로 선택하는 새 user-visible workflow이므로
   `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
   `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.

@@ -641,7 +641,8 @@ function validateTextContent(value: unknown, label: string): string {
 }
 
 function requiredSafeRelativePath(value: unknown): string {
-  if (typeof value !== "string" || value.length < 1 || value.length > 500 || value.includes("\0")) {
+  if (typeof value !== "string" || value.length < 1 || value.length > 500
+      || value !== value.trim() || /[\u0000-\u001f\u007f]/u.test(value)) {
     throw new ToolBrokerError(400, "path must be a project-relative file path");
   }
   if (path.isAbsolute(value) || value.includes("\\")) throw new ToolBrokerError(400, "path must use a project-relative POSIX form");

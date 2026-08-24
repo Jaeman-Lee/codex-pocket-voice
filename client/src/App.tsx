@@ -137,6 +137,7 @@ import {
 } from "./pocket-link-identity-rotation";
 import type {
   ChatMessage,
+  ApprovalFeedback,
   ApprovalItem,
   ApprovalResolution,
   CodexEvent,
@@ -4036,13 +4037,17 @@ export function App() {
     }
   }
 
-  async function decideApproval(approval: ApprovalItem, decision: "approved" | "declined") {
+  async function decideApproval(
+    approval: ApprovalItem,
+    decision: "approved" | "declined",
+    feedback?: ApprovalFeedback,
+  ) {
     if (decidingApprovalId) return;
     setDecidingApprovalId(approval.id);
     try {
       const data = await api<{ approval: ApprovalItem; resolution: ApprovalResolution }>(
         `/api/approvals/${encodeURIComponent(approval.id)}/decision`,
-        { method: "POST", body: { decision } },
+        { method: "POST", body: { decision, ...(feedback ? { feedback } : {}) } },
       );
       setApprovalInbox((current) => applyApprovalEvent(current, {
         type: "approval",
@@ -4050,7 +4055,9 @@ export function App() {
         approval: data.approval,
         resolution: data.resolution,
       }));
-      showToast(decision === "approved" ? "검토한 도구 실행을 승인했습니다." : "도구 실행을 거절했습니다.");
+      showToast(decision === "approved"
+        ? "검토한 도구 실행을 승인했습니다."
+        : feedback ? "변경을 거절하고 줄 피드백을 같은 작업에 보냈습니다." : "도구 실행을 거절했습니다.");
     } catch (error) {
       await refreshOperationalSnapshot(true);
       showToast(errorMessage(error));
@@ -4456,7 +4463,7 @@ export function App() {
           onUpdateOperation={updateOperationMetadata}
           onUpdateJournalPolicy={updateCompanionJournalPolicy}
           onUpdateRunPolicy={updateCompanionRunPolicy}
-          onDecision={(approval, decision) => void decideApproval(approval, decision)}
+          onDecision={(approval, decision, feedback) => void decideApproval(approval, decision, feedback)}
           onExportWorkspace={exportCompanionJournal}
           onDeleteWorkspaceHistory={deleteCompanionJournal}
         />

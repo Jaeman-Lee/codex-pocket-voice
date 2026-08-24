@@ -103,6 +103,8 @@ test("workspace_replace_text rejects sensitive, linked, secret-bearing, and esca
   await assert.rejects(replace("symlink", "linked.txt"), /non-linked|Symlinked/);
   await assert.rejects(replace("hardlink", "hardlinked.txt"), /non-linked/);
   await assert.rejects(replace("escape", "../outside.txt"), /parent/);
+  await assert.rejects(replace("newline", "safe.txt\n+++ b/spoofed.txt"), /project-relative/);
+  await assert.rejects(replace("space", " safe.txt"), /project-relative/);
   await assert.rejects(replace("secret", "plain.txt", "OPENAI_API_KEY=sk-abcdefghijklmnop\n"), /credential/);
   assert.equal(approvals.listPending().length, 0);
 });

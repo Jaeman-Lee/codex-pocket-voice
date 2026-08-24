@@ -3,6 +3,9 @@ import test from "node:test";
 import {
   ApprovalBrokerError,
   InMemoryApprovalBroker,
+  MAX_APPROVAL_FEEDBACK_COMMENT_LENGTH,
+  MAX_APPROVAL_FEEDBACK_LINES,
+  parseApprovalFeedback,
   type ApprovalBrokerEvent,
 } from "../src/approval-broker.js";
 import { PathPolicy } from "../src/path-policy.js";
@@ -65,6 +68,76 @@ test("ApprovalBroker rejects unbounded or non-JSON review details", () => {
     (error: unknown) => error instanceof ApprovalBrokerError && error.statusCode === 400,
   );
   approvals.close();
+});
+
+test("ApprovalBroker accepts bounded line feedback only for a touch decline", async () => {
+  const approvals = new InMemoryApprovalBroker({ createId: () => "approval-feedback" });
+  const handle = approvals.requestApproval({
+    providerId: "openai",
+    conversationId: "conversation-feedback",
+    runId: "run-feedback",
+    toolCallId: "tool-feedback",
+    risk: "change",
+    redactedSummary: "review a file change",
+  });
+  const feedback = parseApprovalFeedback({
+    lines: [{
+      path: "src/review.ts",
+      oldLine: 7,
+      newLine: 8,
+      code: "return next;",
+      comment: "기존 null 처리도 유지해 주세요.\r\n테스트도 추가해 주세요.",
+    }],
+  });
+  assert.throws(
+    () => approvals.resolve(handle.request.id, "approved", "touch", feedback),
+    (error: unknown) => error instanceof ApprovalBrokerError && error.statusCode === 400,
+  );
+  assert.throws(
+    () => approvals.resolve(handle.request.id, "declined", "voice", feedback),
+    (error: unknown) => error instanceof ApprovalBrokerError && error.statusCode === 400,
+  );
+
+  const resolution = approvals.resolve(handle.request.id, "declined", "touch", feedback);
+  assert.equal(resolution.decision, "declined");
+  assert.equal(resolution.source, "touch");
+  assert.equal(resolution.feedback?.lines[0]?.comment, "기존 null 처리도 유지해 주세요.\n테스트도 추가해 주세요.");
+  assert.deepEqual(await handle.decision, resolution);
+  assert.deepEqual(approvals.resolve(handle.request.id, "declined", "touch", feedback), resolution);
+  assert.throws(
+    () => approvals.resolve(handle.request.id, "declined", "touch", parseApprovalFeedback({
+      lines: [{ ...feedback.lines[0], comment: "다른 의견" }],
+    })),
+    (error: unknown) => error instanceof ApprovalBrokerError && error.statusCode === 409,
+  );
+  approvals.close();
+});
+
+test("Approval line feedback rejects unsafe, duplicate, and unbounded input", () => {
+  const valid = {
+    path: "src/review.ts",
+    newLine: 1,
+    code: "safe();",
+    comment: "수정해 주세요.",
+  };
+  const invalid: unknown[] = [
+    null,
+    { lines: [] },
+    { lines: Array.from({ length: MAX_APPROVAL_FEEDBACK_LINES + 1 }, (_, index) => ({ ...valid, newLine: index + 1 })) },
+    { lines: [{ ...valid, path: "/etc/passwd" }] },
+    { lines: [{ ...valid, path: "../outside.ts" }] },
+    { lines: [{ ...valid, path: "src\\windows.ts" }] },
+    { lines: [{ ...valid, oldLine: undefined, newLine: undefined }] },
+    { lines: [{ ...valid, comment: "x".repeat(MAX_APPROVAL_FEEDBACK_COMMENT_LENGTH + 1) }] },
+    { lines: [valid, { ...valid }] },
+    { lines: [{ ...valid, secret: "must not pass" }] },
+  ];
+  for (const value of invalid) {
+    assert.throws(
+      () => parseApprovalFeedback(value),
+      (error: unknown) => error instanceof ApprovalBrokerError && error.statusCode === 400,
+    );
+  }
 });
 
 test("ApprovalBroker expires offline requests without ever auto-approving them", async () => {
@@ -228,5 +301,51 @@ test("LocalToolBroker resolves a pending approval as declined when the run is ca
   assert.equal((await result).status, "denied");
   assert.deepEqual(resolutions, ["declined:system"]);
   assert.equal(approvals.listPending().length, 0);
+  approvals.close();
+});
+
+test("LocalToolBroker returns touch decline feedback to the same provider run without executing", async () => {
+  const paths = await PathPolicy.fromEnvironment(process.cwd());
+  const approvals = new InMemoryApprovalBroker({ createId: () => "approval-reviewed-decline" });
+  let executions = 0;
+  const tool: RegisteredTool<Record<string, never>> = {
+    definition: {
+      name: "apply_reviewed_change",
+      description: "Apply only after line review",
+      inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+      risk: "change",
+    },
+    validate: () => ({}),
+    approval: () => ({ redactedSummary: "Review proposed change", requiresTouch: true }),
+    async execute() {
+      executions += 1;
+      return { changed: true };
+    },
+  };
+  const broker = new LocalToolBroker([tool], approvals, paths);
+  const resultPromise = broker.execute({
+    providerId: "openai",
+    conversationId: "feedback-conversation",
+    runId: "feedback-run",
+    toolCallId: "feedback-tool",
+    name: "apply_reviewed_change",
+    input: {},
+  }, { cwd: process.cwd() });
+  await Promise.resolve();
+  const pending = approvals.listPending()[0]!;
+  approvals.resolve(pending.id, "declined", "touch", parseApprovalFeedback({
+    lines: [{
+      path: "src/review.ts",
+      newLine: 9,
+      code: "unsafe();",
+      comment: "안전한 helper를 사용해 주세요.",
+    }],
+  }));
+  const result = await resultPromise;
+  assert.equal(result.status, "denied");
+  assert.match(result.error ?? "", /같은 run에서 수정안을 다시 만들고 새 승인을 요청/u);
+  assert.match(result.error ?? "", /src\/review\.ts \(new 9\)/u);
+  assert.match(result.error ?? "", /안전한 helper를 사용해 주세요/u);
+  assert.equal(executions, 0);
   approvals.close();
 });

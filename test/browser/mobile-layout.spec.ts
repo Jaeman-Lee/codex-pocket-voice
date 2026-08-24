@@ -166,6 +166,13 @@ test("the mobile Fleet shows bounded summaries for another Companion without exp
 });
 
 test("large text contains a long live diff and approval details", async ({ page }) => {
+  let approvalDecisionBody: Record<string, unknown> | null = null;
+  await page.route("**/api/approvals/*/decision", async (route) => {
+    if (route.request().method() === "POST") {
+      approvalDecisionBody = route.request().postDataJSON() as Record<string, unknown>;
+    }
+    await route.continue();
+  });
   await bootPairedApp(page, { width: 320, height: 780 });
   const largeTextStylesheet = "/__browser-fixture__/large-text.css";
   await page.route(`**${largeTextStylesheet}`, (route) => route.fulfill({
@@ -194,14 +201,37 @@ test("large text contains a long live diff and approval details", async ({ page 
   await expect(dashboard.getByText("긴 경로를 포함한 합성 변경 검토")).toBeVisible();
   const approvalDetails = dashboard.locator(".approval-card pre");
   await expect(approvalDetails).toContainText("browser-layout-only");
-  await expect(approvalDetails).toContainText("diff --git");
+  await expect(approvalDetails).toContainText("deeply-nested-mobile-segment");
+  const diffReview = dashboard.getByLabel("줄 단위 변경 diff 검토");
+  await expect(diffReview).toContainText("diff --git");
+  await expect(diffReview).toContainText("export const reviewed = true;");
   await approvalDetails.scrollIntoViewIfNeeded();
   await settleLayout(page);
   await expectShellContained(page);
   await expectElementContained(page, dashboard.locator(".operations-sheet"));
   await expectElementContained(page, approvalDetails);
+  await expectElementContained(page, diffReview);
 
-  await dashboard.getByRole("button", { name: "거절" }).click();
+  await diffReview.locator(".diff-addition button").click();
+  await expect(dashboard.getByRole("button", { name: "검토 후 터치 승인" })).toBeDisabled();
+  await expect(dashboard.getByRole("button", { name: "거절", exact: true })).toBeDisabled();
+  const feedback = diffReview.getByLabel(/src\/browser-fixture\/review\.ts 새 1줄에 보낼 피드백/u);
+  await feedback.fill("상수 이름은 유지하고 기본값만 true로 바꿔 주세요.");
+  await feedback.scrollIntoViewIfNeeded();
+  await settleLayout(page);
+  await expectElementContained(page, feedback);
+  await dashboard.getByRole("button", { name: "거절하고 피드백 전송" }).click();
+  await expect.poll(() => approvalDecisionBody).toEqual({
+    decision: "declined",
+    feedback: {
+      lines: [{
+        path: "src/browser-fixture/review.ts",
+        newLine: 1,
+        code: "export const reviewed = true;",
+        comment: "상수 이름은 유지하고 기본값만 true로 바꿔 주세요.",
+      }],
+    },
+  });
   await expect(dashboard.locator(".approval-card")).toHaveCount(0);
   await dashboard.getByRole("button", { name: "작업 대시보드 닫기" }).click();
   await expect(activity).toBeHidden({ timeout: 8_000 });

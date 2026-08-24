@@ -30,6 +30,7 @@ import { inspectWorkspaceIdentity } from "./workspace-identity.js";
 import {
   ApprovalBrokerError,
   InMemoryApprovalBroker,
+  parseApprovalFeedback,
   type ApprovalBroker,
   type ApprovalRequest,
 } from "./approval-broker.js";
@@ -1394,7 +1395,14 @@ async function handleApi(
   const approvalDecisionMatch = url.pathname.match(/^\/api\/approvals\/([^/]+)\/decision$/);
   if (request.method === "POST" && approvalDecisionMatch) {
     assertSameOrigin(request);
-    const body = await readJson(request) as { decision?: unknown };
+    const value = await readJson(request);
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new HttpError(400, "approval decision must be an object");
+    }
+    const body = value as { decision?: unknown; feedback?: unknown; source?: unknown };
+    if (Object.keys(body).some((key) => key !== "decision" && key !== "feedback" && key !== "source")) {
+      throw new HttpError(400, "approval decision contains an unsupported field");
+    }
     const decision = requiredString(body.decision, "decision", 20);
     if (decision !== "approved" && decision !== "declined") {
       throw new HttpError(400, "decision must be approved or declined");
@@ -1405,7 +1413,8 @@ async function handleApi(
     const operation = runs.findByProviderRun(approval.providerId, approval.conversationId, approval.runId);
     if (!operation) throw new HttpError(409, "Approval request no longer belongs to a retained run");
     options.paths.assertAllowed(operation.cwd);
-    const resolution = approvals.resolve(approvalId, decision, "touch");
+    const feedback = body.feedback === undefined ? undefined : parseApprovalFeedback(body.feedback);
+    const resolution = approvals.resolve(approvalId, decision, "touch", feedback);
     sendJson(response, 200, {
       approval: publicApproval(approvals.get(approvalId)!, operation),
       resolution,

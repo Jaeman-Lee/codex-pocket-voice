@@ -8,7 +8,15 @@ import {
 } from "./operations-state";
 import { workspaceIdentityFor, workspaceIdentityLabel } from "./workspace-identity";
 import type { FleetDeviceSnapshot } from "./fleet-state";
+import {
+  buildApprovalFeedback,
+  MAX_APPROVAL_FEEDBACK_COMMENT_LENGTH,
+  MAX_APPROVAL_FEEDBACK_LINES,
+  parseDiffReview,
+  type DiffReviewLine,
+} from "./diff-review";
 import type {
+  ApprovalFeedback,
   ApprovalItem,
   JournalPolicy,
   JournalPolicyLimits,
@@ -51,7 +59,7 @@ interface OperationsDashboardProps {
   onUpdateOperation(operation: Operation, patch: OperationMetadataPatch): Promise<boolean>;
   onUpdateJournalPolicy(policy: JournalPolicy): Promise<boolean>;
   onUpdateRunPolicy(policy: RunPolicyConfig): Promise<boolean>;
-  onDecision(approval: ApprovalItem, decision: "approved" | "declined"): void;
+  onDecision(approval: ApprovalItem, decision: "approved" | "declined", feedback?: ApprovalFeedback): void;
   onExportWorkspace(workspace: string): Promise<void>;
   onDeleteWorkspaceHistory(workspace: string): Promise<void>;
 }
@@ -741,9 +749,34 @@ function ApprovalCard({
   approval: ApprovalItem;
   now: number;
   busy: boolean;
-  onDecision(approval: ApprovalItem, decision: "approved" | "declined"): void;
+  onDecision(approval: ApprovalItem, decision: "approved" | "declined", feedback?: ApprovalFeedback): void;
 }) {
+  const [selectedLines, setSelectedLines] = useState<string[]>([]);
+  const [comments, setComments] = useState<Record<string, string>>({});
   const seconds = Math.max(0, Math.ceil((Date.parse(approval.expiresAt) - now) / 1_000));
+  const diff = typeof approval.redactedDetails?.diff === "string" ? approval.redactedDetails.diff : "";
+  const review = useMemo(() => diff ? parseDiffReview(diff) : null, [diff]);
+  const details = approval.redactedDetails ? safeNonDiffDetails(approval.redactedDetails) : "";
+  const feedback = review ? buildApprovalFeedback(review.lines, comments) : undefined;
+  const feedbackReady = selectedLines.length === 0 || feedback?.lines.length === selectedLines.length;
+  const feedbackUnavailable = selectedLines.length > 0
+    && selectedLines.every((lineId) => (comments[lineId]?.trim().length ?? 0) > 0)
+    && !feedback;
+  const toggleLine = (line: DiffReviewLine) => {
+    if (!line.selectable || busy) return;
+    if (selectedLines.includes(line.id)) {
+      setSelectedLines((current) => current.filter((id) => id !== line.id));
+      setComments((current) => {
+        const next = { ...current };
+        delete next[line.id];
+        return next;
+      });
+      return;
+    }
+    if (selectedLines.length < MAX_APPROVAL_FEEDBACK_LINES) {
+      setSelectedLines((current) => [...current, line.id]);
+    }
+  };
   return (
     <article className={`approval-card risk-${approval.risk}`}>
       <div className="approval-meta">
@@ -754,14 +787,125 @@ function ApprovalCard({
       <small className="approval-context" title={approval.cwd}>
         {workspaceName(approval.cwd)} · {approval.providerId}
       </small>
-      {approval.redactedDetails && <pre>{safeDetails(approval.redactedDetails)}</pre>}
+      {details && <pre className="approval-details">{details}</pre>}
+      {review && (
+        <ApprovalDiffReview
+          review={review}
+          selectedLines={selectedLines}
+          comments={comments}
+          busy={busy}
+          onToggle={toggleLine}
+          onComment={(lineId, comment) => setComments((current) => ({ ...current, [lineId]: comment }))}
+        />
+      )}
+      {feedbackUnavailable && (
+        <small className="approval-feedback-error" role="alert">
+          의견 형식이나 전체 크기를 안전하게 전송할 수 없습니다. 내용을 줄이거나 선택 줄을 해제해 주세요.
+        </small>
+      )}
       <div className="approval-actions">
-        <button type="button" className="decline" disabled={busy} onClick={() => onDecision(approval, "declined")}>거절</button>
-        <button type="button" className="approve" disabled={busy} onClick={() => onDecision(approval, "approved")}>
+        <button
+          type="button"
+          className="decline"
+          disabled={busy || !feedbackReady}
+          title={!feedbackReady
+            ? feedbackUnavailable
+              ? "의견 형식이나 전체 크기를 수정하거나 선택 줄을 해제해 주세요."
+              : "선택한 각 줄에 피드백을 입력하거나 선택을 해제해 주세요."
+            : undefined}
+          onClick={() => onDecision(approval, "declined", feedback)}
+        >{feedback ? "거절하고 피드백 전송" : "거절"}</button>
+        <button
+          type="button"
+          className="approve"
+          disabled={busy || selectedLines.length > 0}
+          title={selectedLines.length > 0 ? "줄 피드백 선택을 해제한 뒤 승인할 수 있습니다." : undefined}
+          onClick={() => onDecision(approval, "approved")}
+        >
           {busy ? "처리 중…" : approval.requiresTouch ? "검토 후 터치 승인" : "승인"}
         </button>
       </div>
     </article>
+  );
+}
+
+function ApprovalDiffReview({
+  review,
+  selectedLines,
+  comments,
+  busy,
+  onToggle,
+  onComment,
+}: {
+  review: ReturnType<typeof parseDiffReview>;
+  selectedLines: string[];
+  comments: Record<string, string>;
+  busy: boolean;
+  onToggle(line: DiffReviewLine): void;
+  onComment(lineId: string, comment: string): void;
+}) {
+  return (
+    <section className="approval-diff-review" aria-label="줄 단위 변경 diff 검토">
+      <header>
+        <div>
+          <strong>변경 diff</strong>
+          <small>추가·삭제 줄을 눌러 최대 {MAX_APPROVAL_FEEDBACK_LINES}개의 수정 의견을 같은 run에 돌려보낼 수 있습니다.</small>
+        </div>
+        <span>{review.changedLines}줄{review.truncated ? " · 표시 제한" : ""}</span>
+      </header>
+      <ol className="approval-diff-lines">
+        {review.lines.map((line) => {
+          const selected = selectedLines.includes(line.id);
+          const location = line.oldLine === undefined
+            ? `새 ${line.newLine ?? ""}`
+            : line.newLine === undefined ? `이전 ${line.oldLine}` : `이전 ${line.oldLine} · 새 ${line.newLine}`;
+          return (
+            <li className={`diff-${line.kind}${selected ? " selected" : ""}`} key={line.id}>
+              {line.selectable ? (
+                <button
+                  type="button"
+                  aria-pressed={selected}
+                  aria-label={`${line.path} ${location}줄 피드백 ${selected ? "해제" : "선택"}`}
+                  disabled={busy || (!selected && selectedLines.length >= MAX_APPROVAL_FEEDBACK_LINES)}
+                  onClick={() => onToggle(line)}
+                >
+                  <DiffLineNumbers line={line} />
+                  <code><b aria-hidden="true">{line.prefix}</b>{line.content}</code>
+                </button>
+              ) : (
+                <div>
+                  <DiffLineNumbers line={line} />
+                  <code><b aria-hidden="true">{line.prefix}</b>{line.content}</code>
+                </div>
+              )}
+              {selected && (
+                <label>
+                  <span>{line.path} · {location}줄 수정 의견</span>
+                  <textarea
+                    rows={2}
+                    maxLength={MAX_APPROVAL_FEEDBACK_COMMENT_LENGTH}
+                    disabled={busy}
+                    value={comments[line.id] ?? ""}
+                    placeholder="예: null일 때 기존 값을 유지해 주세요."
+                    aria-label={`${line.path} ${location}줄에 보낼 피드백`}
+                    onChange={(event) => onComment(line.id, event.target.value)}
+                  />
+                  <small>{(comments[line.id] ?? "").length}/{MAX_APPROVAL_FEEDBACK_COMMENT_LENGTH} · Provider에 전송됩니다. 비밀정보는 입력하지 마세요.</small>
+                </label>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </section>
+  );
+}
+
+function DiffLineNumbers({ line }: { line: DiffReviewLine }) {
+  return (
+    <span className="approval-diff-numbers" aria-hidden="true">
+      <i>{line.oldLine ?? ""}</i><i>{line.newLine ?? ""}</i>
+    </span>
   );
 }
 
@@ -920,13 +1064,13 @@ function riskLabel(risk: ApprovalItem["risk"]): string {
   return "읽기";
 }
 
-function safeDetails(details: Record<string, unknown>): string {
+function safeNonDiffDetails(details: Record<string, unknown>): string {
   try {
-    const { diff, script, ...metadata } = details;
+    const metadata = Object.fromEntries(Object.entries(details).filter(([key]) => key !== "diff" && key !== "script"));
+    const script = details.script;
     return [
       Object.keys(metadata).length > 0 ? JSON.stringify(metadata, null, 2) : "",
       typeof script === "string" ? `script:\n${script}` : "",
-      typeof diff === "string" ? `diff:\n${diff}` : "",
     ].filter(Boolean).join("\n\n");
   } catch {
     return "검토 세부 정보를 표시할 수 없습니다.";

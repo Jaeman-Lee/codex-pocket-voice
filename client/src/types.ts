@@ -438,6 +438,19 @@ export interface ApprovalResolution {
   decision: Exclude<ApprovalStatus, "pending">;
   source: "touch" | "voice" | "system";
   decidedAt: string;
+  feedback?: ApprovalFeedback;
+}
+
+export interface ApprovalFeedbackLine {
+  path: string;
+  oldLine?: number;
+  newLine?: number;
+  code: string;
+  comment: string;
+}
+
+export interface ApprovalFeedback {
+  lines: ApprovalFeedbackLine[];
 }
 
 export interface SessionHandoff {

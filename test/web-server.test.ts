@@ -536,6 +536,16 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
     body: JSON.stringify({ decision: "approved" }),
   });
   assert.equal(crossOriginApproval.status, 403);
+  const feedbackOnApprove = await fetch(`${base}/api/approvals/approval-web/decision`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({
+      decision: "approved",
+      feedback: { lines: [{ path: "package.json", newLine: 1, code: "{}", comment: "승인에는 허용 안 됨" }] },
+    }),
+  });
+  assert.equal(feedbackOnApprove.status, 400);
+  assert.equal(approvals.get("approval-web")?.status, "pending");
   const approvalDecision = await jsonFetch(`${base}/api/approvals/approval-web/decision`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: base }),
@@ -556,11 +566,23 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const declinedDecision = await jsonFetch(`${base}/api/approvals/approval-web-2/decision`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: base }),
-    body: JSON.stringify({ decision: "declined", source: "voice" }),
+    body: JSON.stringify({
+      decision: "declined",
+      source: "voice",
+      feedback: {
+        lines: [{
+          path: "package.json",
+          newLine: 2,
+          code: "\"scripts\": {},",
+          comment: "기존 검사 명령을 유지해 주세요.",
+        }],
+      },
+    }),
   });
   assert.equal(declinedDecision.resolution.decision, "declined");
   assert.equal(declinedDecision.resolution.source, "touch");
-  assert.equal((await declinedHandle.decision).decision, "declined");
+  assert.equal(declinedDecision.resolution.feedback.lines[0].path, "package.json");
+  assert.deepEqual(await declinedHandle.decision, declinedDecision.resolution);
   const conflictingRetry = await fetch(`${base}/api/runs`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
