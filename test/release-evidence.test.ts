@@ -61,11 +61,13 @@ test("release evidence binds functional and all three low-load gates to one cand
     manifest,
     canonicalJson(passingObservations()),
     passingAndroidTexts(),
+    passingProviderGradeTexts(),
     source,
     evaluationTime,
   );
 
   assert.equal(report.gate.passed, true);
+  assert.equal(report.schemaVersion, 2);
   assert.equal(report.gate.outcome, "passed");
   assert.deepEqual(report.candidate, candidate);
   assert.equal(report.functional.passedScenarioCount, FUNCTIONAL_FIELD_SCENARIOS.length);
@@ -74,6 +76,9 @@ test("release evidence binds functional and all three low-load gates to one cand
     ["direct_lan", "p2p", "outbound_relay"],
   );
   assert.ok(report.androidTransports.every((entry) => entry.outcome === "passed"));
+  assert.equal(report.providerGrades.openai.coding, "pass");
+  assert.equal(report.providerGrades.openrouter.length, 2);
+  assert.equal(report.providerGrades.distinctOpenRouterUpstreamFamilies, true);
   assert.ok(report.gate.checks.every((check) => check.outcome === "pass"));
   assert.deepEqual(report.privacy, {
     containsDeviceIdentifiers: false,
@@ -82,6 +87,82 @@ test("release evidence binds functional and all three low-load gates to one cand
     containsRawDiagnostics: false,
     containsPromptOrResponse: false,
   });
+});
+
+test("release evidence binds exact protected coding grades and requires two upstream families", () => {
+  const expectedGrades = passingProviderGradeTexts();
+  const mismatchedGrades = {
+    ...expectedGrades,
+    openai: expectedGrades.openai.replace('"coding": "pass"', '"coding": "fail"'),
+  };
+  assert.throws(
+    () => evaluateReleaseEvidence(
+      manifest,
+      canonicalJson(passingObservations(candidate, expectedGrades)),
+      passingAndroidTexts(),
+      mismatchedGrades,
+      source,
+      evaluationTime,
+    ),
+    /does not match the functional observations/,
+  );
+
+  const sameFamilyGrades = passingProviderGradeTexts(
+    "2026-08-24T23:55:00.000Z",
+    ["Provider Family A", "Provider Family A"],
+  );
+  const sameFamily = evaluateReleaseEvidence(
+    manifest,
+    canonicalJson(passingObservations(candidate, sameFamilyGrades)),
+    passingAndroidTexts(),
+    sameFamilyGrades,
+    source,
+    evaluationTime,
+  );
+  assert.equal(sameFamily.gate.passed, false);
+  assert.equal(sameFamily.providerGrades.distinctOpenRouterUpstreamFamilies, false);
+  assert.ok(sameFamily.gate.checks.some((check) => (
+    check.metric === "provider_grade:distinct_openrouter_upstream_families"
+      && check.outcome === "fail"
+  )));
+
+  const failedCodingGrades = passingProviderGradeTexts();
+  const failedCodingReport = JSON.parse(failedCodingGrades.openrouter[1]) as {
+    grades: { coding: string };
+    evaluation: { outcome: string; tools: Array<{ status: string }> };
+  };
+  failedCodingReport.grades.coding = "fail";
+  failedCodingReport.evaluation.outcome = "contract_failed";
+  failedCodingReport.evaluation.tools[1]!.status = "failed";
+  failedCodingGrades.openrouter[1] = canonicalJson(failedCodingReport);
+  const failedCoding = evaluateReleaseEvidence(
+    manifest,
+    canonicalJson(passingObservations(candidate, failedCodingGrades)),
+    passingAndroidTexts(),
+    failedCodingGrades,
+    source,
+    evaluationTime,
+  );
+  assert.equal(failedCoding.gate.passed, false);
+  assert.ok(failedCoding.gate.checks.some((check) => (
+    check.metric.startsWith("provider_grade:openrouter_")
+      && check.metric.endsWith("_coding")
+      && check.outcome === "fail"
+  )));
+
+  const lateGrades = passingProviderGradeTexts("2026-08-25T00:10:00.000Z");
+  const late = evaluateReleaseEvidence(
+    manifest,
+    canonicalJson(passingObservations(candidate, lateGrades)),
+    passingAndroidTexts(),
+    lateGrades,
+    source,
+    evaluationTime,
+  );
+  assert.equal(late.gate.passed, false);
+  assert.ok(late.gate.checks.some((check) => (
+    check.metric.endsWith("_valid_at_field_start") && check.outcome === "fail"
+  )));
 });
 
 test("release evidence rejects candidate drift and a report supplied for the wrong transport", () => {
@@ -99,6 +180,7 @@ test("release evidence rejects candidate drift and a report supplied for the wro
       manifest,
       canonicalJson(passingObservations()),
       reports,
+      passingProviderGradeTexts(),
       source,
       evaluationTime,
     ),
@@ -148,6 +230,7 @@ test("release evidence fails closed for stale or observation-only low-load evide
     manifest,
     canonicalJson(passingObservations()),
     passingAndroidTexts(),
+    passingProviderGradeTexts(),
     source,
     Date.parse("2026-10-01T00:00:00.000Z"),
   );
@@ -164,6 +247,7 @@ test("release evidence fails closed for stale or observation-only low-load evide
     manifest,
     canonicalJson(passingObservations()),
     reports,
+    passingProviderGradeTexts(),
     source,
     evaluationTime,
   );
@@ -194,6 +278,7 @@ test("final release evidence is owner-only, bounded, and create-once", async (t)
     manifest,
     canonicalJson(passingObservations()),
     passingAndroidTexts(),
+    passingProviderGradeTexts(),
     source,
     evaluationTime,
   );
@@ -257,10 +342,15 @@ test("final release evidence CLI cryptographically verifies the signed candidate
   const directPath = join(fieldDirectory, "direct-lan.json");
   const p2pPath = join(fieldDirectory, "p2p.json");
   const relayPath = join(fieldDirectory, "outbound-relay.json");
+  const openaiGradePath = join(fieldDirectory, "openai-coding-grade.json");
+  const openrouterGradePath1 = join(fieldDirectory, "openrouter-family-a-coding-grade.json");
+  const openrouterGradePath2 = join(fieldDirectory, "openrouter-family-b-coding-grade.json");
   const testNow = Date.now();
-  const observations = passingObservations(signedCandidate);
+  const testStartedAt = testNow - 2 * 60 * 60_000;
+  const providerGrades = passingProviderGradeTexts(new Date(testStartedAt - 5 * 60_000).toISOString());
+  const observations = passingObservations(signedCandidate, providerGrades);
   observations.testWindow = {
-    startedAt: new Date(testNow - 2 * 60 * 60_000).toISOString(),
+    startedAt: new Date(testStartedAt).toISOString(),
     completedAt: new Date(testNow - 5 * 60_000).toISOString(),
   };
   observations.scenarios = observations.scenarios.map((scenario) => ({
@@ -283,6 +373,9 @@ test("final release evidence CLI cryptographically verifies the signed candidate
     writeFile(directPath, reports.direct_lan, { mode: 0o600 }),
     writeFile(p2pPath, reports.p2p, { mode: 0o600 }),
     writeFile(relayPath, reports.outbound_relay, { mode: 0o600 }),
+    writeFile(openaiGradePath, providerGrades.openai, { mode: 0o600 }),
+    writeFile(openrouterGradePath1, providerGrades.openrouter[0], { mode: 0o600 }),
+    writeFile(openrouterGradePath2, providerGrades.openrouter[1], { mode: 0o600 }),
   ]);
 
   const fakeApkSigner = join(binaryDirectory, "apksigner");
@@ -310,6 +403,9 @@ test("final release evidence CLI cryptographically verifies the signed candidate
     "--artifact-dir", bundleDirectory,
     "--apksigner", fakeApkSigner,
     "--observations", observationPath,
+    "--openai-grade-report", openaiGradePath,
+    "--openrouter-grade-report-1", openrouterGradePath1,
+    "--openrouter-grade-report-2", openrouterGradePath2,
     "--direct-lan-report", directPath,
     "--p2p-report", p2pPath,
     "--relay-report", relayPath,
@@ -322,6 +418,17 @@ test("final release evidence CLI cryptographically verifies the signed candidate
   assert.equal(valid.status, 0, valid.stderr);
   assert.match(valid.stdout, /Exact-candidate release evidence gate passed/);
   assert.equal(JSON.parse(await readFile(reportPath, "utf8")).gate.passed, true);
+
+  await chmod(openaiGradePath, 0o644);
+  const broadGradeReportPath = join(fieldDirectory, "broad-grade-release-evidence.json");
+  const broadGrade = spawnSync(process.execPath, [
+    "--import", "tsx", releaseEvidenceCli, ...cliArguments, "--report", broadGradeReportPath,
+  ], { encoding: "utf8", env: environment, timeout: 15_000 });
+  assert.ifError(broadGrade.error);
+  assert.notEqual(broadGrade.status, 0);
+  assert.match(broadGrade.stderr, /OpenAI grade report is not an acceptable private regular file/);
+  await assert.rejects(stat(broadGradeReportPath), /ENOENT/);
+  await chmod(openaiGradePath, 0o600);
 
   const driftDirectory = join(root, "drift-bin");
   const driftCounter = join(root, "drift-counter");
@@ -392,7 +499,10 @@ test("final release evidence CLI cryptographically verifies the signed candidate
   await assert.rejects(stat(rejectedReportPath), /ENOENT/);
 });
 
-function passingObservations(forCandidate = candidate): FunctionalFieldObservation {
+function passingObservations(
+  forCandidate = candidate,
+  grades = passingProviderGradeTexts(),
+): FunctionalFieldObservation {
   const observations = createFunctionalFieldObservationTemplate(forCandidate, "2026-08-25T00:00:00.000Z");
   observations.testWindow.completedAt = "2026-08-25T01:30:00.000Z";
   observations.environment = {
@@ -401,6 +511,10 @@ function passingObservations(forCandidate = candidate): FunctionalFieldObservati
     linuxCompanionCount: 2,
     androidClientCount: 2,
     openRouterUpstreamFamilyCount: 2,
+  };
+  observations.providerGradeReports = {
+    openaiCodingSha256: sha256(grades.openai),
+    openRouterCodingSha256: [sha256(grades.openrouter[0]), sha256(grades.openrouter[1])],
   };
   observations.attestations = {
     signedBundleVerified: true,
@@ -418,6 +532,61 @@ function passingObservations(forCandidate = candidate): FunctionalFieldObservati
     reason: null,
   }));
   return observations;
+}
+
+function passingProviderGradeTexts(
+  checkedAt = "2026-08-24T23:55:00.000Z",
+  families: [string, string] = ["Provider Family A", "Provider Family B"],
+) {
+  return {
+    openai: canonicalJson({
+      schemaVersion: 1,
+      provider: "openai",
+      requestedModel: "gpt-release-model",
+      actualModel: "gpt-release-model-2026-08-01",
+      privacyProfile: { store: false, serviceTier: "default" },
+      grades: {
+        streaming: "pass",
+        conversation: "pass",
+        functionCalling: "pass",
+        statelessReplay: "pass",
+        projectRead: "pass",
+        coding: "pass",
+      },
+      evaluation: passingCodingEvaluation(),
+      checkedAt,
+    }),
+    openrouter: (["family-a", "family-b"] as const).map((upstream, index) => canonicalJson({
+      schemaVersion: 2,
+      provider: "openrouter",
+      model: "vendor/release-model",
+      requestedUpstream: upstream,
+      actualProviders: [families[index]],
+      privacyProfile: { zdr: true, dataCollection: "deny", allowFallbacks: false },
+      grades: {
+        conversation: "pass",
+        toolCalling: "pass",
+        projectRead: "pass",
+        coding: "pass",
+      },
+      evaluation: passingCodingEvaluation(),
+      checkedAt,
+    })) as [string, string],
+  };
+}
+
+function passingCodingEvaluation() {
+  return {
+    scope: "coding",
+    fixture: "ephemeral_synthetic_workspace",
+    approval: "protected_workflow_and_exact_confirmation",
+    maximumRequests: 3,
+    outcome: "pass",
+    tools: [
+      { name: "workspace_read", status: "completed" },
+      { name: "workspace_replace_text", status: "completed" },
+    ],
+  };
 }
 
 function passingAndroidTexts(forCandidate = candidate): Record<AndroidFieldTransport, string> {
@@ -491,6 +660,10 @@ async function artifactRecord(kind: "apk" | "sbom", path: string, file: string) 
 
 function canonicalJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 function replaceArgument(values: string[], name: string, replacement: string): string[] {

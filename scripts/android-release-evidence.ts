@@ -30,6 +30,8 @@ interface CliOptions {
   artifactDirectory: string;
   apkSignerPath: string;
   observationsPath: string;
+  openaiGradePath: string;
+  openrouterGradePaths: [string, string];
   androidReportPaths: Record<AndroidFieldTransport, string>;
   reportPath: string;
 }
@@ -44,6 +46,9 @@ function parseArguments(args: string[]): CliOptions | "help" {
     "--artifact-dir",
     "--apksigner",
     "--observations",
+    "--openai-grade-report",
+    "--openrouter-grade-report-1",
+    "--openrouter-grade-report-2",
     "--direct-lan-report",
     "--p2p-report",
     "--relay-report",
@@ -67,6 +72,9 @@ function parseArguments(args: string[]): CliOptions | "help" {
     "--artifact-dir",
     "--apksigner",
     "--observations",
+    "--openai-grade-report",
+    "--openrouter-grade-report-1",
+    "--openrouter-grade-report-2",
     "--direct-lan-report",
     "--p2p-report",
     "--relay-report",
@@ -83,6 +91,11 @@ function parseArguments(args: string[]): CliOptions | "help" {
     artifactDirectory: values.get("--artifact-dir")!,
     apkSignerPath: values.get("--apksigner")!,
     observationsPath: values.get("--observations")!,
+    openaiGradePath: values.get("--openai-grade-report")!,
+    openrouterGradePaths: [
+      values.get("--openrouter-grade-report-1")!,
+      values.get("--openrouter-grade-report-2")!,
+    ],
     androidReportPaths: {
       direct_lan: values.get("--direct-lan-report")!,
       p2p: values.get("--p2p-report")!,
@@ -105,6 +118,9 @@ async function main(): Promise<void> {
       "    --artifact-dir /private/update-bundle \\",
       "    --apksigner /trusted/android-sdk/build-tools/36.0.0/apksigner \\",
       "    --observations /private/functional-observations.json \\",
+      "    --openai-grade-report /private/openai-coding-grade.json \\",
+      "    --openrouter-grade-report-1 /private/openrouter-family-a-coding-grade.json \\",
+      "    --openrouter-grade-report-2 /private/openrouter-family-b-coding-grade.json \\",
       "    --direct-lan-report /private/direct-lan.json \\",
       "    --p2p-report /private/p2p.json \\",
       "    --relay-report /private/outbound-relay.json \\",
@@ -112,7 +128,7 @@ async function main(): Promise<void> {
       "",
       "The pinned fingerprint must come from a previously trusted install or another independent trust path.",
       "This command verifies the detached manifest signature, APK signer, APK/SBOM hashes, and exact source before evaluating field evidence.",
-      "All private inputs must be owner-only regular files for the same exact clean candidate commit.",
+      "All private inputs must be owner-only regular files; observations bind the exact three protected grade reports.",
       "This command performs no ADB, device, network, Provider, installation, or Companion action.",
       "",
     ].join("\n"));
@@ -120,9 +136,22 @@ async function main(): Promise<void> {
   }
   await requireUnusedReleaseEvidenceFile(options.reportPath);
   const verifiedManifestSha256 = await verifySignedCandidateBundle(options);
-  const [manifestText, observationsText, directText, p2pText, relayText, source] = await Promise.all([
+  const [
+    manifestText,
+    observationsText,
+    openaiGradeText,
+    openrouterGradeText1,
+    openrouterGradeText2,
+    directText,
+    p2pText,
+    relayText,
+    source,
+  ] = await Promise.all([
     readBoundedFile(options.manifestPath, false, "Update manifest"),
     readBoundedFile(options.observationsPath, true, "Functional observations"),
+    readBoundedFile(options.openaiGradePath, true, "OpenAI grade report"),
+    readBoundedFile(options.openrouterGradePaths[0], true, "OpenRouter grade report"),
+    readBoundedFile(options.openrouterGradePaths[1], true, "OpenRouter grade report"),
     readBoundedFile(options.androidReportPaths.direct_lan, true, "Direct LAN report"),
     readBoundedFile(options.androidReportPaths.p2p, true, "P2P report"),
     readBoundedFile(options.androidReportPaths.outbound_relay, true, "Outbound relay report"),
@@ -138,6 +167,10 @@ async function main(): Promise<void> {
       direct_lan: directText,
       p2p: p2pText,
       outbound_relay: relayText,
+    },
+    {
+      openai: openaiGradeText,
+      openrouter: [openrouterGradeText1, openrouterGradeText2],
     },
     source,
   );

@@ -11,6 +11,10 @@
 경로의 manifest가 교체되면 최종 report를 만들지 않는다.
 Git commit과 dirty 상태도 한 porcelain-v2 snapshot으로 입력 평가 전·후에 확인한다. 두 시점 모두 signed
 candidate의 exact commit이고 clean일 때만 최종 report를 만든다.
+기능 observation schema 2가 고정한 OpenAI coding grade 한 건과 OpenRouter coding grade 두 건의 SHA-256도
+owner-only 원문과 대조한다. protected coding scope·승인·read→replace Tool Broker 순서·pass 등급과 field
+시작 시점의 30일 유효성을 다시 평가하고, OpenRouter requested upstream tag와 실제 provider family가 각각
+서로 달라야 한다.
 고정 fingerprint는 함께 받은 인증서에서 계산하면 안 되며 이전 신뢰 설치본·Release APK 또는 별도
 신뢰 경로에서 확인해야 한다. 최종 report의 `structured_aggregate_only`는 암호 검증과 운영자 관찰을
 구조화한 증거이며 실제 Provider·물리 단말 실행을 대신하지 않는다.
@@ -27,6 +31,8 @@ APK를 보게 만들 수 없다.
   있는 artifact directory
 - 별도 신뢰 경로에서 확인한 signing certificate SHA-256 fingerprint와 신뢰할 수 있는 `apksigner`
 - manifest와 정확히 같은 clean Git commit
+- observation에 SHA-256이 고정된 owner-only OpenAI coding grade 한 건과 서로 다른 actual provider family의
+  OpenRouter coding grade 두 건
 - 같은 manifest/commit/APK digest에 묶인 20개
   [기능 현장 관찰](functional-field-acceptance.md)
 - 각각 `direct_lan`, `p2p`, `outbound_relay`로 기록되고 설치 APK digest를 시작·종료에 확인한 schema 3
@@ -51,6 +57,9 @@ npm run android:release-evidence -- \
   --artifact-dir /private/update-bundle \
   --apksigner /trusted/android-sdk/build-tools/36.0.0/apksigner \
   --observations /private/field/functional-observations.json \
+  --openai-grade-report /private/provider/openai-coding-grade.json \
+  --openrouter-grade-report-1 /private/provider/openrouter-family-a-coding-grade.json \
+  --openrouter-grade-report-2 /private/provider/openrouter-family-b-coding-grade.json \
   --direct-lan-report /private/field/direct-lan.json \
   --p2p-report /private/field/p2p.json \
   --relay-report /private/field/outbound-relay.json \
@@ -63,12 +72,14 @@ npm run android:release-evidence -- \
   hash와 signer가 같은 열린 descriptor의 bytes에 귀속되며 verifier receipt의 manifest digest와 field
   평가에 사용한 exact bytes가 일치
 - 기능 환경·여섯 attestation·20개 scenario와 30일 freshness가 모두 pass
+- 세 grade 원문의 SHA-256이 observation과 일치하고 protected coding evaluation과 field-start freshness가
+  pass이며 OpenRouter 두 report의 exact upstream·actual provider family가 서로 다름
 - 세 Android report가 정확한 transport slot에 있고 모두 `release_gate` pass
 - 세 report가 같은 signed candidate이고 설치 package/version/versionCode도 일치
 - 세 report가 30일 이내이며 미래 시각이 아님
 
-암호 검증을 통과한 뒤 실패 가능한 구조의 field 입력이 완전하고 안전하면 create-once mode `0600` 최종
-report를 남기고 exit code 1을 반환한다. 서명·artifact 검증 실패, schema 변조, candidate drift, report
+암호 검증을 통과한 뒤 실패 가능한 구조의 field 입력이 완전하고 안전하면 create-once mode `0600` schema 2
+최종 report를 남기고 exit code 1을 반환한다. 서명·artifact 검증 실패, schema 변조, candidate drift, report
 위치 교환처럼 입력 자체를 신뢰할 수 없으면 출력 없이 실패한다. 최종 report에는 candidate digest,
 각 gate의 시각·기간·판정만 남으며 device/network 값,
 credential, 원본 ADB 진단, prompt/response는 포함하지 않는다. 이 명령은 ADB 조회, 설치, 앱 시작·종료,

@@ -55,6 +55,7 @@ test("functional field gate binds every passing scenario to one signed candidate
   );
 
   assert.equal(report.gate.passed, true);
+  assert.equal(report.schemaVersion, 2);
   assert.equal(report.gate.outcome, "passed");
   assert.equal(report.gate.requiredScenarioCount, FUNCTIONAL_FIELD_SCENARIOS.length);
   assert.equal(report.gate.passedScenarioCount, FUNCTIONAL_FIELD_SCENARIOS.length);
@@ -76,6 +77,10 @@ test("functional field template is inert and every missing or failed scenario fa
   const template = createFunctionalFieldObservationTemplate(candidate, "2026-08-25T00:00:00.000Z");
   assert.equal(template.scenarios.length, FUNCTIONAL_FIELD_SCENARIOS.length);
   assert.ok(template.scenarios.every((scenario) => scenario.outcome === "not_run" && scenario.attempts === 0));
+  assert.deepEqual(template.providerGradeReports, {
+    openaiCodingSha256: null,
+    openRouterCodingSha256: [null, null],
+  });
 
   const templateReport = evaluateFunctionalFieldAcceptance(
     manifest,
@@ -87,6 +92,9 @@ test("functional field template is inert and every missing or failed scenario fa
   assert.equal(templateReport.gate.notRunScenarioIds.length, FUNCTIONAL_FIELD_SCENARIOS.length);
   assert.ok(templateReport.gate.checks.some((check) => (
     check.metric === "physical_android_device" && check.outcome === "fail"
+  )));
+  assert.ok(templateReport.gate.checks.some((check) => (
+    check.metric === "openai_coding_grade_bound" && check.outcome === "fail"
   )));
 
   const observations = passingObservations();
@@ -131,6 +139,21 @@ test("functional observations reject candidate drift, freeform fields, duplicate
   const duplicated = passingObservations();
   duplicated.scenarios[1] = { ...duplicated.scenarios[0]! };
   assert.throws(() => parseFunctionalFieldObservation(canonicalJson(duplicated)), /invalid or duplicated/);
+
+  const duplicateGrades = passingObservations();
+  duplicateGrades.providerGradeReports.openRouterCodingSha256[1]
+    = duplicateGrades.providerGradeReports.openRouterCodingSha256[0];
+  assert.throws(
+    () => parseFunctionalFieldObservation(canonicalJson(duplicateGrades)),
+    /must be distinct/,
+  );
+
+  const legacy = passingObservations() as unknown as { schemaVersion: number };
+  legacy.schemaVersion = 1;
+  assert.throws(
+    () => parseFunctionalFieldObservation(canonicalJson(legacy)),
+    /schema is unsupported/,
+  );
 
   const outsideWindow = passingObservations();
   outsideWindow.scenarios[0] = {
@@ -195,6 +218,10 @@ function passingObservations(): FunctionalFieldObservation {
     linuxCompanionCount: 2,
     androidClientCount: 2,
     openRouterUpstreamFamilyCount: 2,
+  };
+  observations.providerGradeReports = {
+    openaiCodingSha256: "e".repeat(64),
+    openRouterCodingSha256: ["f".repeat(64), "1".repeat(64)],
   };
   observations.attestations = {
     signedBundleVerified: true,

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { lstat, writeFile } from "node:fs/promises";
 import {
   ANDROID_FIELD_LIMITS,
@@ -11,8 +12,13 @@ import {
   evaluateFunctionalFieldAcceptance,
   type FunctionalCandidateIdentity,
 } from "./functional-field-acceptance.js";
+import {
+  parseProtectedProviderCodingGradeReport,
+  type ProviderModelGradeRecord,
+} from "./providers/model-grades.js";
 
 const MAX_ANDROID_REPORT_BYTES = 64 * 1024;
+const MAX_PROVIDER_GRADE_REPORT_BYTES = 64 * 1024;
 const MAX_RELEASE_REPORT_BYTES = 64 * 1024;
 const MAX_FIELD_AGE_MS = 30 * 24 * 60 * 60_000;
 const MAX_CLOCK_SKEW_MS = 5 * 60_000;
@@ -26,7 +32,7 @@ interface ReleaseEvidenceCheck {
 }
 
 export interface ReleaseEvidenceReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   kind: "codex_pocket_release_evidence";
   evidenceKind: "structured_aggregate_only";
   createdAt: string;
@@ -36,6 +42,11 @@ export interface ReleaseEvidenceReport {
     outcome: "passed" | "failed";
     passedScenarioCount: number;
     requiredScenarioCount: number;
+  };
+  providerGrades: {
+    openai: ProviderGradeEvidenceSummary;
+    openrouter: [ProviderGradeEvidenceSummary, ProviderGradeEvidenceSummary];
+    distinctOpenRouterUpstreamFamilies: boolean;
   };
   androidTransports: Array<{
     transport: AndroidFieldTransport;
@@ -55,6 +66,19 @@ export interface ReleaseEvidenceReport {
     containsRawDiagnostics: false;
     containsPromptOrResponse: false;
   };
+}
+
+interface ProviderGradeEvidenceSummary {
+  reportSha256: string;
+  checkedAt: string;
+  projectRead: string;
+  coding: string;
+  validAtFieldStart: boolean;
+}
+
+export interface ReleaseProviderGradeTexts {
+  openai: string;
+  openrouter: [string, string];
 }
 
 export class ReleaseEvidenceError extends Error {}
@@ -90,6 +114,7 @@ export function evaluateReleaseEvidence(
   manifestText: string,
   functionalObservationText: string,
   androidReportTexts: Record<AndroidFieldTransport, string>,
+  providerGradeTexts: ReleaseProviderGradeTexts,
   expectedSource: { version: string; versionCode: number; commit: string },
   now = Date.now(),
 ): ReleaseEvidenceReport {
@@ -106,6 +131,12 @@ export function evaluateReleaseEvidence(
     expectedSource,
     now,
   );
+  const providerGrades = evaluateProviderGradeEvidence(
+    providerGradeTexts,
+    functional.providerGradeReports,
+    functional.testWindow.startedAt,
+    now,
+  );
   const androidReports = ANDROID_FIELD_TRANSPORTS.map((transport) => {
     const text = androidReportTexts[transport];
     if (typeof text !== "string") throw new ReleaseEvidenceError("Every Android transport report is required");
@@ -118,6 +149,18 @@ export function evaluateReleaseEvidence(
 
   const checks: ReleaseEvidenceCheck[] = [
     booleanCheck("functional_gate", functional.gate.passed),
+    booleanCheck("provider_grade:openai_project_read", providerGrades.openai.projectRead === "pass"),
+    booleanCheck("provider_grade:openai_coding", providerGrades.openai.coding === "pass"),
+    booleanCheck("provider_grade:openai_valid_at_field_start", providerGrades.openai.validAtFieldStart),
+    ...providerGrades.openrouter.flatMap((grade, index) => [
+      booleanCheck(`provider_grade:openrouter_${index + 1}_project_read`, grade.projectRead === "pass"),
+      booleanCheck(`provider_grade:openrouter_${index + 1}_coding`, grade.coding === "pass"),
+      booleanCheck(`provider_grade:openrouter_${index + 1}_valid_at_field_start`, grade.validAtFieldStart),
+    ]),
+    booleanCheck(
+      "provider_grade:distinct_openrouter_upstream_families",
+      providerGrades.distinctOpenRouterUpstreamFamilies,
+    ),
   ];
   for (const report of androidReports) {
     const completedAt = Date.parse(report.testWindow.completedAt);
@@ -138,7 +181,7 @@ export function evaluateReleaseEvidence(
   }
   const passed = checks.every((check) => check.outcome === "pass");
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "codex_pocket_release_evidence",
     evidenceKind: "structured_aggregate_only",
     createdAt,
@@ -149,6 +192,7 @@ export function evaluateReleaseEvidence(
       passedScenarioCount: functional.gate.passedScenarioCount,
       requiredScenarioCount: functional.gate.requiredScenarioCount,
     },
+    providerGrades,
     androidTransports: androidReports.map((report) => ({
       transport: report.transport,
       testWindow: report.testWindow,
@@ -168,6 +212,91 @@ export function evaluateReleaseEvidence(
       containsPromptOrResponse: false,
     },
   };
+}
+
+function evaluateProviderGradeEvidence(
+  texts: ReleaseProviderGradeTexts,
+  expected: {
+    openaiCodingSha256: string | null;
+    openRouterCodingSha256: [string | null, string | null];
+  },
+  fieldStartedAt: string,
+  now: number,
+): ReleaseEvidenceReport["providerGrades"] {
+  if (!texts || typeof texts.openai !== "string" || !Array.isArray(texts.openrouter)
+      || texts.openrouter.length !== 2 || texts.openrouter.some((text) => typeof text !== "string")) {
+    throw new ReleaseEvidenceError("Every protected Provider grade report is required");
+  }
+  const openaiDigest = providerReportDigest(texts.openai, "OpenAI grade report");
+  const openrouterDigests = texts.openrouter.map((text) => (
+    providerReportDigest(text, "OpenRouter grade report")
+  )) as [string, string];
+  if (expected.openaiCodingSha256 === null || expected.openaiCodingSha256 !== openaiDigest) {
+    throw new ReleaseEvidenceError("OpenAI grade report does not match the functional observations");
+  }
+  const expectedOpenRouter = expected.openRouterCodingSha256;
+  if (expectedOpenRouter.some((digest) => digest === null)
+      || new Set(openrouterDigests).size !== 2
+      || [...openrouterDigests].sort().join(":") !== [...expectedOpenRouter as [string, string]].sort().join(":")) {
+    throw new ReleaseEvidenceError("OpenRouter grade reports do not match the functional observations");
+  }
+
+  let openaiRecord: ProviderModelGradeRecord;
+  let openrouterRecords: [ProviderModelGradeRecord, ProviderModelGradeRecord];
+  try {
+    openaiRecord = parseProtectedProviderCodingGradeReport(texts.openai, now);
+    openrouterRecords = texts.openrouter.map((text) => (
+      parseProtectedProviderCodingGradeReport(text, now)
+    )) as [ProviderModelGradeRecord, ProviderModelGradeRecord];
+  } catch {
+    throw new ReleaseEvidenceError("Protected Provider grade report is invalid");
+  }
+  if (openaiRecord.providerId !== "openai" || openaiRecord.upstreamId !== undefined
+      || openaiRecord.actualProvider !== undefined
+      || openrouterRecords.some((record) => (
+        record.providerId !== "openrouter" || !record.upstreamId || !record.actualProvider
+      ))) {
+    throw new ReleaseEvidenceError("Protected Provider grade report identity is invalid");
+  }
+
+  const openrouter = openrouterRecords.map((record, index) => ({
+    record,
+    digest: openrouterDigests[index]!,
+    summary: providerGradeSummary(record, openrouterDigests[index]!, fieldStartedAt),
+  })).sort((left, right) => left.digest.localeCompare(right.digest));
+  const upstreamIds = new Set(openrouterRecords.map((record) => record.upstreamId));
+  const upstreamFamilies = new Set(openrouterRecords.map((record) => normalizeProviderFamily(record.actualProvider!)));
+  return {
+    openai: providerGradeSummary(openaiRecord, openaiDigest, fieldStartedAt),
+    openrouter: [openrouter[0]!.summary, openrouter[1]!.summary],
+    distinctOpenRouterUpstreamFamilies: upstreamIds.size === 2 && upstreamFamilies.size === 2,
+  };
+}
+
+function providerReportDigest(text: string, label: string): string {
+  boundedText(text, MAX_PROVIDER_GRADE_REPORT_BYTES, label);
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+function providerGradeSummary(
+  record: ProviderModelGradeRecord,
+  reportSha256: string,
+  fieldStartedAt: string,
+): ProviderGradeEvidenceSummary {
+  const checkedAt = Date.parse(record.checkedAt);
+  const fieldStart = Date.parse(fieldStartedAt);
+  return {
+    reportSha256,
+    checkedAt: record.checkedAt,
+    projectRead: record.verification.projectRead,
+    coding: record.verification.coding,
+    validAtFieldStart: checkedAt >= fieldStart - MAX_FIELD_AGE_MS
+      && checkedAt <= fieldStart + MAX_CLOCK_SKEW_MS,
+  };
+}
+
+function normalizeProviderFamily(value: string): string {
+  return value.normalize("NFKC").trim().toLocaleLowerCase("en-US");
 }
 
 export function parseAndroidFieldReport(

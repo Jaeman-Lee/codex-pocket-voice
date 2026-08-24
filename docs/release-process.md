@@ -112,13 +112,14 @@ package, 정확한 manifest 서명·APK/SBOM hash와 더 높은 versionCode를 �
   재시작해도 소비된 handoff가 다시 나타나지 않는다.
 - 사진·영상 첨부와 로컬 분석 실패 메시지가 확인된다.
 - [v2 기능 현장 검증](functional-field-acceptance.md)의 exact signed candidate·clean commit에 묶인 20개
-  scenario가 모두 통과하고 owner-only aggregate report를 검토한다.
+  scenario가 모두 통과하고 schema 2가 OpenAI coding grade 1개와 서로 다른 OpenRouter family coding grade
+  2개의 SHA-256을 고정한 owner-only aggregate report를 검토한다.
 - [Android 저부하 현장 검증](android-field-acceptance.md)의 60분 release gate를 direct LAN, 실제 P2P와
   outbound relay 지원 경로별로 통과하고, 설치 APK digest를 시작·종료에 검증한 세 schema 3 report의
   manifest/commit/APK digest가 기능 field report와 같은 exact signed candidate인지 검토한다.
 - [v2 릴리스 evidence 최종 판정](release-evidence.md)을 clean candidate checkout에서 실행해 pinned
-  certificate·manifest signature·APK signer·artifact hash 선행 검증과 기능 관찰, 세 transport report의
-  재계산된 gate·candidate binding·30일 freshness가 모두 pass인지 확인한다.
+  certificate·manifest signature·APK signer·artifact hash 선행 검증, 세 protected coding grade 원문과 기능
+  관찰, 세 transport report의 재계산된 gate·candidate binding·30일 freshness가 모두 pass인지 확인한다.
 
 ## Publish
 

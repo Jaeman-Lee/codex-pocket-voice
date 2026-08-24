@@ -56,7 +56,7 @@ export interface FunctionalCandidateIdentity {
 }
 
 export interface FunctionalFieldObservation {
-  schemaVersion: 1;
+  schemaVersion: 2;
   kind: "codex_pocket_functional_observations";
   candidate: {
     manifestSha256: string;
@@ -73,6 +73,10 @@ export interface FunctionalFieldObservation {
     linuxCompanionCount: number;
     androidClientCount: number;
     openRouterUpstreamFamilyCount: number;
+  };
+  providerGradeReports: {
+    openaiCodingSha256: string | null;
+    openRouterCodingSha256: [string | null, string | null];
   };
   attestations: {
     signedBundleVerified: boolean;
@@ -99,13 +103,14 @@ interface FunctionalGateCheck {
 }
 
 export interface FunctionalFieldReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   kind: "codex_pocket_functional_acceptance";
   evidenceKind: "operator_attested_structured";
   createdAt: string;
   candidate: FunctionalCandidateIdentity;
   testWindow: FunctionalFieldObservation["testWindow"];
   environment: FunctionalFieldObservation["environment"];
+  providerGradeReports: FunctionalFieldObservation["providerGradeReports"];
   attestations: FunctionalFieldObservation["attestations"];
   scenarios: FunctionalFieldObservation["scenarios"];
   gate: {
@@ -187,7 +192,7 @@ export function createFunctionalFieldObservationTemplate(
 ): FunctionalFieldObservation {
   const canonical = canonicalTimestamp(timestamp, "Template time");
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "codex_pocket_functional_observations",
     candidate: {
       manifestSha256: candidate.manifestSha256,
@@ -201,6 +206,10 @@ export function createFunctionalFieldObservationTemplate(
       linuxCompanionCount: 0,
       androidClientCount: 0,
       openRouterUpstreamFamilyCount: 0,
+    },
+    providerGradeReports: {
+      openaiCodingSha256: null,
+      openRouterCodingSha256: [null, null],
     },
     attestations: {
       signedBundleVerified: false,
@@ -229,9 +238,10 @@ export function parseFunctionalFieldObservation(text: string): FunctionalFieldOb
     throw new FunctionalFieldError("Functional observations are not valid JSON");
   }
   const root = exactRecord(value, [
-    "schemaVersion", "kind", "candidate", "testWindow", "environment", "attestations", "scenarios",
+    "schemaVersion", "kind", "candidate", "testWindow", "environment", "providerGradeReports",
+    "attestations", "scenarios",
   ], "Functional observations");
-  if (root.schemaVersion !== 1 || root.kind !== "codex_pocket_functional_observations") {
+  if (root.schemaVersion !== 2 || root.kind !== "codex_pocket_functional_observations") {
     throw new FunctionalFieldError("Functional observation schema is unsupported");
   }
   const candidateRecord = exactRecord(
@@ -270,6 +280,26 @@ export function parseFunctionalFieldObservation(text: string): FunctionalFieldOb
       "OpenRouter upstream family count",
     ),
   };
+  const providerGradeRecord = exactRecord(root.providerGradeReports, [
+    "openaiCodingSha256", "openRouterCodingSha256",
+  ], "Provider grade reports");
+  const openaiCodingSha256 = optionalDigest(
+    providerGradeRecord.openaiCodingSha256,
+    "OpenAI coding grade digest",
+  );
+  if (!Array.isArray(providerGradeRecord.openRouterCodingSha256)
+      || providerGradeRecord.openRouterCodingSha256.length !== 2) {
+    throw new FunctionalFieldError("OpenRouter coding grade digests are invalid");
+  }
+  const openRouterCodingSha256: [string | null, string | null] = [
+    optionalDigest(providerGradeRecord.openRouterCodingSha256[0], "OpenRouter coding grade digest"),
+    optionalDigest(providerGradeRecord.openRouterCodingSha256[1], "OpenRouter coding grade digest"),
+  ];
+  if (openRouterCodingSha256[0] !== null
+      && openRouterCodingSha256[0] === openRouterCodingSha256[1]) {
+    throw new FunctionalFieldError("OpenRouter coding grade digests must be distinct");
+  }
+  const providerGradeReports = { openaiCodingSha256, openRouterCodingSha256 };
   const attestationRecord = exactRecord(root.attestations, [
     "signedBundleVerified", "candidateIdentityMatched", "providerSecretsStayedOnCompanion",
     "noPrivateValuesRecorded", "touchApprovalsObserved", "rollbackArtifactPreverified",
@@ -336,11 +366,12 @@ export function parseFunctionalFieldObservation(text: string): FunctionalFieldOb
     throw new FunctionalFieldError("Functional scenario list is incomplete");
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "codex_pocket_functional_observations",
     candidate,
     testWindow,
     environment,
+    providerGradeReports,
     attestations,
     scenarios,
   };
@@ -375,6 +406,12 @@ export function evaluateFunctionalFieldAcceptance(
     minimumCheck("linux_companion_count", observations.environment.linuxCompanionCount, 2),
     minimumCheck("android_client_count", observations.environment.androidClientCount, 2),
     minimumCheck("openrouter_upstream_family_count", observations.environment.openRouterUpstreamFamilyCount, 2),
+    booleanCheck("openai_coding_grade_bound", observations.providerGradeReports.openaiCodingSha256 !== null),
+    minimumCheck(
+      "openrouter_coding_grade_count",
+      observations.providerGradeReports.openRouterCodingSha256.filter((digest) => digest !== null).length,
+      2,
+    ),
     minimumCheck("test_window_seconds", durationSeconds, 60),
     {
       metric: "test_window_freshness",
@@ -387,13 +424,14 @@ export function evaluateFunctionalFieldAcceptance(
   ];
   const passed = checks.every((check) => check.outcome === "pass");
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "codex_pocket_functional_acceptance",
     evidenceKind: "operator_attested_structured",
     createdAt: new Date(now).toISOString(),
     candidate,
     testWindow: observations.testWindow,
     environment: observations.environment,
+    providerGradeReports: observations.providerGradeReports,
     attestations: observations.attestations,
     scenarios: observations.scenarios,
     gate: {
@@ -497,6 +535,10 @@ function requiredString(value: unknown, pattern: RegExp, label: string): string 
 
 function requiredDigest(value: unknown, length: 40 | 64, label: string): string {
   return requiredString(value, new RegExp(`^[a-f0-9]{${length}}$`), label);
+}
+
+function optionalDigest(value: unknown, label: string): string | null {
+  return value === null ? null : requiredDigest(value, 64, label);
 }
 
 function strictInteger(value: unknown, minimum: number, maximum: number, label: string): number {

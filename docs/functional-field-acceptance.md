@@ -4,8 +4,10 @@
 검토한다. 도구는 단말이나 Companion을 설치·시작·중지·페어링·해제하지 않는다. 운영자가 직접 수행한
 결과를 고정 schema로 판정할 뿐이며, 모든 항목이 통과하지 않으면 release gate는 실패한다.
 
-결과는 `operator_attested_structured` 증거다. signed bundle 암호 검증, 보호된 실제 Provider grade report,
-[Android 저부하 현장 검증](android-field-acceptance.md), 외부 edge 부하 검증을 대신하지 않는다.
+결과는 `operator_attested_structured` 증거다. signed bundle 암호 검증,
+[Android 저부하 현장 검증](android-field-acceptance.md), 외부 edge 부하 검증을 대신하지 않는다. 보호된
+실제 Provider grade는 schema 2 observation이 exact report SHA-256만 고정하고, 최종 release evidence
+단계에서 owner-only 원문 세 건을 다시 검증한다.
 
 ## 사전 조건
 
@@ -14,7 +16,9 @@
    APK signer, artifact hash와 versionCode를 먼저 검증한다.
 3. manifest의 `commit`을 checkout하고 Git worktree가 clean인지 확인한다.
 4. v1.8.1 APK와 대응 무결성 파일을 rollback 위치에 별도로 보존하고 먼저 검증한다.
-5. observation/report는 저장소 밖 owner-only private 디렉터리에 둔다. device ID·serial·model, IP·SSID·port,
+5. 보호된 workflow에서 OpenAI coding grade 한 건과 서로 다른 OpenRouter upstream family의 coding grade
+   두 건을 발급받고 검토한다. 세 report 모두 field 시작 시점 기준 30일 이내여야 한다.
+6. observation/report와 grade report는 저장소 밖 owner-only private 디렉터리에 둔다. device ID·serial·model, IP·SSID·port,
    사용자명·경로, API key/token, prompt/response, 오류 원문이나 자유 형식 메모를 기록하지 않는다.
    manifest와 observation은 symlink/hardlink가 아닌 single-link regular file이어야 하며, 도구는
    `O_NOFOLLOW` 단일 descriptor에서 owner/mode·크기와 시작·종료 metadata를 확인한다.
@@ -34,6 +38,17 @@ npm run android:functional-acceptance -- \
 template 또는 판정 report를 쓰기 직전에도 한 porcelain-v2 snapshot으로 exact commit과 clean 상태를 다시
 확인하며, 입력 평가 중 source가 달라지면 출력하지 않는다.
 
+보호된 grade report 원문은 observation에 복사하지 않는다. 별도 신뢰 경로에서 받은 세 파일의 SHA-256을
+계산해 schema 2 `providerGradeReports.openaiCodingSha256`과
+`providerGradeReports.openRouterCodingSha256` 두 슬롯에 기록한다. OpenRouter 두 digest는 서로 달라야 한다.
+
+```sh
+sha256sum \
+  /private/provider/openai-coding-grade.json \
+  /private/provider/openrouter-family-a-coding-grade.json \
+  /private/provider/openrouter-family-b-coding-grade.json
+```
+
 현장 검증을 시작·종료한 canonical UTC 시각을 `testWindow`에 기록하고 다음 aggregate만 채운다.
 
 - `physicalAndroidDevice`: 실제 Android 단말에서 수행한 경우만 `true`
@@ -41,6 +56,7 @@ template 또는 판정 report를 쓰기 직전에도 한 porcelain-v2 snapshot�
 - `linuxCompanionCount`: 함께 검증한 Linux Companion 수; 최소 2
 - `androidClientCount`: 경쟁 pairing/claim에 사용한 Android client 수; 최소 2
 - `openRouterUpstreamFamilyCount`: 같은 Tool Broker 계약을 실제 통과한 서로 다른 upstream 계열 수; 최소 2
+- `providerGradeReports`: 위에서 계산한 OpenAI 1개·OpenRouter 2개의 exact SHA-256; 누락 또는 중복이면 실패
 - 여섯 attestation은 해당 사실을 직접 확인한 경우만 `true`
 - 실제 실행한 scenario는 `attempts`를 1–20, `observedAt`을 test window 안의 UTC 시각으로 기록한다.
   통과는 `reason: null`, 실패는 정해진 reason code 하나만 사용한다.
@@ -85,10 +101,10 @@ npm run android:functional-acceptance -- \
 ```
 
 report는 기존 파일을 덮어쓰지 않고 mode `0600`으로 생성된다. candidate version/commit, manifest·APK·signer
-digest, API level과 장치/Companion/upstream 수, attestation, scenario별 pass/fail/not-run·횟수·시각·고정
+digest, Provider grade report digest, API level과 장치/Companion/upstream 수, attestation, scenario별 pass/fail/not-run·횟수·시각·고정
 reason, aggregate verdict만 포함한다. private identifier, network 값, credential과 자유 형식 note는 schema에
 없다. report는 저장소나 support bundle에 올리지 않고, deployment acceptance에는 candidate commit과
 aggregate verdict만 옮긴다.
 
-기능 report 한 건과 direct/P2P/relay별 60분 저부하 report가 모두 통과하고 외부 edge 검토까지 끝나야
+기능 report 한 건, digest가 고정된 실제 coding grade 세 건과 direct/P2P/relay별 60분 저부하 report가 모두 통과하고 외부 edge 검토까지 끝나야
 v2 field acceptance를 주장할 수 있다. CI와 이 도구의 fixture만으로 실제 현장 통과를 기록하면 안 된다.

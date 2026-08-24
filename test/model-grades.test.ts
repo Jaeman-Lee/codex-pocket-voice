@@ -33,6 +33,7 @@ test("protected model grade reports grant only normalized provider/model/upstrea
 
   const openRouter = await source.load("openrouter");
   assert.equal(openRouter.length, 1);
+  assert.equal(openRouter[0]?.actualProvider, "Strict Eval");
   assert.equal(modelToolAccess(modelVerification(openRouter, "vendor/eval-model", "strict-eval")), "coding");
   assert.equal(modelToolAccess(modelVerification(openRouter, "vendor/eval-model", "other-upstream")), "none");
   assert.equal(combinedModelVerification([

@@ -20,6 +20,7 @@ export interface ProviderModelGradeRecord {
   providerId: GradedProviderId;
   modelId: string;
   upstreamId?: string;
+  actualProvider?: string;
   checkedAt: string;
   expiresAt: string;
   verification: ProviderModelVerification;
@@ -50,12 +51,12 @@ export class ProtectedProviderModelGradeSource implements ProviderModelGradeSour
         false,
       );
       if (raw === null) throw new ProviderModelGradeError("Provider model grade report를 읽을 수 없습니다.");
-      const record = parseGradeReport(raw, this.now());
+      const record = parseProviderModelGradeReport(raw, this.now());
       if (record.providerId !== providerId) continue;
       const key = JSON.stringify([record.modelId, record.upstreamId ?? null]);
       const existing = records.get(key);
       if (existing && existing.checkedAt === record.checkedAt
-          && JSON.stringify(existing.verification) !== JSON.stringify(record.verification)) {
+          && JSON.stringify(existing) !== JSON.stringify(record)) {
         throw new ProviderModelGradeError("같은 시각의 Provider model grade report가 서로 다릅니다.");
       }
       if (!existing || Date.parse(existing.checkedAt) < Date.parse(record.checkedAt)) records.set(key, record);
@@ -197,7 +198,10 @@ async function readGradeDirectory(directory: string): Promise<string[]> {
   }).sort();
 }
 
-function parseGradeReport(raw: string, now: number): ProviderModelGradeRecord {
+export function parseProviderModelGradeReport(
+  raw: string,
+  now = Date.now(),
+): ProviderModelGradeRecord {
   let value: unknown;
   try {
     value = JSON.parse(raw) as unknown;
@@ -248,7 +252,59 @@ function parseGradeReport(raw: string, now: number): ProviderModelGradeRecord {
   const upstreamId = upstreamIdValue(report.requestedUpstream);
   const grades = record(report.grades);
   const contract = contractGrade([grade(grades?.conversation), grade(grades?.toolCalling)]);
-  return normalizedRecord("openrouter", modelId, upstreamId, checkedAt, expiresAt, expired, contract, grades);
+  return normalizedRecord(
+    "openrouter",
+    modelId,
+    upstreamId,
+    checkedAt,
+    expiresAt,
+    expired,
+    contract,
+    grades,
+    report.actualProviders[0] as string,
+  );
+}
+
+export function parseProtectedProviderCodingGradeReport(
+  raw: string,
+  now = Date.now(),
+): ProviderModelGradeRecord {
+  const normalized = parseProviderModelGradeReport(raw, now);
+  let value: unknown;
+  try {
+    value = JSON.parse(raw) as unknown;
+  } catch {
+    throw new ProviderModelGradeError("Provider coding grade report가 올바른 JSON이 아닙니다.");
+  }
+  const report = record(value);
+  const evaluation = record(report?.evaluation);
+  if (!evaluation || evaluation.scope !== "coding"
+      || evaluation.fixture !== "ephemeral_synthetic_workspace"
+      || evaluation.approval !== "protected_workflow_and_exact_confirmation"
+      || evaluation.maximumRequests !== 3
+      || !["pass", "contract_failed", "infrastructure_failed"].includes(String(evaluation.outcome))) {
+    throw new ProviderModelGradeError("Provider coding grade evaluation이 잘못됐습니다.");
+  }
+  if (!Array.isArray(evaluation.tools) || evaluation.tools.length > 2
+      || evaluation.tools.some((tool) => {
+        const item = record(tool);
+        return !item || Object.keys(item).sort().join(":") !== "name:status"
+          || typeof item.name !== "string" || !["workspace_read", "workspace_replace_text"].includes(item.name)
+          || typeof item.status !== "string" || !["completed", "denied", "failed"].includes(item.status);
+      })) {
+    throw new ProviderModelGradeError("Provider coding grade tool evidence가 잘못됐습니다.");
+  }
+  const grades = record(report?.grades);
+  const codingPassed = grades?.projectRead === "pass" && grades.coding === "pass";
+  const exactPassingTools = evaluation.tools.length === 2
+    && record(evaluation.tools[0])?.name === "workspace_read"
+    && record(evaluation.tools[0])?.status === "completed"
+    && record(evaluation.tools[1])?.name === "workspace_replace_text"
+    && record(evaluation.tools[1])?.status === "completed";
+  if (codingPassed !== (evaluation.outcome === "pass" && exactPassingTools)) {
+    throw new ProviderModelGradeError("Provider coding grade verdict와 tool evidence가 일치하지 않습니다.");
+  }
+  return normalized;
 }
 
 function normalizedRecord(
@@ -260,6 +316,7 @@ function normalizedRecord(
   expired: boolean,
   contract: "pass" | "not_tested" | "fail",
   grades: Record<string, unknown> | null,
+  actualProvider?: string,
 ): ProviderModelGradeRecord {
   const conversation = expired ? "expired" : contract;
   const projectRead = expired ? "expired" : contract === "pass" && grade(grades?.projectRead) === "pass"
@@ -272,6 +329,7 @@ function normalizedRecord(
     providerId,
     modelId,
     ...(upstreamId ? { upstreamId } : {}),
+    ...(actualProvider ? { actualProvider } : {}),
     checkedAt,
     expiresAt,
     verification: {
@@ -311,7 +369,8 @@ function upstreamIdValue(value: unknown): string {
 }
 
 function safeProviderName(value: string): boolean {
-  return value.length > 0 && value.length <= 120 && !/[\u0000-\u001f\u007f]/.test(value);
+  return value.length <= 120 && value.normalize("NFKC").trim().length > 0
+    && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
 function grade(value: unknown): "pass" | "not_tested" | "fail" {

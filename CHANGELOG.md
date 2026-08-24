@@ -10,6 +10,19 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Provider-grade-bound release evidence fix는 기능 observation이 OpenRouter upstream 수만 기록하고 최종
+  evidence CLI가 보호된 Provider grade 원문을 읽지 않아, 실제 OpenAI coding grade와 서로 다른 두
+  OpenRouter upstream family의 성공 없이도 구조상 최종 gate를 통과할 수 있던 release validation 공백을
+  고치는 internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/
+  Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 pre-handoff 기능·최종 evidence
+  schema 1과 이전 CI-only candidate를 교체한다. 실제 field·Provider 호출, APK 전달·설치와 Companion 재시작은 하지 않으며
+  current v1 후보 1.8.2, staged v1.8.4, 검증된 1.8.1 rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- 기능 observation/report schema 2는 OpenAI coding grade 한 건과 OpenRouter coding grade 두 건의 exact
+  SHA-256을 고정한다. 최종 gate는 세 owner-only report 원문을 다시 읽어 protected coding evaluation의
+  scope·승인·Tool Broker 순서·등급·30일 freshness와 field 시작 전 유효성을 확인하고, OpenRouter exact
+  upstream tag와 실제 provider family가 각각 두 개일 때만 통과한다. digest 바꿔치기, 동일 family,
+  read-only/실패/만료 grade는 fail-closed다. `release:check`의 단위 검사 316개와 실제 app-server 통합
+  3개, production build·schema 일치·SBOM이 통과했다.
 - Same-descriptor APK signer binding fix는 update verifier가 APK hash를 읽은 file descriptor를 닫은 뒤
   같은 경로를 `apksigner`에 다시 넘겨, 두 검사 사이 경로 교체로 hash 대상과 signer 대상이 달라질 수
   있던 release trust 경계 오류를 고치는 internal compatibility `patch`다. 아직 전달하지 않은

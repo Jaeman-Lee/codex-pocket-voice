@@ -596,7 +596,8 @@ bytes가 candidate와 다르면 측정을 진행하거나 report를 만들지 �
 단말 수치는 아직 없다.
 
 기능 field harness는 먼저 별도 검증한 signed update manifest의 version/commit·manifest/APK/signer digest와
-clean checkout을 묶는다. 모든 항목이 `not_run`인 owner-only 템플릿만 만들고, 실제 Android API 30+,
+clean checkout을 묶는다. pre-handoff schema 2는 보호된 OpenAI coding grade 한 건과 서로 다른 두
+OpenRouter coding grade 원문의 SHA-256도 고정한다. 모든 항목이 `not_run`인 owner-only 템플릿만 만들고, 실제 Android API 30+,
 Linux Companion 2대, Android client 2대, 서로 다른 OpenRouter upstream 계열 2개와 20개 고정 scenario,
 여섯 privacy/approval/rollback attestation을 모두 만족해야 aggregate report를 통과시킨다. schema에는
 device/network identifier, credential, prompt/response, 오류 원문과 자유 형식 note가 없고 결과가 30일보다
@@ -606,6 +607,9 @@ device/network identifier, credential, prompt/response, 오류 원문과 자유 
 저부하 report를 exact allowlist로 읽는다. 각 report의 candidate·설치 identity·transport·측정 시각과 privacy
 선언을 검증하고 aggregate에서 고정 threshold를 재계산해 편집된 pass를 거부한다. 네 결과가 같은 clean
 candidate이고 모두 30일 이내 pass일 때만 create-once 0600 aggregate를 통과시킨다. field 평가 전에는
+observation에 묶인 owner-only Provider grade 원문 세 건을 읽어 protected coding scope·승인·read→replace
+Tool Broker evidence·등급·field-start freshness를 다시 검증하고, OpenRouter exact upstream tag와 actual
+provider family가 각각 두 개임을 요구한다. 이어서
 independent trust path의 pinned certificate fingerprint로 detached manifest signature, APK signer와
 APK/SBOM 실제 hash·byte count를 검증한다. APK hash와 signer 검사는 `O_NOFOLLOW`로 연 같은 descriptor를
 Linux `apksigner` 자식까지 유지해 두 검사 사이 경로 교체를 차단한다. verifier가 반환한 exact manifest SHA-256 receipt와 field
