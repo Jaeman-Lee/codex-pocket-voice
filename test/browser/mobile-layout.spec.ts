@@ -6,6 +6,11 @@ const PAIRING_CODE = "12345678";
 test("the paired shell stays inside 320, 360, and 412px portrait viewports", async ({ page }) => {
   await bootPairedApp(page, { width: 320, height: 740 });
 
+  const conversations = page.getByLabel("AI 대화 선택");
+  await expect(conversations.locator("option")).toHaveCount(2);
+  await expect(conversations.locator('option[value="thread-mobile"]')).toHaveCount(1);
+  await expect(conversations.locator('option[value="thread-nested"]')).toHaveCount(0);
+
   for (const width of [320, 360, 412]) {
     await page.setViewportSize({ width, height: 780 });
     await settleLayout(page);

@@ -45,10 +45,22 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Run artifact boundary | maximum 8 / 256 MiB per operation | redacted verifier/Codex logs plus allowlisted run-reported test/image/APK regular-file snapshots; authenticated opaque download, symlink/sensitive/path escape rejection and history-delete cleanup implemented; physical Android download acceptance pending |
 | Diagnostic support bundle | schema 1 allowlist JSON | authenticated app/protocol/tool/count aggregate download, normalized version tokens and capability-gated 320px UI implemented; no device/network/workspace/request/error content, physical share acceptance pending |
-| Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
+| Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; only exact normalized cwd thread run/release/claim is accepted; nested and cross-project threads are rejected |
 | PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, standalone Linux GO/PBC + memory-only DHCP cleanup lifecycle, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; actual P2P field validation pending |
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+Exact project session scope checkpoint decision: 부모 프로젝트 선택이 하위 폴더의 Codex 대화를 같은
+세션으로 표시·반납할 수 있던 기존 v2 오류를 고치므로 `patch`로 분류한다. 아직 전달하지 않은
+incompatible v2 범위 안에서 SemVer `2.0.0`/Android `versionCode 20000`, 대상
+`feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. 모바일은 exact `cwd` 대화만
+표시하고 반납 직전 로컬 선택을 재검증한다. Gateway는 정규화한 workspace와 thread `cwd`가 완전히
+같아야 run/release/claim을 허용하며 nested/sibling mismatch에는 409를 반환하고 writer를 해제하지 않는다.
+APK 전달·설치, 실제 Provider 호출과 Companion 재시작은 하지 않고 current v1 후보 1.8.2,
+staged v1.8.4, 검증된 rollback 1.8.1과 배포 중인 v1.8.3 Companion을 그대로 보존한다.
+`release:check`의 단위 검사 281개, 실제 app-server 통합 3개, production build·schema 일치·SBOM은
+통과했다. exact/nested thread를 함께 반환하는 320px production 브라우저 회귀는 로컬 host의
+`libatk-1.0.so.0` 부재로 실행하지 못해 PR Chromium CI를 최종 gate로 사용한다.
 
 Paired-device removal checkpoint decision: v2 연결 센터의 기존 삭제가 Companion 인증 권한을
 남길 수 있던 보안 결함을 고치므로 `patch`로 분류한다. 아직 전달하지 않은 incompatible v2

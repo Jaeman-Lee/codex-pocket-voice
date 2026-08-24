@@ -1,4 +1,20 @@
-import type { Operation, SessionHandoff } from "./types";
+import type { Operation, SessionHandoff, ThreadSummary } from "./types";
+
+export function threadsForWorkspace(
+  threads: readonly ThreadSummary[],
+  workspace: string,
+): ThreadSummary[] {
+  if (!workspace) return [];
+  return threads.filter((thread) => thread.cwd === workspace);
+}
+
+export function threadBelongsToWorkspace(
+  threads: readonly ThreadSummary[],
+  workspace: string,
+  threadId: string,
+): boolean {
+  return Boolean(threadId) && threads.some((thread) => thread.id === threadId && thread.cwd === workspace);
+}
 
 export function scopedHandoff(
   handoff: SessionHandoff | null,

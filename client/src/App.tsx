@@ -90,7 +90,12 @@ import {
   unavailableFleetSnapshot,
   type FleetDeviceSnapshot,
 } from "./fleet-state";
-import { operationBelongsToSession, scopedHandoff } from "./session-scope";
+import {
+  operationBelongsToSession,
+  scopedHandoff,
+  threadBelongsToWorkspace,
+  threadsForWorkspace,
+} from "./session-scope";
 import {
   latestProviderForkSource,
   providerConversationMessages,
@@ -809,10 +814,7 @@ export function App() {
       const data = await api<{ threads: ThreadSummary[] }>("/api/threads?limit=30");
       if ((attempt !== undefined && attempt !== connectionAttemptRef.current)
           || (runScope && !activeRunScopeMatches(activeRunRef.current, runScope))) return;
-      const prefix = selectedWorkspace.endsWith("/") ? selectedWorkspace : `${selectedWorkspace}/`;
-      const filtered = data.threads.filter(
-        (thread) => !selectedWorkspace || thread.cwd === selectedWorkspace || thread.cwd.startsWith(prefix),
-      );
+      const filtered = threadsForWorkspace(data.threads, selectedWorkspace);
       setThreads(filtered);
       const desired = preferredThreadId ?? (preserveSelection ? threadRef.current : "");
       const next = filtered.some((thread) => thread.id === desired) ? desired : "";
@@ -2769,6 +2771,18 @@ export function App() {
       workspaceRef.current,
       threadRef.current,
     ) ? candidateOperation : null;
+    if (threadRef.current && !currentOperation
+        && !threadBelongsToWorkspace(threads, workspaceRef.current, threadRef.current)) {
+      showToast("선택한 대화가 현재 프로젝트의 정확한 경로에 속하지 않아 반납하지 않았습니다.");
+      void loadThreads(
+        workspaceRef.current,
+        false,
+        undefined,
+        undefined,
+        activeRunScope(activeRunRef.current),
+      );
+      return;
+    }
     const currentThreadId = threadRef.current || currentOperation?.threadId || "";
     if (!currentThreadId) {
       detachLocalSession();
@@ -4485,7 +4499,10 @@ export function App() {
             type="button"
             aria-label="선택한 프로젝트의 현재 세션 반납"
             title={handoffSupported ? `${workspaceName(workspace)} · ${selectedWorkspaceIdentityText} 세션 반납` : "Companion 1.8.0 이상에서 사용할 수 있습니다"}
-            disabled={!handoffSupported || handoffBusy || (!threadId && !operationBelongsToSession(operation, workspace, threadId))}
+            disabled={!handoffSupported || handoffBusy || (
+              !threadBelongsToWorkspace(threads, workspace, threadId)
+              && !operationBelongsToSession(operation, workspace, threadId)
+            )}
             onClick={() => {
               setShowHandoffDialog(true);
               void refreshOperationalSnapshot(true);

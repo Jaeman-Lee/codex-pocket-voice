@@ -76,7 +76,14 @@ class MobileAcceptanceClient implements WebCodexClient {
   }
 
   async listThreads() {
-    return { data: [mobileThread("thread-mobile")], nextCursor: null, backwardsCursor: null };
+    return {
+      data: [
+        mobileThread("thread-mobile"),
+        mobileThread("thread-nested", resolve(workspace, "client")),
+      ],
+      nextCursor: null,
+      backwardsCursor: null,
+    };
   }
 
   async listModels(): Promise<ModelListResponse> {
@@ -110,7 +117,12 @@ class MobileAcceptanceClient implements WebCodexClient {
   }
 
   async readThread(threadId: string) {
-    return { thread: mobileThread(threadId) };
+    return {
+      thread: mobileThread(
+        threadId,
+        threadId === "thread-nested" ? resolve(workspace, "client") : workspace,
+      ),
+    };
   }
 
   async beginTurn(options: RunTurnOptions): Promise<BeginTurnResult> {
@@ -217,7 +229,7 @@ class MobileAcceptanceClient implements WebCodexClient {
   }
 }
 
-function mobileThread(id: string): Thread {
+function mobileThread(id: string, threadCwd = workspace): Thread {
   return {
     id,
     extra: null,
@@ -236,7 +248,7 @@ function mobileThread(id: string): Thread {
     recencyAt: 2,
     status: { type: "idle" },
     path: null,
-    cwd: workspace,
+    cwd: threadCwd,
     cliVersion: "browser-fixture",
     source: "appServer",
     canAcceptDirectInput: true,

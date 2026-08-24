@@ -3,7 +3,7 @@ import { stat } from "node:fs/promises";
 import { constants as cryptoConstants } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
-import { basename, dirname, extname, isAbsolute, join, relative, sep } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import { TLSSocket } from "node:tls";
 import type { ThreadListResponse } from "../generated/app-server/v2/ThreadListResponse";
 import type { ThreadReadResponse } from "../generated/app-server/v2/ThreadReadResponse";
@@ -773,7 +773,7 @@ async function handleApi(
       optionalString(body.workspace, "workspace", 4_096) ?? operation?.cwd ?? read.thread.cwd,
     );
     const threadWorkspace = await options.paths.resolveWorkspace(read.thread.cwd);
-    if (!containsWorkspace(workspace, threadWorkspace)) {
+    if (workspace !== threadWorkspace) {
       throw new HttpError(409, "Thread does not belong to the selected workspace");
     }
     if (operation && (operation.conversationId !== threadId || operation.cwd !== workspace)) {
@@ -1307,7 +1307,7 @@ async function handleApi(
         options.paths.assertAllowed(existing.thread.cwd);
         cwd = await options.paths.resolveWorkspace(requestedCwd ?? existing.thread.cwd);
         const threadWorkspace = await options.paths.resolveWorkspace(existing.thread.cwd);
-        if (!containsWorkspace(cwd, threadWorkspace)) {
+        if (cwd !== threadWorkspace) {
           throw new HttpError(409, "Thread does not belong to the selected workspace");
         }
       } else {
@@ -1924,7 +1924,7 @@ async function handoffMatchesWorkspace(
     const workspace = await options.paths.resolveWorkspace(handoff.workspace);
     const read = await options.client.readThread(handoff.threadId, false);
     const threadWorkspace = await options.paths.resolveWorkspace(read.thread.cwd);
-    if (!containsWorkspace(workspace, threadWorkspace)) return false;
+    if (workspace !== threadWorkspace) return false;
     const operation = handoff.operationId ? runs.get(handoff.operationId) : undefined;
     return !operation || (
       operation.providerId === "codex"
@@ -1934,11 +1934,6 @@ async function handoffMatchesWorkspace(
   } catch {
     return false;
   }
-}
-
-function containsWorkspace(workspace: string, candidate: string): boolean {
-  const nested = relative(workspace, candidate);
-  return nested === "" || (!isAbsolute(nested) && nested !== ".." && !nested.startsWith(`..${sep}`));
 }
 
 function publicApproval(approval: ApprovalRequest, operation: RunOperation): Record<string, unknown> {

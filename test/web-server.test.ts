@@ -448,6 +448,14 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const read = await jsonFetch(`${base}/api/threads/thread-web`, { headers: authorized() });
   assert.equal(read.thread.turns[0].items[0].text, "hello");
 
+  const nestedProjectRun = await fetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ prompt: "wrong nested project", cwd, threadId: "thread-nested" }),
+  });
+  assert.equal(nestedProjectRun.status, 409);
+  assert.match((await nestedProjectRun.json() as any).error, /selected workspace/);
+
   const crossProjectRun = await fetch(`${base}/api/runs`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
@@ -785,6 +793,14 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   });
   assert.equal(mismatchedHandoff.status, 409);
   assert.match((await mismatchedHandoff.json() as any).error, /selected workspace/);
+  const nestedHandoff = await fetch(`${base}/api/session/handoff`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ workspace: cwd, threadId: "thread-nested" }),
+  });
+  assert.equal(nestedHandoff.status, 409);
+  assert.match((await nestedHandoff.json() as any).error, /selected workspace/);
+  assert.deepEqual(fake.unsubscribeAttempts, []);
   const released = await jsonFetch(`${base}/api/session/handoff`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
@@ -1202,8 +1218,14 @@ class FakeWebClient implements WebCodexClient {
     };
   }
 
-  async readThread() {
-    return { thread: thread(true) };
+  async readThread(threadId: string) {
+    return {
+      thread: thread(
+        true,
+        threadId === "thread-nested" ? resolve(cwd, "client") : cwd,
+        threadId,
+      ),
+    };
   }
 
   async beginTurn(options: RunTurnOptions) {
@@ -1259,11 +1281,11 @@ class FakeWebClient implements WebCodexClient {
   }
 }
 
-function thread(includeTurns = false): Thread {
+function thread(includeTurns = false, threadCwd = cwd, id = "thread-web"): Thread {
   return {
-    id: "thread-web",
+    id,
     extra: null,
-    sessionId: "session-web",
+    sessionId: `session-${id}`,
     forkedFromId: null,
     parentThreadId: null,
     preview: "web test",
@@ -1278,7 +1300,7 @@ function thread(includeTurns = false): Thread {
     recencyAt: 2,
     status: { type: "idle" },
     path: null,
-    cwd,
+    cwd: threadCwd,
     cliVersion: "test",
     source: "appServer",
     canAcceptDirectInput: true,

@@ -10,6 +10,18 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Exact project session scope fix는 선택한 프로젝트의 부모 경로가 하위 프로젝트 대화까지 표시·반납할
+  수 있던 v2 결함을 고치는 `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서
+  `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
+  대체한다. APK 전달·설치, 실제 Provider 호출과 실행 중 Companion 재시작은 하지 않으며 current v1
+  후보 1.8.2, staged v1.8.4, 검증된 1.8.1 rollback과 배포 중인 v1.8.3 Companion을 그대로 보존한다.
+- 모바일의 Codex 대화 목록과 세션 반납은 이제 선택한 프로젝트의 exact `cwd`만 대상으로 삼는다.
+  오래된 로컬 선택이 섞이면 호출 전에 목록을 다시 동기화하고 반납하지 않는다. Gateway도 정규화한
+  workspace와 thread `cwd`가 완전히 같은 경우에만 기존 대화 실행·반납·이어받기를 허용하며,
+  하위 폴더 또는 같은 이름의 다른 프로젝트는 409로 차단하고 writer를 해제하지 않는다.
+- exact/nested/다른 프로젝트 경계와 writer 비호출을 단위·Gateway 통합 검사로 고정했고,
+  `release:check`의 단위 검사 281개와 실제 app-server 통합 3개를 통과했다. 320px production
+  브라우저 회귀는 로컬 host의 `libatk-1.0.so.0` 부재로 시작하지 못해 PR Chromium CI에서 확인한다.
 - Paired-device removal authorization fix는 v2 연결 센터의 기존 삭제 동작이 Companion
   client 권한을 남길 수 있던 보안 결함을 고치는 `patch`다. 아직 전달하지 않은 incompatible
   v2 범위 안에서 `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고
@@ -474,9 +486,9 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   worktree 여부를 안전한 read-only Git 환경에서 수집한다. 작업 대시보드와 세션 반납 화면은 branch와
   전체 프로젝트 경로를 함께 표시해 같은 이름의 프로젝트나 다른 worktree를 구분한다. 각 run은 시작
   시점 identity를 암호화 journal에 보존해 나중에 branch가 바뀌어도 작업 카드의 원래 대상을 유지한다.
-- Gateway는 Codex run 시작, 세션 반납과 이어받기에서 thread의 실제 cwd가 선택한 workspace와 같거나
-  그 하위인지 다시 검사한다. 오래된 클라이언트 상태나 잘못된 thread ID가 다른 프로젝트의 실행·인계로
-  연결되면 409로 거절한다.
+- Gateway는 Codex run 시작, 세션 반납과 이어받기에서 정규화한 thread의 실제 cwd가 선택한 workspace와
+  완전히 같은지 다시 검사한다. 오래된 클라이언트 상태나 잘못된 thread ID가 하위 폴더 또는 다른
+  프로젝트의 실행·인계로 연결되면 409로 거절한다.
 - 작업 대시보드에 Companion journal의 7일/500 operation/2,000 event 보존 정책을 표시하고,
   현재 workspace의 복호화된 operation·event만 16 MiB 이하 JSON으로 내보내는 기능을 추가했다.
   삭제는 정확한 전체 프로젝트 경로와 영향 범위를 다시 보여 준 뒤 두 번째 터치에서만 수행하며,
