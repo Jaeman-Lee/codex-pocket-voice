@@ -107,6 +107,16 @@ provider가 일치해야 통과한다. 결과 artifact에는 모델·upstream, U
 OpenRouter는 자동 routing에 project tool을 주지 않는다. 사용자가 고른 primary와 backup 각각의 report가
 모두 통과하고 현재 ZDR endpoint가 tools parameter를 지원할 때만 공통 최소 권한을 API 요청에 넣는다.
 
+`project_scope=read|coding`을 명시하면 같은 protected job에서 smoke가 증명한 exact model+ZDR upstream을
+새 0700 합성 프로젝트의 운영 `workspace_read`/`workspace_replace_text` 계약으로 평가할 수 있다. read는
+최대 2회, coding은 최대 3회 요청과 요청당 input 8,192/output 256 token을 허용한다. 현재 endpoint
+catalog의 최악 가격과 Provider가 보고한 USD 기준 credit 비용이 각각 $0.05를 넘으면 grade를 통과시키지
+않는다. coding은 `APPROVE_SYNTHETIC_CODING_EVAL` exact confirmation이 필요하다. report에는 routing,
+tool 상태, token/cost와 등급만 남고 prompt, marker, 파일 내용·SHA와 모델 출력은 없다.
+
+이 checkpoint에서는 project-grade workflow를 fake adapter와 운영 Tool Broker fixture로만 실행했다.
+실제 API key·유료 inference 또는 실제 model/upstream grade 발급은 수행하지 않았다.
+
 ## 공식 기준
 
 - [OpenRouter Chat Completions](https://openrouter.ai/docs/api/api-reference/chat/send-chat-completion-request)

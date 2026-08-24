@@ -87,5 +87,13 @@ summary만 전달한다.
 포함하는 0600 JSON이며 API key, prompt, marker, 함수 인자와 응답 본문은 포함하지 않는다. 이 smoke는
 streaming·대화·함수 호출·stateless replay만 평가하고 실제 프로젝트 읽기나 코딩 등급을 부여하지 않는다.
 
-현재 checkpoint에서는 loopback fixture만 실행했으며 실제 key나 유료 요청은 사용하지 않았다.
-따라서 현재 smoke report만으로는 project tool이 활성화되지 않는다.
+`project_scope=read|coding`을 명시하면 같은 protected job에서 smoke report를 다시 검증한 뒤 새 0700
+합성 프로젝트와 운영 `workspace_read`/`workspace_replace_text` 계약으로 실제 모델을 평가한다.
+read는 최대 2회, coding은 최대 3회 Responses 요청과 요청당 input 8,192/output 256 token을 허용하며,
+운영자가 입력한 가격의 최악 비용과 실제 usage 추정값이 모두 $0.05 이하여야 한다. coding은
+`APPROVE_SYNTHETIC_CODING_EVAL` exact confirmation이 추가로 필요하다. 0600 결과에는 prompt, marker,
+임시 파일 내용·SHA와 모델 출력이 없다. 자세한 설치·해석 경계는
+[Provider model grade reports](provider-model-grades.md)를 따른다.
+
+현재 checkpoint에서는 이 project-grade 경로도 fake adapter와 운영 Tool Broker fixture로만 검증했으며
+실제 key나 유료 요청은 사용하지 않았다. 따라서 아직 설치할 실제 model grade report는 없다.

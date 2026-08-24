@@ -27,7 +27,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | OpenAI API milestone | official SDK 6.49.0 | encrypted bounded `store:false` multi-turn replay, fake tool-loop/SSE/Models tests and protected 2-call smoke harness; no API key configured and no paid request sent |
 | OpenRouter milestone | Chat Completions + user/ZDR model, endpoint and key APIs | encrypted bounded multi-turn replay, exact upstream lock/approved backup, bounded price/performance/quota UI, fake routing/tool-loop/SSE and protected 2-call smoke harness; no API key configured and no paid request sent |
 | Provider credential boundary | systemd 256+ encrypted user credential | fixed-name runtime files, generation-bound activation, immediate new-run revoke, no-follow/owner/mode/size validation and recoverable ciphertext rotation/removal implemented; legacy 0600 file retained |
-| Provider model grade boundary | owner-only redacted report, maximum age 30 days | OpenAI exact model and OpenRouter exact model+every selected upstream gate read/coding tool exposure; invalid, stale or absent reports remain chat-only; real project grades not issued |
+| Provider model grade boundary | owner-only redacted report, maximum age 30 days | OpenAI exact model and OpenRouter exact model+every selected upstream gate read/coding tool exposure; protected fresh-smoke synthetic project grade workflow implemented, but no real API workflow run or grade issued |
 | Provider runtime contract | exact run ownership + ordered single-terminal events | Codex/OpenAI/OpenRouter shared success/partial-failure/cancel/timeout suite and fake 401/403/429/5xx/malformed SSE fixtures passing |
 | API run policy | authenticated Companion policy + immutable per-run snapshot | emergency stop, token/cost hard limits, rolling-day warning, monthly touch confirmation and actual/estimated/unknown accounting implemented with fake Providers only; no paid request sent |
 | Provider context Fork | client/request-bound 10-minute reviewed preview | terminal source request/accepted Steers/final answer plus new request only; exact target policy/selection, new-conversation execution, idempotent ambiguous-response retry and durable redacted provenance implemented with synthetic Providers |
@@ -43,6 +43,18 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, standalone Linux GO/PBC + memory-only DHCP cleanup lifecycle, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; actual P2P field validation pending |
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+Protected project-grade checkpoint decision: 실제 API 모델의 공통 Tool Broker read/coding 계약을 합성 프로젝트에서
+평가해 설치 가능한 등급을 만드는 새 v2 validation capability이므로 `feature`로 분류한다. 아직 현장 전달하지
+않은 incompatible v2 범위 안에서 SemVer `2.0.0`/Android `versionCode 20000`, 대상
+`feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. workflow는 같은 job의 24시간 이내
+owner-only smoke report, exact model/OpenRouter ZDR upstream, 최대 read 2회·coding 3회, 요청당 input
+8,192/output 256 token과 $0.05 사전/사후 상한을 요구한다. 새 0700 임시 workspace의 운영 read와 SHA-bound
+replace만 사용하고 coding은 environment review와 exact confirmation 뒤 한 번만 승인한다. report에는
+prompt·marker·파일 내용·SHA·model output·credential을 남기지 않는다. 공개 검사는 fake adapter와 실제
+Tool Broker만 사용했고 실제 API key·유료 inference·등급 발급은 수행하지 않았다. APK 전달·설치와 실행 중
+Companion 재시작도 하지 않았으며 current v1 후보 1.8.2, staged v1.8.4와 검증된 rollback 1.8.1을 그대로
+보존한다.
 
 Multi-Companion Fleet checkpoint decision: 여러 Linux PC의 작업 요약과 명시적 전환은 새 user-visible v2
 workflow이므로 `feature`로 분류한다. 아직 전달하지 않은 incompatible v2 안에서 SemVer `2.0.0`/Android

@@ -72,6 +72,16 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   routing, 미검사·실패·만료·malformed·symlink·broad-mode report는 프로젝트 도구를 받지 않는다.
   `projectRead` 통과는 observation 도구만, `coding`까지 통과해야 터치 승인 변경·검증 도구를 API 요청에
   넣는다. 적용 등급은 모델 선택 UI와 암호화 operation 결과에 남지만 report 원문은 Gateway로 보내지 않는다.
+- Protected project-grade workflow는 실제 API 모델에 합성 프로젝트 읽기·변경 등급을 발급하는 새 v2
+  검증 capability이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서
+  `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
+  대체한다. APK 전달·설치, 실제 API key·유료 inference와 실행 중 Companion 재시작은 하지 않으며
+  current v1 후보 1.8.2, staged v1.8.4와 검증된 v1.8.1 rollback을 그대로 보존한다.
+- 수동 `provider-smoke` environment의 same-job fresh smoke 뒤에만 read/coding 평가를 선택할 수 있다.
+  매번 새 0700 합성 workspace에 운영 `workspace_read`와 선택적 SHA-bound `workspace_replace_text`만
+  노출하고, coding은 exact confirmation 뒤 한 변경만 승인한다. exact model/route, 최대 2/3회 요청,
+  token·$0.05 사전/사후 비용과 Provider usage를 fail-closed로 검사한다. 0600 report에는 tool 상태와
+  등급·수치만 남기고 prompt·marker·파일 내용·SHA·model output·credential은 넣지 않는다.
 - Provider credential activation gate는 교체·해제 후 이전 systemd runtime key로 새 run이 열릴 수 있던
   결함을 고치는 internal compatibility `patch`다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서
   `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를

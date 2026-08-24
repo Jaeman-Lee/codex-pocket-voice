@@ -11,6 +11,19 @@ on:
         description: Exact ZDR endpoint tag
         required: true
         type: string
+      project_scope:
+        description: Optional protected synthetic project grade
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - read
+          - coding
+      coding_confirmation:
+        description: For coding only, enter APPROVE_SYNTHETIC_CODING_EVAL
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -35,15 +48,42 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install project eval runtime
+        if: inputs.project_scope != 'none'
+        run: npm ci --ignore-scripts
+
       - name: Run bounded synthetic smoke
         env:
           OPENROUTER_SMOKE_REPORT: ${{ runner.temp }}/openrouter-smoke-report.json
         run: node scripts/openrouter-smoke.mjs
 
+      - name: Run protected synthetic project grade
+        if: inputs.project_scope != 'none'
+        env:
+          PROVIDER_PROJECT_EVAL_PROVIDER: openrouter
+          PROVIDER_PROJECT_EVAL_SCOPE: ${{ inputs.project_scope }}
+          PROVIDER_PROJECT_EVAL_MODEL: ${{ inputs.model }}
+          PROVIDER_PROJECT_EVAL_UPSTREAM: ${{ inputs.upstream }}
+          PROVIDER_PROJECT_EVAL_SMOKE_REPORT: ${{ runner.temp }}/openrouter-smoke-report.json
+          PROVIDER_PROJECT_EVAL_REPORT: ${{ runner.temp }}/openrouter-project-grade-report.json
+          PROVIDER_PROJECT_EVAL_MAX_USD: "0.05"
+          PROVIDER_PROJECT_EVAL_CODING_CONFIRMATION: ${{ inputs.coding_confirmation }}
+        run: node --import tsx scripts/provider-project-eval.ts
+
       - name: Upload redacted grade report
+        if: ${{ always() }}
         uses: actions/upload-artifact@v6
         with:
           name: openrouter-smoke-${{ github.run_id }}
           path: ${{ runner.temp }}/openrouter-smoke-report.json
-          if-no-files-found: error
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload redacted project grade report
+        if: ${{ always() && inputs.project_scope != 'none' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: openrouter-project-grade-${{ github.run_id }}
+          path: ${{ runner.temp }}/openrouter-project-grade-report.json
+          if-no-files-found: warn
           retention-days: 14

@@ -22,8 +22,8 @@
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Codex exact-turn Steer와 durable idempotency, terminal operation 기반 명시적 Provider context Fork와 redacted provenance, Tool/Approval 계약, 세 Provider 공용 contract·stream failure fixture, protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신 모듈 구현; production build·실제 pairing/Gateway/SSE/run/approval 기반 Playwright 모바일 회귀 통과, 실기기 회귀 잔여 |
-| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only systemd encrypted credential, 암호화 durable multi-turn, server-authored output/total token·비용 hard limit과 실제/추정 비용 accounting, model-grade 기반 read/coding tool gate, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구, 격리 npm 검증과 보호된 2-call smoke harness 구현; 실제 모델 실행·프로젝트 등급 잔여 |
-| Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가장 비싼 승인 route 기준 사전 비용검사, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker, 보호된 synthetic smoke harness와 exact model/upstream grade enforcement 구현; 실제 model eval 실행·현장 등급 잔여 |
+| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only systemd encrypted credential, 암호화 durable multi-turn, server-authored output/total token·비용 hard limit과 실제/추정 비용 accounting, model-grade 기반 read/coding tool gate, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구, 격리 npm 검증, 보호된 2-call smoke와 단계별 합성 프로젝트 grade harness 구현; 실제 모델 workflow 실행·현장 프로젝트 acceptance 잔여 |
+| Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가장 비싼 승인 route 기준 사전 비용검사, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker, 보호된 synthetic smoke와 단계별 합성 프로젝트 grade harness 및 exact model/upstream grade enforcement 구현; 실제 model/upstream workflow 실행·현장 acceptance 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, 최대 8대의 redacted read-only Multi-Companion Fleet와 명시적 PC 전환, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, 모바일 기본 Queue·명시적 Codex Steer, Provider 전환의 기본 빈 대화와 touch-reviewed bounded Fork, durable 기록, bounded retention 및 API 비용 정책 설정, touch-only 월 비용 확인, opt-in process-death native 알림·retained run 열기, API 30 token-gated notification Intent 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed 구현; 실기기 multi-PC/background/tray-tap deep-link acceptance 잔여 |
 | Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; API 30 ATD에서 Keystore config/identity/background state와 notification Intent 계측 회귀 추가, 실제 P2P group formation·external edge DDoS/실부하·tray-tap/reconnect/voice 실기기 release gate 잔여 |
 
@@ -367,6 +367,14 @@ $0.02 상한 아래에서 2회 synthetic Responses 호출만 수행한다. 첫 �
 응답 본문이 없는 redacted report만 남긴다. loopback fixture는 구현됐지만 실제 key 실행과 project
 read/coding 현장 등급은 아직 남아 있다.
 
+같은 protected job의 optional project-grade 단계는 24시간 이내 smoke report와 exact model을 다시
+검증한 뒤 새 0700 합성 프로젝트에서 운영 `workspace_read`만, 또는 read와 SHA-bound
+`workspace_replace_text`만 노출한다. read/coding은 최대 2/3회 요청, 요청당 input 8,192/output 256 token,
+운영자 가격 기준 $0.05 상한을 적용한다. coding은 exact confirmation과 environment review가 있어야
+임시 파일 한 건을 승인한다. report에는 tool 상태·usage·등급만 남고 prompt·marker·파일 내용·SHA·
+model output은 남지 않는다. 공개 회귀는 fake adapter가 실제 Tool Broker를 통과하는 경로만 사용하며,
+실제 workflow 실행과 사용자 프로젝트 acceptance는 계속 남아 있다.
+
 Companion은 protected report의 exact requested/actual model, contract 선행 등급과 30일 freshness를
 검사한다. `projectRead:pass`일 때만 observation 도구를, `coding:pass`까지 이어질 때만 touch-approved
 change/execution 도구를 Responses 요청에 넣는다. report가 없거나 malformed·insecure·실패·만료면
@@ -403,6 +411,11 @@ grade report는 exact model+upstream에 귀속된다. 자동 upstream 선택에�
 사용자가 고른 primary와 backup 모두 같은 권한 등급 및 현재 endpoint의 tool parameter 지원을 통과해야
 그 교집합만 요청에 포함한다. 따라서 catalog의 tools metadata 또는 검증된 primary 하나만으로 backup에
 코딩 권한이 전파되지 않는다. 모델·routing UI와 암호화 operation 결과는 적용된 등급만 표시한다.
+
+optional project-grade 단계는 smoke가 증명한 exact ZDR upstream, current catalog 가격과 실제 routing
+metadata를 다시 묶고 OpenAI와 같은 임시 Tool Broker 시나리오를 수행한다. catalog 최악 비용과 Provider
+reported USD-credit 비용이 각각 $0.05를 넘거나 actual upstream이 달라지면 등급을 발급하지 않는다.
+실제 key workflow와 서로 다른 upstream 계열의 현장 등급은 아직 실행하지 않았다.
 
 완료 조건: 서로 다른 두 upstream 계열의 검증 모델이 같은 Tool Broker 계약을 통과하고,
 지원하지 않는 모델은 코딩 권한을 얻지 못한다.
@@ -562,6 +575,8 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - 모델 목록·인증 확인과 실제 유료 inference를 별도 단계로 나눈다.
 - 실제 smoke는 비용 상한, 호출 횟수와 테스트 prompt를 고정하고 결과에서 비밀정보를 제거한다.
 - OpenAI smoke는 운영자가 공식 가격을 다시 확인해 입력하고 $0.02 preflight/usage 상한을 모두 통과해야 한다.
+- optional project grade는 같은 protected job의 fresh smoke에만 이어지고 임시 workspace·운영 Tool Broker,
+  read/coding별 2/3회 요청과 $0.05 상한을 사용한다. 실제 workflow 실행은 수동 release gate로 남는다.
 
 ### 현장 시나리오
 
