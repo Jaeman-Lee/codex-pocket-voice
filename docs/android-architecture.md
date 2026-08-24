@@ -86,8 +86,9 @@ AES-GCM 설정에만 저장한다. native forwarder는 platform CA+hostname+rela
 다시 검증하는 inner PocketLink mTLS를 연다. status와 로그에는 relay endpoint·slot·secret을 내보내지
 않는다. 자동 경로는 LAN/P2P transport 도달 실패만 다음 경로 조건으로 인정하고 TLS hostname·SPKI·mTLS
 실패는 우회하지 않으며, 반복 LAN/P2P 실패는 각각 30초/60초 monotonic cooldown으로 제한한다. Android는
-Wi-Fi Direct group client만 허용한다. Linux group-owner 자동화와 P2P/relay 실기기 acceptance는 아직
-구현·검증하지 않았다.
+Wi-Fi Direct group client만 허용한다. Linux는 별도 opt-in root foreground CLI에서 한 PBC peer만
+수락하고 GO가 아니면 실패하며, group interface 전용 non-routing DHCP와 역순 cleanup을 수행한다. 실제
+P2P group formation과 P2P/relay 실기기 acceptance는 아직 검증하지 않았다.
 사용자가 연결 센터에서 명시적으로 켜고 Android runtime 권한을 허용하면 `connectedDevice` foreground
 service가 최대 8개의 paired loopback Companion에서 notification-only SSE를 구독한다. Companion은 완료·
 실패·새 승인에 대해 schema/kind/operation ID/시각과 승인 만료시각만 보내며 프롬프트·경로·응답·도구

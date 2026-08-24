@@ -111,8 +111,9 @@ hostname and relay SPKI before starting the existing Companion mTLS inside it. A
 user-triggered bounded discovery, opaque reviewed candidate IDs, encrypted peer configuration, group-client-only
 connection enforcement and a fail-closed LAN→P2P→relay automatic mode. Only transport reachability failures advance
 to the next route; LAN/P2P retries use bounded cooldowns, while TLS/SPKI/mTLS failures never trigger a fallback.
-Automating Linux Companion group-owner advertisement/acceptance, public relay operations hardening and real-device
-P2P/battery/background measurements remain open.
+A standalone, explicit Linux group-owner controller now accepts one bounded PBC peer, requires the GO role, starts
+interface-only non-routing DHCP without a lease file, verifies the existing Companion listener, and cleans every
+resource in reverse. Public relay operations hardening and real-device P2P/battery/background measurements remain open.
 
 ## Final definition of done
 

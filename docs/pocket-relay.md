@@ -198,7 +198,7 @@ Node 통합 검사는 서로 다른 relay/Companion/Android test certificate를 
 - Android source contract에서 public CA+hostname+relay SPKI, inner Companion pin+client identity의 분리,
   Keystore encrypted schema migration과 status credential 비노출
 
-아직 남은 Phase E 범위는 Linux Wi-Fi Direct group-owner advertise/accept 자동화와 실제 두 기기 group
-formation, 공용 relay의 외부 edge DDoS·용량·metadata 보존 정책과 실제 부하 검증, Android nested socket의 실기기 네트워크
+Linux Wi-Fi Direct group-owner advertise/accept의 별도 opt-in CLI와 fake-control lifecycle 검사는 구현됐다.
+아직 남은 Phase E 범위는 실제 두 기기 group formation, 공용 relay의 외부 edge DDoS·용량·metadata 보존 정책과 실제 부하 검증, Android nested socket의 실기기 네트워크
 전환·절전·배터리 acceptance다. 이 항목 전에는 relay를 출시 transport로 간주하지 않고 기존 LAN
 PocketLink와 Termux/SSH rollback 경로를 유지한다.

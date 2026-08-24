@@ -169,7 +169,8 @@ PocketLink의 최종 완료판이 아니다.
   cooldown으로 반복 실패를 제한한다.
 - Wi-Fi Direct 검색은 사용자가 누를 때만 12초 동안 실행하고 최대 16개 기기 이름과 2분 opaque ID만
   WebView에 전달한다. MAC 주소는 native 암호화 설정에만 남고 Android group-owner 결과는 제거한다.
-  Linux Companion group-owner advertise/accept 자동화와 실제 하드웨어 group formation은 미구현이다.
+  Linux는 [별도 opt-in group-owner CLI](pocket-link-p2p-linux.md)에서 한 PBC peer, GO-only 결과, 고정
+  non-routing subnet, memory-only DHCP와 역순 cleanup을 구현했다. 실제 하드웨어 group formation은 미검증이다.
 - 서버 인증서 staged pin 교체와 Android client identity A/B 교체는 구현됐지만 실기기·실제 LAN/P2P 전환
   acceptance 미검증
 - 부팅 후 자동 복구, Android 계측 기반 CPU·메모리·배터리 release gate 미검증

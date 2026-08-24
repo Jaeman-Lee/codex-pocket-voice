@@ -36,7 +36,7 @@ rollback 기준선입니다. `2.0.0` 소스는
 - React + Capacitor Android 앱과 설치 가능한 PWA
 - 앱 실행 시 Termux SSH 터널 자동 시작
 - Termux 터미널을 닫아도 유지되는 백그라운드 SSH 터널
-- v2 opt-in PocketLink LAN TLS listener, 10분 QR bootstrap, bounded DNS-SD/Android Wi-Fi Direct discovery, Android Keystore device-certificate/SPKI-pin mTLS foreground tunnel과 명시적 direct/P2P/opaque outbound relay 및 fail-closed LAN→P2P→relay 자동 경로 (Linux P2P group-owner 자동화·실기기 검증 전 CI 전용)
+- v2 opt-in PocketLink LAN TLS listener, 10분 QR bootstrap, bounded DNS-SD/Android Wi-Fi Direct discovery, 별도 fail-closed Linux P2P group-owner CLI, Android Keystore device-certificate/SPKI-pin mTLS foreground tunnel과 명시적 direct/P2P/opaque outbound relay 및 fail-closed LAN→P2P→relay 자동 경로 (실제 P2P group·실기기 검증 전 CI 전용)
 - 선택적으로 사용할 수 있는 안전 범위 MCP 서버
 - 만료되는 코드와 Android Keystore를 사용하는 장치 페어링
 - 여러 Linux Companion 등록과 앱 내 Linux 도구 진단
@@ -46,6 +46,8 @@ v2 저널의 저장 범위, 암호화 키와 재연결 동작은 [Event journal]
 제한은 [PocketLink TLS bootstrap](docs/pocket-link.md)에 정리했습니다.
 outbound relay의 서버·Companion·Android 범위와 남은 현장 단계는
 [PocketLink outbound relay](docs/pocket-relay.md)에 정리했습니다.
+Linux Wi-Fi Direct group-owner의 opt-in 실행·권한·cleanup·field gate는
+[Linux PocketLink P2P group owner](docs/pocket-link-p2p-linux.md)에 정리했습니다.
 
 ## 구조
 

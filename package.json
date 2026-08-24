@@ -7,7 +7,8 @@
   "bin": {
     "codex-voice-bridge": "dist/src/index.js",
     "codex-pocket-web": "dist/src/web-index.js",
-    "codex-pocket-relay": "dist/src/pocket-relay-index.js"
+    "codex-pocket-relay": "dist/src/pocket-relay-index.js",
+    "codex-pocket-p2p": "dist/src/pocket-link-p2p-index.js"
   },
   "scripts": {
     "build": "npm run build:server && npm run build:client",
@@ -22,6 +23,7 @@
     "test:browser": "npm run build:client && playwright test",
     "test:browser:server": "node --import tsx test/browser/fixtures/mobile-gateway.ts",
     "relay": "node dist/src/pocket-relay-index.js",
+    "p2p": "node dist/src/pocket-link-p2p-index.js",
     "start": "node dist/src/index.js",
     "web": "node dist/src/web-index.js",
     "web:dev": "node --import tsx src/web-index.ts",
