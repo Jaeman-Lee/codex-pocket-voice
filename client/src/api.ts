@@ -44,6 +44,8 @@ export class ApiError extends Error {
 export class PairingRequiredError extends ApiError {}
 export class PocketLinkIdentityRotationRequiredError extends ApiError {}
 
+export type DeviceRevocationOutcome = "revoked" | "already_revoked" | "not_paired";
+
 export interface PocketLinkIdentityRotationState {
   status: "pending" | "completed";
   expiresAt: string;
@@ -110,14 +112,20 @@ export async function addLinuxDevice(
 export async function removeDeviceTarget(id: DeviceId): Promise<void> {
   const target = deviceTargets.find((item) => item.id === id);
   if (!target || target.builtIn) throw new Error("기본 실행 단말은 삭제할 수 없습니다.");
-  deviceTargets = deviceTargets.filter((item) => item.id !== id);
-  tokens.delete(id);
   await Promise.all([
-    saveDeviceTargets(),
     secureRemove(tokenKey(id)),
     secureRemove(eventCursorKey(id)),
     secureRemove(identityRotationKey(id)),
   ]);
+  const previousTargets = deviceTargets;
+  deviceTargets = deviceTargets.filter((item) => item.id !== id);
+  try {
+    await saveDeviceTargets();
+  } catch (error) {
+    deviceTargets = previousTargets;
+    throw error;
+  }
+  tokens.delete(id);
   if (activeDevice === id) activeDevice = deviceTargets[0]!.id;
 }
 
@@ -161,15 +169,30 @@ export async function pairActiveDevice(code: string, label: string): Promise<Dev
 }
 
 export async function forgetActiveDevice(): Promise<void> {
-  try {
-    await api("/api/pairing/revoke", { method: "POST", body: {} });
-  } finally {
-    tokens.delete(activeDevice);
-    await Promise.all([
-      secureRemove(tokenKey(activeDevice)),
-      secureRemove(identityRotationKey(activeDevice)),
-    ]);
+  await revokeDeviceTarget(activeDevice);
+}
+
+export async function revokeDeviceTarget(id: DeviceId): Promise<DeviceRevocationOutcome> {
+  const target = requiredDeviceTarget(id);
+  const token = tokens.get(id);
+  if (!target.remoteDeviceId && !token) return "not_paired";
+  if (!token) {
+    throw new Error("Companion 권한 해제를 확인할 인증 정보가 없습니다. 등록을 남겨 두고 다시 페어링해 주세요.");
   }
+
+  let outcome: DeviceRevocationOutcome = "revoked";
+  try {
+    const response = await apiForDevice<unknown>(id, "/api/pairing/revoke", { method: "POST", body: {} });
+    if (!isExactRevocationResponse(response)) {
+      throw new Error("Companion의 권한 해제 응답을 확인할 수 없습니다. 등록을 남겨 두고 다시 시도하세요.");
+    }
+  } catch (error) {
+    if (!(error instanceof PairingRequiredError && error.code === "INVALID_TOKEN")) throw error;
+    outcome = "already_revoked";
+  }
+
+  await markDeviceTargetRevoked(id);
+  return outcome;
 }
 
 export async function beginActiveDeviceIdentityRotation(): Promise<{ expiresAt: string }> {
@@ -427,10 +450,16 @@ async function throwResponseErrorForDevice(
 ): Promise<never> {
   const data = await response.json().catch(() => ({})) as ApiErrorBody;
   if (response.status === 401 && authenticated) {
-    if (data.code === "TLS_DEVICE_MISMATCH" && requiredDeviceTarget(device).transport === "pocketlink"
-        && await storedIdentityRotation(device)) {
-      throw new PocketLinkIdentityRotationRequiredError(
-        "PocketLink 단말 key 교체 상태를 확인해야 합니다.",
+    if (data.code === "TLS_DEVICE_MISMATCH") {
+      if (requiredDeviceTarget(device).transport === "pocketlink" && await storedIdentityRotation(device)) {
+        throw new PocketLinkIdentityRotationRequiredError(
+          "PocketLink 단말 key 교체 상태를 확인해야 합니다.",
+          response.status,
+          data.code,
+        );
+      }
+      throw new PairingRequiredError(
+        data.error ?? "PocketLink 단말 identity가 Companion 등록과 다릅니다.",
         response.status,
         data.code,
       );
@@ -463,6 +492,39 @@ async function discardInvalidTokenFor(device: DeviceId): Promise<void> {
     secureRemove(tokenKey(device)),
     secureRemove(identityRotationKey(device)),
   ]).catch(() => undefined);
+}
+
+function isExactRevocationResponse(value: unknown): value is { revoked: true } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const response = value as Record<string, unknown>;
+  return Object.keys(response).length === 1 && response.revoked === true;
+}
+
+async function markDeviceTargetRevoked(id: DeviceId): Promise<void> {
+  const previousTargets = deviceTargets;
+  deviceTargets = deviceTargets.map((target) => target.id === id
+    ? { ...target, remoteDeviceId: undefined }
+    : target);
+  try {
+    await saveDeviceTargets();
+  } catch (error) {
+    deviceTargets = previousTargets;
+    throw new Error(`Companion 권한은 해제됐지만 로컬 등록 상태를 저장하지 못했습니다. 다시 시도하세요. (${errorMessage(error)})`);
+  }
+  tokens.delete(id);
+  try {
+    await Promise.all([
+      secureRemove(tokenKey(id)),
+      secureRemove(eventCursorKey(id)),
+      secureRemove(identityRotationKey(id)),
+    ]);
+  } catch (error) {
+    throw new Error(`Companion 권한은 해제됐지만 로컬 인증 정보를 정리하지 못했습니다. 다시 시도하세요. (${errorMessage(error)})`);
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function deviceTargetOrDefault(device: DeviceId): DeviceTarget {

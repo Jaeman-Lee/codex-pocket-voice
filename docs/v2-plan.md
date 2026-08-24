@@ -25,7 +25,7 @@
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only systemd encrypted credential, 암호화 durable multi-turn, server-authored output/total token·비용 hard limit과 실제/추정 비용 accounting, model-grade 기반 read/coding tool gate, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구, 격리 npm 검증, 보호된 2-call smoke와 단계별 합성 프로젝트 grade harness 구현; 실제 모델 workflow 실행·현장 프로젝트 acceptance 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가장 비싼 승인 route 기준 사전 비용검사, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker, 보호된 synthetic smoke와 단계별 합성 프로젝트 grade harness 및 exact model/upstream grade enforcement 구현; 실제 model/upstream workflow 실행·현장 acceptance 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror와 schema 2 glossary, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, bounded syntax-highlighted old/new-line diff와 최대 8개 touch-decline same-run feedback, two-touch workspace 복구, 최대 8대의 redacted read-only Multi-Companion Fleet와 명시적 PC 전환, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, 모바일 기본 Queue·명시적 Codex Steer, Provider 전환의 기본 빈 대화와 touch-reviewed bounded Fork, durable 기록, bounded retention 및 API 비용 정책 설정, touch-only 월 비용 확인, opt-in process-death native 알림·retained run 열기와 default-network-triggered bounded SSE reconnect, API 30 token-gated notification Intent·system-tray tap 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed, run artifact 검토/download와 allowlist-only diagnostic support bundle 구현; 실기기 multi-PC/artifact/background/locked-screen/process-kill/voice acceptance 잔여 |
-| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; SystemUI 포함 API 30 AOSP device에서 Keystore config/identity/background state와 notification Intent·tray-tap 계측 회귀 추가, 실제 P2P group formation·external edge DDoS/실부하·locked-screen/reconnect/voice 실기기 release gate 잔여 |
+| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, two-touch exact-client revocation→native key→local target removal, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; SystemUI 포함 API 30 AOSP device에서 Keystore config/identity/background state와 notification Intent·tray-tap 계측 회귀 추가, 실제 multi-PC 해제·P2P group formation·external edge DDoS/실부하·locked-screen/reconnect/voice 실기기 release gate 잔여 |
 
 ## 2. 제품 정의
 
@@ -531,6 +531,16 @@ key를 모두 유지하고 자동 downgrade하지 않는다. Companion은 별도
 version만 DNS-SD로 광고한다. Android의 user-triggered 8초 검색은 service/TXT를 exact-match하고 최대
 16개의 private IPv4/IPv6 ULA 후보만 2분 동안 검토용으로 유지한다. discovery 결과는 인증이 아니므로
 선택 뒤에도 Companion 터미널의 SPKI pin을 직접 입력하며 자동 페어링·연결·SSH fallback은 없다.
+
+기기 해제는 AI 연결 센터의 첫 `삭제` 터치로 효과와 exact target을 검토하고, 두 번째
+터치에서만 해당 target token·mTLS identity로 `POST /api/pairing/revoke`를 보낸다. Gateway의 exact
+`{ revoked: true }` 응답 또는 응답 유실 뒤의 exact `INVALID_TOKEN`만 권한 해제 완료로 인정한다.
+그 다음 target을 미페어링으로 영속화하고 token·event cursor·key-rotation 승인을 제거한 뒤,
+PocketLink이면 Android config와 A/B identity alias를 정리하고 마지막에 로컬 target을 삭제한다. PC
+offline, malformed 응답, missing token, `TLS_DEVICE_MISMATCH`는 성공으로 추측하지 않고 key·token·
+등록을 남겨 재시도한다. native cleanup이 실패해도 미페어링 표시를 남겨 다음 터치가
+원격 권한을 다시 추측하지 않고 idempotent local cleanup으로 이어진다.
+
 TLS-pinned protocol 1 relay broker와 Linux Companion outbound connector도 구현했다. relay는 최소
 128-bit opaque slot과 256-bit shared secret으로 대기 socket을 연결하되 값을 영속화·로그하지 않고,
 socket·slot·waiter·frame·timeout을 제한한다. tunnel payload는 별도 Android↔Companion PocketLink mTLS로

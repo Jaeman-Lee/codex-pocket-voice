@@ -10,6 +10,24 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Paired-device removal authorization fix는 v2 연결 센터의 기존 삭제 동작이 Companion
+  client 권한을 남길 수 있던 보안 결함을 고치는 `patch`다. 아직 전달하지 않은 incompatible
+  v2 범위 안에서 `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고
+  이전 CI-only candidate를 대체한다. APK 전달·설치, 실제 Provider 호출과 실행 중 Companion
+  재시작은 하지 않으며 current v1 후보 1.8.2, staged v1.8.4, 검증된 1.8.1 rollback과
+  배포 중인 v1.8.3 Companion을 그대로 보존한다.
+- Linux PC 등록의 `삭제`는 이제 별도 터치 검토를 열고, 선택한 target token으로
+  same-origin `POST /api/pairing/revoke`의 exact `{ revoked: true }`를 확인한 뒤에만 Android
+  PocketLink config/A·B identity key와 로컬 등록을 순서대로 제거한다. PC offline,
+  malformed 응답, missing token, mTLS identity 불일치에서는 원격 권한과 로컬 key·등록을
+  fail-closed로 남겨 다시 시도한다.
+- 권한 해제 응답이 유실된 뒤의 exact `INVALID_TOKEN`은 이미 해제된 것으로만 해석해
+  target을 먼저 미페어링으로 저장하고 token·event cursor·key-rotation 승인을 지운다.
+  네이티브 key 정리가 실패하면 미페어링 등록을 남겨 idempotent retry하며,
+  `TLS_DEVICE_MISMATCH`는 bearer token을 삭제하지 않아 회전·해제 복구 가능성을 보존한다.
+- Gateway는 revoke body를 빈 object로 고정하고 인증된 exact client만 해제하며 다른 client는
+  계속 사용 가능함을 통합 검사로 고정했다. API failure-boundary·순서 단위 검사와 320px
+  두 번 터치 브라우저 acceptance를 추가했다.
 - Android 저부하 field acceptance harness는 기존 Phase E release 검증을 자동 판정하는 internal
   compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
   `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. APK

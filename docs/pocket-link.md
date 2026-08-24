@@ -144,6 +144,27 @@ Android client identity도 기존 key를 자동으로 덮어쓰지 않는 A/B �
 결과가 불확실하면 어느 key도 자동 폐기하지 않고 `단말 key 교체 확인 필요` 상태를 유지한다. 이미
 완료된 교체는 중단 요청으로 되돌릴 수 없으며 Termux/SSH나 다른 Provider로 자동 downgrade하지 않는다.
 
+## 기기 권한 해제와 등록 삭제
+
+AI 연결 센터의 기기 `삭제`는 즉시 실행하지 않고 선택한 Linux Companion과 삭제
+순서를 별도 panel에 보여 준다. `권한 해제 후 삭제`를 두 번째로 터치해야 다음을
+순서대로 실행한다.
+
+1. exact target의 bearer token과 현재 mTLS identity로 same-origin `POST /api/pairing/revoke`를
+   호출해 해당 Companion client만 해제한다.
+2. exact `{ revoked: true }` 응답을 확인하면 target을 먼저 미페어링으로 영속화하고 bearer
+   token, event cursor와 identity-rotation 승인을 지운다. 응답이 유실된 뒤 재시도한
+   exact `INVALID_TOKEN`도 이미 완료된 해제로 처리한다.
+3. Android native `removePocketLink` 단계에서 암호화된 transport config와 현재·pending A/B
+   Keystore identity alias를 제거한다.
+4. 마지막에만 로컬 device registry를 삭제한다. 현재 target이면 기본 target을 명시적으로
+   선택하고, 다른 Companion token과 활성 프로젝트 선택은 변경하지 않는다.
+
+PC가 offline이거나 응답이 malformed인 경우, remote device 표시는 있지만 token이 없는 경우,
+`TLS_DEVICE_MISMATCH`인 경우는 권한 해제를 추측하지 않는다. 이때 native key와 로컬
+등록을 모두 남겨 동일 target으로 재시도한다. Companion 해제 후 native cleanup만 실패하면
+미페어링 target을 남겨 원격 해제를 반복하지 않고 idempotent local cleanup을 다시 실행한다.
+
 Android target SDK 36에서는 외부 Linux 장치와 지속적인 네트워크 연결이므로 `connectedDevice`
 foreground-service type을 사용한다. `dataSync` service는 Android 15+의 시간 제한 대상이라 장시간 SSE
 transport에 사용하지 않는다. 관련 기준은 Android 공식 문서의

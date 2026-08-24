@@ -103,7 +103,10 @@ identity, pairing-bound mTLS proof and reviewed 10-minute QR bootstrap are imple
 can stage a backup pin, requires an observed successful backup-pin handshake, and uses a two-touch promotion that
 retires the prior pin. Android client-device identity rotation now uses a reviewed five-minute approval, durable
 Keystore A/B slots and actual new-key mTLS proof before the prior alias is retired; uncertain responses preserve both
-slots for recovery. User-triggered same-LAN DNS-SD address discovery is implemented with bounded private-address
+slots for recovery. Device removal now uses a separate touch review and revokes the exact authenticated Companion
+client before deleting Android transport config, both identity slots, or the local target. Offline, malformed,
+missing-token, and mTLS-mismatch results retain retry state; exact `INVALID_TOKEN` recovers an already-completed
+revocation without touching another Companion. User-triggered same-LAN DNS-SD address discovery is implemented with bounded private-address
 candidates and separate manual SPKI-pin review. A bounded TLS relay broker and Linux Companion outbound connector
 now carry an inner end-to-end PocketLink mTLS stream without exposing Gateway plaintext. Android relay enrollment
 stores the endpoint, slot and secret in Keystore-encrypted config and the native connector verifies public CA,

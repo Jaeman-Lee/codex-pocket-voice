@@ -248,6 +248,39 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.deepEqual(health.allowedWorkspaceRoots, [cwd]);
   assert.equal(health.gateway.capabilities.diagnosticSupportBundle, true);
 
+  const disposablePairing = await jsonFetch(`${base}/api/pairing/claim`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: "http://localhost" },
+    body: JSON.stringify({ code: "12345678", label: "Disposable app" }),
+  });
+  const disposableHeaders = {
+    Authorization: `Bearer ${disposablePairing.token}`,
+    Origin: "http://localhost",
+    "Content-Type": "application/json",
+  };
+  const expandedRevocation = await fetch(`${base}/api/pairing/revoke`, {
+    method: "POST",
+    headers: disposableHeaders,
+    body: JSON.stringify({ unexpected: true }),
+  });
+  assert.equal(expandedRevocation.status, 400);
+  assert.equal((await jsonFetch(`${base}/api/health`, {
+    headers: { Authorization: `Bearer ${disposablePairing.token}` },
+  })).ok, true);
+  const revocation = await fetch(`${base}/api/pairing/revoke`, {
+    method: "POST",
+    headers: disposableHeaders,
+    body: "{}",
+  });
+  assert.equal(revocation.status, 200);
+  assert.deepEqual(await revocation.json(), { revoked: true });
+  const revokedHealth = await fetch(`${base}/api/health`, {
+    headers: { Authorization: `Bearer ${disposablePairing.token}` },
+  });
+  assert.equal(revokedHealth.status, 401);
+  assert.equal(((await revokedHealth.json()) as { code?: string }).code, "INVALID_TOKEN");
+  assert.equal((await jsonFetch(`${base}/api/health`, { headers: authorized() })).ok, true);
+
   const unauthenticatedSupportBundle = await fetch(`${base}/api/diagnostics/support-bundle`);
   assert.equal(unauthenticatedSupportBundle.status, 401);
   const supportBundleResponse = await fetch(`${base}/api/diagnostics/support-bundle`, { headers: authorized() });

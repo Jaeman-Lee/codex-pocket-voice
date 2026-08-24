@@ -305,6 +305,74 @@ test("the mobile Fleet shows bounded summaries for another Companion without exp
   await expectShellContained(page);
 });
 
+test("device removal uses a contained two-touch review and revokes only the selected Companion", async ({ page }) => {
+  const removableToken = `R${"r".repeat(42)}`;
+  let revocation: { authorization?: string; body?: string | null } | null = null;
+  await page.addInitScript((token) => {
+    localStorage.setItem("codex-pocket-secure:device-registry", JSON.stringify([
+      { id: "pc", name: "주 Linux", kind: "linux", baseUrl: "", builtIn: true, transport: "termux" },
+      {
+        id: "linux-removable",
+        name: "삭제 검토 PC",
+        kind: "linux",
+        baseUrl: "http://127.0.0.1:8791",
+        transport: "termux",
+        remoteDeviceId: "remote-removable",
+      },
+    ]));
+    localStorage.setItem("codex-pocket-secure:gateway-token:linux-removable", token);
+  }, removableToken);
+  await page.route("http://127.0.0.1:8791/**", async (route) => {
+    if (route.request().method() === "OPTIONS") {
+      await route.fulfill({
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Headers": "Authorization, Content-Type",
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+        },
+      });
+      return;
+    }
+    revocation = {
+      authorization: route.request().headers().authorization,
+      body: route.request().postData(),
+    };
+    await route.fulfill({
+      status: 200,
+      headers: { "Access-Control-Allow-Origin": "*" },
+      contentType: "application/json",
+      json: { revoked: true },
+    });
+  });
+
+  await bootPairedApp(page, { width: 320, height: 740 });
+  await page.getByRole("button", { name: "AI 연결 센터 열기" }).click();
+  const connectionCenter = page.getByRole("dialog", { name: "AI 연결 센터" });
+  const removable = connectionCenter.locator(".device-list > div").filter({ hasText: "삭제 검토 PC" });
+  await expect(removable).toBeVisible();
+  await removable.getByRole("button", { name: "삭제", exact: true }).click();
+  expect(revocation).toBeNull();
+
+  const review = removable.getByRole("alert");
+  await expect(review).toContainText("Companion에서 이 스마트폰의 인증 권한을 먼저 해제합니다");
+  await expectElementContained(page, review);
+  await expectElementContained(page, review.getByRole("button", { name: "권한 해제 후 삭제" }));
+  await expectShellContained(page);
+
+  await review.getByRole("button", { name: "권한 해제 후 삭제" }).click();
+  await expect(removable).toHaveCount(0);
+  expect(revocation).toEqual({ authorization: `Bearer ${removableToken}`, body: "{}" });
+  const stored = await page.evaluate(() => ({
+    registry: localStorage.getItem("codex-pocket-secure:device-registry"),
+    token: localStorage.getItem("codex-pocket-secure:gateway-token:linux-removable"),
+  }));
+  expect(stored.token).toBeNull();
+  expect(stored.registry).not.toContain("linux-removable");
+  await expect(page.locator(".status-dot.online")).toBeVisible();
+  await expectShellContained(page);
+});
+
 test("large text contains a long live diff and approval details", async ({ page }) => {
   let approvalDecisionBody: Record<string, unknown> | null = null;
   await page.route("**/api/approvals/*/decision", async (route) => {

@@ -73,6 +73,11 @@ Keystore-backed 보안 저장소에 두고, 현재 alias를 보존한 채 반대
 만든다. 새 key의 실제 TLS proof를 Companion이 영속화하고 이전 binding을 거부한 뒤에만 native 계층이
 이전 alias를 삭제한다. 암호화 pending 슬롯은 앱 process 회수와 응답 유실 뒤 복구되며, 불확실하면 두
 key를 유지하고 SSH로 자동 우회하지 않는다.
+기기 삭제도 이와 같은 fail-closed 순서를 사용한다. 사용자가 exact target을 두 번 터치로
+확인하면 Companion의 해당 client authorization을 먼저 해제하고, 성공을 확인한 뒤에만
+PocketLink 암호화 config와 A/B identity alias, WebView의 token·cursor·rotation state, 로컬 target
+등록 순으로 정리한다. offline·알 수 없는 응답·mTLS identity 불일치는 Android key를
+먼저 지우지 않으며, 이미 해제된 client의 exact `INVALID_TOKEN`만 응답 유실 복구로 인정한다.
 같은 LAN 주소 discovery는 사용자가 누를 때만 Android `NsdManager`로 8초 동안 실행한다. native policy가
 service type과 TXT version을 exact-match하고 후보를 16개, private IPv4/IPv6 ULA로 제한한 뒤 2분짜리
 검토 hint만 WebView에 보낸다. 선택해도 pin은 비워 두므로 Companion 터미널의 SPKI pin을 수동으로

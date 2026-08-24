@@ -310,6 +310,12 @@ select {
 .identity-rotation-review > small { margin-top: 0.25rem; line-height: 1.5; }
 .identity-rotation-review > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 0.4rem; margin-top: 0.5rem; }
 .identity-rotation-review button { min-width: 0; max-width: 100%; white-space: normal; }
+.device-removal-review { min-width: 0; padding: 0.55rem; border: 1px solid rgba(255, 129, 124, 0.32); border-radius: 0.55rem; background: rgba(255, 129, 124, 0.07); }
+.device-removal-review > strong, .device-removal-review > small { display: block; overflow-wrap: anywhere; }
+.device-removal-review > strong { color: var(--danger); font-size: 0.67rem; }
+.device-removal-review > small { margin-top: 0.25rem; line-height: 1.5; }
+.device-removal-review > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 0.4rem; margin-top: 0.5rem; }
+.device-removal-review button { min-width: 0; max-width: 100%; white-space: normal; }
 .connection-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.35rem; margin: 0.75rem 0; }
 .connection-steps span { padding: 0.5rem 0.25rem; border-radius: 0.55rem; color: var(--accent); background: rgba(62, 213, 165, 0.07); text-align: center; font-size: 0.65rem; font-weight: 750; }
 .provider-cards { display: grid; gap: 0.7rem; }

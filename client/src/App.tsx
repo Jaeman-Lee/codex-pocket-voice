@@ -21,11 +21,13 @@ import {
   PairingRequiredError,
   PocketLinkIdentityRotationRequiredError,
   removeDeviceTarget,
+  revokeDeviceTarget,
   setApiDevice,
   subscribeEvents,
   uploadMedia,
   type PairingStatus,
 } from "./api";
+import { deleteDeviceRegistration } from "./device-removal";
 import {
   isNativeApp,
   NativeNotifications,
@@ -344,6 +346,8 @@ export function App() {
   const [promotingPinTarget, setPromotingPinTarget] = useState<DeviceId | null>(null);
   const [reviewingIdentityRotationTarget, setReviewingIdentityRotationTarget] = useState<DeviceId | null>(null);
   const [rotatingIdentityTarget, setRotatingIdentityTarget] = useState<DeviceId | null>(null);
+  const [reviewingDeviceRemovalTarget, setReviewingDeviceRemovalTarget] = useState<DeviceId | null>(null);
+  const [removingDeviceTarget, setRemovingDeviceTarget] = useState<DeviceId | null>(null);
   const [uiLanguage, setUiLanguage] = useState<UiLanguage>(initialUiLanguage);
   const [speechLanguage, setSpeechLanguage] = useState(initialSpeechLanguage);
   const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null);
@@ -4044,12 +4048,33 @@ export function App() {
     }
   }
 
+  function reviewLinuxDeviceRemoval(target: DeviceTarget) {
+    if (removingDeviceTarget !== null || rotatingIdentityTarget !== null || stagingPinBusy
+        || promotingPinTarget !== null) return;
+    if (target.id === deviceRef.current && pendingRunForkRetryRef.current) {
+      showToast("응답이 불확실한 Fork를 먼저 같은 확인으로 재시도해 주세요.");
+      return;
+    }
+    setStagingPinTarget(null);
+    setStagedBackupPin("");
+    setConfirmingPinPromotionTarget(null);
+    setReviewingIdentityRotationTarget(null);
+    setReviewingDeviceRemovalTarget(target.id);
+  }
+
   async function deleteLinuxDevice(target: DeviceTarget) {
+    if (reviewingDeviceRemovalTarget !== target.id || removingDeviceTarget !== null) return;
+    if (target.id === deviceRef.current && pendingRunForkRetryRef.current) {
+      showToast("응답이 불확실한 Fork를 먼저 같은 확인으로 재시도해 주세요.");
+      return;
+    }
+    setRemovingDeviceTarget(target.id);
     try {
-      if (target.transport === "pocketlink" && isNativeApp()) {
-        await NativeTunnel.removePocketLink({ localPort: deviceTargetLocalPort(target) });
-      }
-      await removeDeviceTarget(target.id);
+      const outcome = await deleteDeviceRegistration(target, isNativeApp(), {
+        revokeAuthorization: revokeDeviceTarget,
+        removeNativePocketLink: (localPort) => NativeTunnel.removePocketLink({ localPort }),
+        removeLocalRegistration: removeDeviceTarget,
+      });
       if (deviceRef.current === target.id) selectDevice(listDeviceTargets()[0]!.id);
       const remainingTargets = listDeviceTargets();
       setDeviceTargets(remainingTargets);
@@ -4062,9 +4087,20 @@ export function App() {
       setReviewingIdentityRotationTarget((current) => current === target.id ? null : current);
       setStagingPinTarget((current) => current === target.id ? null : current);
       if (stagingPinTarget === target.id) setStagedBackupPin("");
-      showToast(`${target.name} 등록을 삭제했습니다.`);
+      setReviewingDeviceRemovalTarget(null);
+      showToast(outcome === "not_paired"
+        ? `${target.name} 로컬 등록을 삭제했습니다.`
+        : `${target.name}의 Companion 권한과 로컬 등록을 삭제했습니다.`);
     } catch (error) {
+      const currentTargets = listDeviceTargets();
+      setDeviceTargets(currentTargets);
+      if (target.id === deviceRef.current && target.remoteDeviceId
+          && !currentTargets.find((candidate) => candidate.id === target.id)?.remoteDeviceId) {
+        setAuthRevision((current) => current + 1);
+      }
       showToast(errorMessage(error));
+    } finally {
+      setRemovingDeviceTarget(null);
     }
   }
 
@@ -5132,6 +5168,8 @@ export function App() {
                   const identityRotationPending = pocketLinkStatus?.identityRotationPending === true;
                   const reviewingIdentityRotation = reviewingIdentityRotationTarget === target.id;
                   const rotatingIdentity = rotatingIdentityTarget === target.id;
+                  const reviewingRemoval = reviewingDeviceRemovalTarget === target.id;
+                  const removingDevice = removingDeviceTarget === target.id;
                   return (
                     <div key={target.id}>
                       <div className="device-list-row">
@@ -5145,27 +5183,58 @@ export function App() {
                           </small>
                         </span>
                         <div className="device-list-actions">
-                          {canReviewPinPromotion && !confirmingPinPromotion && !identityRotationPending && !reviewingIdentityRotation && (
+                          {!reviewingRemoval && canReviewPinPromotion && !confirmingPinPromotion && !identityRotationPending && !reviewingIdentityRotation && (
                             <button type="button" className="pin-promotion" onClick={() => reviewPocketLinkPinPromotion(target)}>새 pin 교체 검토</button>
                           )}
-                          {isNativeApp() && target.transport === "pocketlink" && !canReviewPinPromotion && !stagingPin && !identityRotationPending && !reviewingIdentityRotation && (
+                          {!reviewingRemoval && isNativeApp() && target.transport === "pocketlink" && !canReviewPinPromotion && !stagingPin && !identityRotationPending && !reviewingIdentityRotation && (
                             <button type="button" className="pin-promotion" onClick={() => openPocketLinkPinStaging(target)}>
                               {pocketLinkStatus?.backupPinConfigured ? "교체 pin 변경" : "교체 pin 준비"}
                             </button>
                           )}
-                          {isNativeApp() && target.transport === "pocketlink" && target.remoteDeviceId
+                          {!reviewingRemoval && isNativeApp() && target.transport === "pocketlink" && target.remoteDeviceId
                               && !identityRotationPending && !reviewingIdentityRotation && !stagingPin && !confirmingPinPromotion
                               && !canReviewPinPromotion && (
                             <button type="button" className="identity-rotation" onClick={() => reviewPocketLinkIdentityRotation(target)}>단말 key 교체</button>
                           )}
-                          {identityRotationPending && (
+                          {!reviewingRemoval && identityRotationPending && (
                             <button type="button" className="identity-rotation" disabled={rotatingIdentityTarget !== null} onClick={() => void beginPocketLinkIdentityRotation(target)}>
                               {rotatingIdentity ? "확인 중…" : "단말 key 교체 계속"}
                             </button>
                           )}
-                          {!target.builtIn && <button type="button" className="danger" disabled={rotatingIdentityTarget !== null} onClick={() => void deleteLinuxDevice(target)}>삭제</button>}
+                          {!target.builtIn && !reviewingRemoval && (
+                            <button
+                              type="button"
+                              className="danger"
+                              disabled={removingDeviceTarget !== null || rotatingIdentityTarget !== null
+                                || stagingPinBusy || promotingPinTarget !== null}
+                              onClick={() => reviewLinuxDeviceRemoval(target)}
+                            >삭제</button>
+                          )}
                         </div>
                       </div>
+                      {reviewingRemoval && (
+                        <div className="device-removal-review" role="alert">
+                          <strong>{target.name} 등록을 삭제합니다.</strong>
+                          <small>{target.remoteDeviceId
+                            ? "Companion에서 이 스마트폰의 인증 권한을 먼저 해제합니다. PC에 연결할 수 없거나 결과가 불확실하면 Android 키와 등록을 남겨 두고 재시도합니다."
+                            : target.transport === "pocketlink" && isNativeApp()
+                              ? "페어링 권한이 없는 등록입니다. Android Keystore 연결 키와 로컬 등록만 삭제합니다."
+                              : "페어링 권한이 없는 등록입니다. 로컬 연결 등록만 삭제합니다."}</small>
+                          <div>
+                            <button
+                              type="button"
+                              disabled={removingDevice}
+                              onClick={() => setReviewingDeviceRemovalTarget(null)}
+                            >취소</button>
+                            <button
+                              type="button"
+                              className="danger"
+                              disabled={removingDeviceTarget !== null || rotatingIdentityTarget !== null}
+                              onClick={() => void deleteLinuxDevice(target)}
+                            >{removingDevice ? "권한 해제 확인 중…" : target.remoteDeviceId ? "권한 해제 후 삭제" : "로컬 등록 삭제"}</button>
+                          </div>
+                        </div>
+                      )}
                       {stagingPin && (
                         <div className="pin-staging-review">
                           <strong>{target.name}에 새 서버 pin을 준비합니다.</strong>
@@ -5220,7 +5289,7 @@ export function App() {
                           </div>
                         </div>
                       )}
-                      {identityRotationPending && (
+                      {!reviewingRemoval && identityRotationPending && (
                         <div className="identity-rotation-review pending" role="alert">
                           <strong>{target.name}의 단말 key 교체 결과를 확인해야 합니다.</strong>
                           <small>

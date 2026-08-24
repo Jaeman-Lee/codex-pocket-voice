@@ -1465,7 +1465,10 @@ async function handleApi(
 
   if (request.method === "POST" && url.pathname === "/api/pairing/revoke") {
     assertSameOrigin(request);
-    await readJson(request, true);
+    const body = await readJson(request, true);
+    if (!isRecord(body) || !hasExactKeys(body, [])) {
+      throw new HttpError(400, "Pairing revocation body must be an empty object");
+    }
     await auth.revoke(authenticatedClient.id);
     sendJson(response, 200, { revoked: true });
     return;
