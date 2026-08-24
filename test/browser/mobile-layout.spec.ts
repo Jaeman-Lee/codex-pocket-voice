@@ -210,6 +210,9 @@ test("large text contains a long live diff and approval details", async ({ page 
   await expectShellContained(page);
   await expectElementContained(page, dashboard.locator(".operations-sheet"));
   await expectElementContained(page, approvalDetails);
+  await diffReview.scrollIntoViewIfNeeded();
+  await settleLayout(page);
+  await expectShellContained(page);
   await expectElementContained(page, diffReview);
 
   await diffReview.locator(".diff-addition button").click();
@@ -316,6 +319,9 @@ test("API preflight confirmation stays contained and forwards only the one-time 
   await expect(page.getByLabel("AI 모델", { exact: true })).toHaveValue("browser-openai-model");
   await expect(page.getByLabel("API 실행 정책 상태")).toContainText("Companion 사전검사 사용");
   await page.getByLabel("Codex에게 보낼 요청").fill("API 비용 확인 후 실행해 주세요.");
+  if (await staleDashboard.isVisible()) {
+    await staleDashboard.getByRole("button", { name: "작업 대시보드 닫기" }).click();
+  }
   await page.getByRole("button", { name: "요청 전송" }).click();
 
   const review = page.getByRole("dialog", { name: "월간 API 비용 확인" });

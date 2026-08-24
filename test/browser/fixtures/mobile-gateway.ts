@@ -114,6 +114,9 @@ class MobileAcceptanceClient implements WebCodexClient {
   }
 
   async beginTurn(options: RunTurnOptions): Promise<BeginTurnResult> {
+    for (const pendingApproval of this.approvals.listPending()) {
+      this.approvals.resolve(pendingApproval.id, "declined", "system");
+    }
     this.runNumber += 1;
     const threadId = options.threadId ?? "thread-mobile";
     const turnId = `turn-mobile-${this.runNumber}`;
