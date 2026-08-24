@@ -613,6 +613,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   );
   assert.doesNotMatch(liveNotificationInitial, /"type":"work_notification"/);
 
+  fake.unsubscribeFailures = 1;
   fake.finish("interrupted");
   await waitFor(async () => {
     const operation = await jsonFetch(`${base}/api/runs/${operationId}`, { headers: authorized() });
@@ -620,6 +621,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   });
   await waitFor(async () => fake.unsubscribed.length === 1);
   assert.deepEqual(fake.unsubscribed, ["thread-web"]);
+  assert.deepEqual(fake.unsubscribeAttempts, ["thread-web", "thread-web"]);
   const liveNotification = await readUntil(
     liveNotificationReader,
     (text) => text.includes('"type":"work_notification"'),
@@ -641,6 +643,21 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   );
   assert.equal(clearedHandoff.handoff, null);
 
+  fake.unsubscribeFailures = 3;
+  const failedWriterRelease = await fetch(`${base}/api/session/handoff`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ workspace: cwd, threadId: "thread-web" }),
+  });
+  assert.equal(failedWriterRelease.status, 500);
+  assert.deepEqual(fake.unsubscribeAttempts, Array(5).fill("thread-web"));
+  assert.deepEqual(fake.unsubscribed, ["thread-web"]);
+  const handoffAfterFailedRelease = await jsonFetch(
+    `${base}/api/session/handoff?workspace=${encodeURIComponent(cwd)}`,
+    { headers: authorized() },
+  );
+  assert.equal(handoffAfterFailedRelease.handoff, null);
+
   const idleRelease = await jsonFetch(`${base}/api/session/handoff`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
@@ -648,6 +665,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   });
   assert.equal(idleRelease.threadUnsubscribeStatus, "unsubscribed");
   assert.deepEqual(fake.unsubscribed, ["thread-web", "thread-web"]);
+  assert.deepEqual(fake.unsubscribeAttempts, Array(6).fill("thread-web"));
   await jsonFetch(`${base}/api/session/handoffs/${idleRelease.handoff.id}/claim`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: base }),
@@ -913,6 +931,8 @@ class FakeWebClient implements WebCodexClient {
   lastRun?: RunTurnOptions;
   interrupted?: [string, string];
   unsubscribed: string[] = [];
+  unsubscribeAttempts: string[] = [];
+  unsubscribeFailures = 0;
   runsStarted = 0;
   private listeners = new Set<(notification: AppServerNotification) => void>();
   private resolveTurn?: (turn: Turn) => void;
@@ -973,6 +993,11 @@ class FakeWebClient implements WebCodexClient {
   }
 
   async unsubscribeThread(threadId: string) {
+    this.unsubscribeAttempts.push(threadId);
+    if (this.unsubscribeFailures > 0) {
+      this.unsubscribeFailures -= 1;
+      throw new Error("synthetic thread writer release failure");
+    }
     this.unsubscribed.push(threadId);
     return { status: "unsubscribed" as const };
   }

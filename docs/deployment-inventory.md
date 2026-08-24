@@ -138,6 +138,14 @@ workspace/thread 검증 후 즉시 `thread/unsubscribe`하고, running handoff�
 해제한다. 이 checkpoint는 source와 CI-only candidate만 갱신하며 현재 v1 후보 1.8.2 및 rollback 1.8.1
 APK를 변경·삭제하지 않고 실행 중 Companion도 재시작하지 않는다.
 
+Session writer release retry checkpoint decision: 완료 handoff의 exact `thread/unsubscribe`가 일시 실패할 때
+bounded backoff로 재시도하고 같은 thread의 동시 release를 deduplicate하는 internal compatibility
+`patch`다. idle release는 모든 시도가 실패하면 handoff를 저장하지 않는 fail-closed 동작을 유지한다.
+아직 현장 전달하지 않은 v2 candidate 안의 변경이므로 SemVer `2.0.0`/Android `versionCode 20000`, 대상
+`feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. APK 전달·설치와 실행 중
+Companion 재시작은 하지 않으며 current v1 후보 1.8.2, 별도 staged v1.8.3과 검증된 rollback 1.8.1을
+그대로 보존한다.
+
 Native signed update checkpoint decision: signed ZIP 선택·검토·설치 확인은 새 v2 user workflow이므로 기존
 `breaking`/`2.0.0`, Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지한다. importer는
 current app signer/package와 exact manifest/APK/SBOM, 더 높은 versionCode를 요구하고 10분 private-cache

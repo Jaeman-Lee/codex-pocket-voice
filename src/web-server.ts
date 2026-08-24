@@ -49,6 +49,7 @@ import {
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_EVENT_TEXT = 80_000;
 const MAX_NOTIFICATION_REPLAY_EVENTS = 16;
+const THREAD_WRITER_RELEASE_RETRY_DELAYS_MS = [0, 50, 250] as const;
 const NATIVE_APP_ORIGINS = new Set(["http://localhost", "https://localhost", "capacitor://localhost"]);
 const STATIC_FILES = new Map([
   ["/", "index.html"],
@@ -171,6 +172,18 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     retentionMs: journalPolicy.retentionMs,
     maxOperations: journalPolicy.maxOperations,
   });
+  const threadWriterReleases = new Map<string, Promise<ThreadUnsubscribeResponse>>();
+  const releaseThreadWriter = (threadId: string): Promise<ThreadUnsubscribeResponse> => {
+    const pending = threadWriterReleases.get(threadId);
+    if (pending) return pending;
+    const release = releaseThreadWriterWithRetry(options.client, threadId);
+    threadWriterReleases.set(threadId, release);
+    void release.then(
+      () => threadWriterReleases.delete(threadId),
+      () => threadWriterReleases.delete(threadId),
+    );
+    return release;
+  };
   const unsubscribeRuns = runs.subscribe((event) => {
     if (event.type === "operation") {
       const publicEvent = {
@@ -192,7 +205,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
             workspace: event.operation.cwd,
             threadId: event.operation.conversationId,
           })) {
-        void options.client.unsubscribeThread(event.operation.conversationId).catch((error) => {
+        void releaseThreadWriter(event.operation.conversationId).catch((error) => {
           process.stderr.write(`[codex-session-handoff] Could not release completed thread writer: ${safeInternalError(error)}\n`);
         });
       }
@@ -315,6 +328,26 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
 }
 
 type ListeningServer = Server | HttpsServer;
+
+async function releaseThreadWriterWithRetry(
+  client: WebCodexClient,
+  threadId: string,
+): Promise<ThreadUnsubscribeResponse> {
+  let lastError: unknown;
+  for (const delayMs of THREAD_WRITER_RELEASE_RETRY_DELAYS_MS) {
+    if (delayMs > 0) await wait(delayMs);
+    try {
+      return await client.unsubscribeThread(threadId);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Could not release Codex thread writer");
+}
+
+function wait(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
 
 function configureServer(server: ListeningServer): void {
   server.requestTimeout = 0;
@@ -667,7 +700,7 @@ async function handleApi(
     }
     const unsubscribe = operation?.status === "running"
       ? null
-      : await options.client.unsubscribeThread(threadId);
+      : await releaseThreadWriterWithRetry(options.client, threadId);
     const handoff = await handoffs.release({
       workspace,
       threadId,

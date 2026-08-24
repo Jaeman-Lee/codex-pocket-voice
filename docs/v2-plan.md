@@ -24,7 +24,7 @@
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, 세 Provider 공용 contract·stream failure fixture, protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신 모듈 구현; production build·실제 pairing/Gateway/SSE/run/approval 기반 Playwright 모바일 회귀 통과, 실기기 회귀 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker와 보호된 synthetic smoke harness 구현; 실제 model eval 실행·현장 등급 잔여 |
-| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in process-death native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe 구현; 실기기 background/deep-link acceptance 잔여 |
+| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in process-death native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed 구현; 실기기 background/deep-link acceptance 잔여 |
 | Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, source별 relay admission/new-slot 제한과 logless aggregate stats, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; Wi-Fi Direct 등 P2P·external edge DDoS/부하·background/field release gate 잔여 |
 
 ## 2. 제품 정의
@@ -403,6 +403,9 @@ same-origin 터치 approve/decline, 만료와 replay 완료 뒤 snapshot 재동�
 ahead/behind와 linked worktree를 수집한다. 대시보드와 세션 반납 검토 화면은 전체 경로와 이 identity를
 표시하고 run 시작 시점 snapshot은 암호화 event journal에 함께 보존한다. Gateway는 run/release/claim의
 thread cwd가 선택한 workspace와 다르면 409로 차단한다.
+idle handoff는 exact thread를 해제한 뒤에만 모바일 상태를 분리하고, running handoff는 terminal event 뒤
+같은 thread의 중복 release를 하나로 합쳐 bounded backoff로 `thread/unsubscribe`를 재시도한다. 모든
+idle release 시도가 실패하면 handoff를 기록하지 않아 CLI writer와 모바일 표시가 어긋나지 않는다.
 작업 카드는 한 줄 120자 목표 이름, retained 범위 내 최대 50개 pin과 보관·복원을 제공한다. metadata는
 Companion 재시작 뒤 복원되고 SSE로 다른 연결 기기에 전파된다. 사용자가 직접 켜는 Android
 완료·승인·오류 알림도 구현했다. 잠금 화면에는 generic 상태만 표시하고

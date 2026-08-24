@@ -10,6 +10,14 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Session writer release 재시도는 handoff 완료 뒤 일시적인 app-server 오류가 CLI의 `active writer`를
+  남기는 v2 internal compatibility `patch`다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서
+  `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
+  대체한다. APK 전달·설치와 실행 중 Companion 재시작은 하지 않으며 v1.8.2 current 후보, 별도 staged
+  v1.8.3과 검증된 v1.8.1 rollback을 그대로 보존한다.
+- 완료·실패한 running handoff는 exact thread writer 해제를 짧고 bounded한 backoff로 재시도하고 같은
+  thread의 동시 해제를 하나로 합친다. idle handoff는 세 번 모두 실패하면 handoff를 기록하거나 모바일
+  상태를 분리하지 않고 오류로 끝나 사용자가 다시 시도할 수 있다.
 - Public relay admission control과 logless aggregate 운영 지표는 새 server 운영 capability이므로
   `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
   `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
