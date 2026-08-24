@@ -78,11 +78,16 @@ service type과 TXT version을 exact-match하고 후보를 16개, private IPv4/I
 검토 hint만 WebView에 보낸다. 선택해도 pin은 비워 두므로 Companion 터미널의 SPKI pin을 수동으로
 대조해야 하며 자동 페어링·연결·SSH fallback은 없다. Wi-Fi Direct 같은 P2P와 relay는 아직 구현하지
 않았다.
-사용자가 연결 센터에서 명시적으로 켜고 Android runtime 권한을 허용하면, WebView의 live SSE가
-백그라운드에서 실행되는 동안 완료·승인·오류를 native private notification으로 전달한다. 알림에는
-프롬프트·경로·응답을 넣지 않으며 앱 전용 random action token과 device/operation ID만 사용한다. 탭하면
-등록된 Linux PC에서 retained operation을 다시 조회해 일치하는 작업을 연다. WebView process가 종료된
-상태의 독립 background event 수신은 아직 구현하지 않았다.
+사용자가 연결 센터에서 명시적으로 켜고 Android runtime 권한을 허용하면 `connectedDevice` foreground
+service가 최대 8개의 paired loopback Companion에서 notification-only SSE를 구독한다. Companion은 완료·
+실패·새 승인에 대해 schema/kind/operation ID/시각과 승인 만료시각만 보내며 프롬프트·경로·응답·도구
+세부정보는 native 계층에 전달하지 않는다. bearer token, local port와 cursor는 별도 Android Keystore
+AES-GCM state로 보호한다. service는 `START_STICKY`와 `Last-Event-ID`로 WebView process 회수 뒤 복구하되
+boot receiver는 등록하지 않는다. 첫 opt-in은 저널의 현재 cursor에서 시작하고 10분보다 오래됐거나 만료된
+승인은 최신 16건의 bounded replay 알림에서 제외한다. 앱 화면이 보일 때에는 cursor만 전진해 WebView와 중복 알림을 만들지
+않는다. 잠금 화면에는 generic private notification만 표시하며 앱 전용 random action token과 bounded
+device/operation ID로 PendingIntent를 검증한다. 탭하면 등록된 Linux PC에서 retained operation을 다시
+조회해 일치하는 작업만 연다.
 자세한 설정과 보안 경계는
 [PocketLink TLS bootstrap](pocket-link.md)에 있다.
 

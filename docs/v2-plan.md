@@ -24,7 +24,7 @@
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, fake Gateway와 protocol 2–3 호환, operation UI와 PocketLink QR/LAN bootstrap 상태 머신 모듈 구현; 나머지 App 연결·run·journal·voice·media 상태 분리 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model catalog, chat/tool SSE, 승인형 broker, usage·upstream 기록 구현; 실제 model eval·선택형 routing 잔여 |
-| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe 구현; process-death background 알림·실기기 acceptance 잔여 |
+| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in process-death native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe 구현; 실기기 background/deep-link acceptance 잔여 |
 | Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, user-triggered bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; Wi-Fi Direct 등 P2P·relay·background/field release gate 잔여 |
 
 ## 2. 제품 정의
@@ -373,9 +373,13 @@ thread cwd가 선택한 workspace와 다르면 409로 차단한다.
 Companion 재시작 뒤 복원되고 SSE로 다른 연결 기기에 전파된다. 사용자가 직접 켜는 Android
 완료·승인·오류 알림도 구현했다. 잠금 화면에는 generic 상태만 표시하고
 app-private random token으로 PendingIntent를 검증한다. 알림을 탭하면 device/operation ID로 선택한
-Companion의 retained snapshot을 다시 조회한 뒤 정확한 작업을 연다. replay 중에는 알리지 않는다.
-WebView process 종료 뒤 독립 background 수신과 실기기 deep-link acceptance는
-다음 단계다.
+Companion의 retained snapshot을 다시 조회한 뒤 정확한 작업을 연다. 사용자가 켠 Android foreground
+monitor는 최대 8개의 paired loopback target만 구독한다. Companion의 별도 notification SSE는 terminal
+operation과 새 approval을 schema/kind/operation ID/시각/승인 만료시각으로 축약해 prompt·workspace·응답·
+도구 세부정보를 native 계층에 보내지 않는다. bearer·target·cursor는 Android Keystore AES-GCM으로
+보호하고 sticky service가 WebView process 회수 뒤 `Last-Event-ID`로 다시 연결한다. 최초 활성화는 현재
+cursor에서 시작하며, 최신 16건 replay 중 10분 freshness와 approval 만료를 통과할 때만 generic 알림을 만든다.
+실기기 process-kill·절전·네트워크 전환과 deep-link acceptance는 다음 단계다.
 
 완료 조건: 여러 프로젝트 run을 동시에 추적하고 앱 종료·네트워크 전환 후 정확한 상태로 복구한다.
 

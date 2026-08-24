@@ -3,6 +3,12 @@ import { assertCompatibleProtocol } from "./protocol";
 import { secureGet, secureRemove, secureSet } from "./secure-storage";
 import type { CodexEvent, DeviceId, DeviceInfo, DeviceTarget } from "./types";
 import { EventStreamState } from "./event-stream-state";
+import {
+  collectBackgroundEventSubscriptions,
+  type BackgroundEventSubscription,
+} from "./background-event-subscriptions";
+
+export type { BackgroundEventSubscription } from "./background-event-subscriptions";
 
 interface ApiOptions {
   method?: string;
@@ -64,6 +70,10 @@ export async function initializeApiAuth(): Promise<void> {
 
 export function listDeviceTargets(): DeviceTarget[] {
   return deviceTargets.map((target) => ({ ...target }));
+}
+
+export function backgroundEventSubscriptions(): BackgroundEventSubscription[] {
+  return collectBackgroundEventSubscriptions(deviceTargets, (deviceId) => tokens.get(deviceId));
 }
 
 export function activeDeviceTarget(): DeviceTarget {

@@ -181,6 +181,7 @@ select {
 .preference-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem; margin-top: 0.75rem; }
 .preference-grid label > span { display: block; margin: 0 0 0.3rem 0.15rem; color: var(--muted); font-size: 0.66rem; font-weight: 750; }
 .notification-preference { min-width: 0; }
+.notification-preference small { display: block; min-height: 2.2em; margin: -0.1rem 0.15rem 0.35rem; color: var(--muted); font-size: 0.58rem; line-height: 1.35; overflow-wrap: anywhere; }
 .notification-preference button { width: 100%; min-height: 2.45rem; padding: 0.42rem 0.55rem; border: 1px solid var(--line); border-radius: 0.55rem; color: var(--accent); background: var(--surface-2); cursor: pointer; font-size: 0.65rem; font-weight: 750; overflow-wrap: anywhere; }
 .notification-preference button[aria-pressed="true"] { border-color: rgba(62, 213, 165, 0.35); background: rgba(62, 213, 165, 0.08); }
 .update-manager { min-width: 0; margin-top: 0.75rem; padding: 0.72rem; border: 1px solid rgba(62, 213, 165, 0.25); border-radius: 0.8rem; background: rgba(62, 213, 165, 0.04); }

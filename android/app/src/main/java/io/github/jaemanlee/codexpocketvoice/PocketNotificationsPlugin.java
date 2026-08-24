@@ -11,6 +11,8 @@ import android.os.Build;
 import android.util.Base64;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
+import androidx.core.content.ContextCompat;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
@@ -23,6 +25,10 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Objects;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.json.JSONObject;
 
 @CapacitorPlugin(
     name = "PocketNotifications",
@@ -38,11 +44,12 @@ public class PocketNotificationsPlugin extends Plugin {
     private static final String TOKEN_KEY = "token";
     private static final int MAX_DEVICE_ID = 120;
     private static final int MAX_OPERATION_ID = 200;
+    private static final AtomicBoolean UI_VISIBLE = new AtomicBoolean(false);
     private static PendingAction pendingAction;
 
     @Override
     public void load() {
-        createChannel();
+        createWorkChannel(getContext());
     }
 
     @PluginMethod
@@ -77,38 +84,81 @@ public class PocketNotificationsPlugin extends Plugin {
             String kind = requiredKind(call.getString("kind"));
             String deviceId = requiredIdentifier(call.getString(EXTRA_DEVICE_ID), MAX_DEVICE_ID, EXTRA_DEVICE_ID);
             String operationId = requiredIdentifier(call.getString(EXTRA_OPERATION_ID), MAX_OPERATION_ID, EXTRA_OPERATION_ID);
-            Intent openIntent = new Intent(getContext(), MainActivity.class)
-                .setAction(ACTION_OPEN_OPERATION)
-                .setPackage(getContext().getPackageName())
-                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                .putExtra(EXTRA_ACTION_TOKEN, actionToken(getContext()))
-                .putExtra(EXTRA_DEVICE_ID, deviceId)
-                .putExtra(EXTRA_OPERATION_ID, operationId);
-            int notificationId = Objects.hash(deviceId, operationId, kind) & 0x7fffffff;
-            PendingIntent contentIntent = PendingIntent.getActivity(
-                getContext(),
-                notificationId,
-                openIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-            );
-            NotificationCompat.Builder notification = new NotificationCompat.Builder(getContext(), CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_pocket_link)
-                .setContentTitle("Codex Pocket Voice")
-                .setContentText(notificationText(kind))
-                .setContentIntent(contentIntent)
-                .setAutoCancel(true)
-                .setOnlyAlertOnce(true)
-                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-                .setCategory("approval".equals(kind)
-                    ? NotificationCompat.CATEGORY_REMINDER
-                    : "failed".equals(kind) ? NotificationCompat.CATEGORY_ERROR : NotificationCompat.CATEGORY_STATUS)
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT);
-            getContext().getSystemService(NotificationManager.class).notify(notificationId, notification.build());
+            postWorkNotification(getContext(), kind, deviceId, operationId);
             JSObject result = new JSObject();
             result.put("posted", true);
             call.resolve(result);
         } catch (IllegalArgumentException error) {
             call.reject(error.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void configure(PluginCall call) {
+        if (!"granted".equals(permissionState())) {
+            call.reject("Android 알림 권한이 필요합니다.");
+            return;
+        }
+        JSArray values = call.getArray("subscriptions");
+        if (values == null || values.length() > PocketBackgroundEventPolicy.MAX_SUBSCRIPTIONS) {
+            call.reject("백그라운드 알림 등록이 올바르지 않습니다.");
+            return;
+        }
+        try {
+            List<PocketBackgroundEventStore.Subscription> subscriptions = new ArrayList<>();
+            for (int index = 0; index < values.length(); index += 1) {
+                JSONObject item = values.getJSONObject(index);
+                if (item.length() != 3) throw new IllegalArgumentException("백그라운드 알림 등록이 올바르지 않습니다.");
+                subscriptions.add(new PocketBackgroundEventStore.Subscription(
+                        item.getString(EXTRA_DEVICE_ID),
+                        item.getInt("localPort"),
+                        item.getString("token"),
+                        0
+                ));
+            }
+            PocketBackgroundEventStore.State state = new PocketBackgroundEventStore(getContext()).configure(subscriptions);
+            if (state.subscriptions.isEmpty()) {
+                getContext().stopService(new Intent(getContext(), PocketBackgroundEventService.class));
+            } else {
+                ContextCompat.startForegroundService(
+                        getContext(),
+                        new Intent(getContext(), PocketBackgroundEventService.class).setAction(PocketBackgroundEventService.ACTION_START)
+                );
+            }
+            JSObject result = new JSObject();
+            result.put("enabled", true);
+            result.put("subscriptionCount", state.subscriptions.size());
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("백그라운드 알림을 설정할 수 없습니다.", error);
+        }
+    }
+
+    @PluginMethod
+    public void disable(PluginCall call) {
+        try {
+            new PocketBackgroundEventStore(getContext()).clear();
+            getContext().stopService(new Intent(getContext(), PocketBackgroundEventService.class));
+            JSObject result = new JSObject();
+            result.put("enabled", false);
+            result.put("subscriptionCount", 0);
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("백그라운드 알림을 끌 수 없습니다.", error);
+        }
+    }
+
+    @PluginMethod
+    public void status(PluginCall call) {
+        try {
+            PocketBackgroundEventStore.State state = new PocketBackgroundEventStore(getContext()).load();
+            JSObject result = new JSObject();
+            result.put("enabled", state.enabled);
+            result.put("subscriptionCount", state.subscriptions.size());
+            result.put("running", PocketBackgroundEventService.isRunning());
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("백그라운드 알림 상태를 읽을 수 없습니다.", error);
         }
     }
 
@@ -153,6 +203,50 @@ public class PocketNotificationsPlugin extends Plugin {
         }
     }
 
+    static void setUiVisible(boolean visible) {
+        UI_VISIBLE.set(visible);
+    }
+
+    static boolean isUiVisible() {
+        return UI_VISIBLE.get();
+    }
+
+    static boolean postWorkNotification(Context context, String kind, String deviceId, String operationId) {
+        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return false;
+        kind = requiredKind(kind);
+        deviceId = requiredIdentifier(deviceId, MAX_DEVICE_ID, EXTRA_DEVICE_ID);
+        operationId = requiredIdentifier(operationId, MAX_OPERATION_ID, EXTRA_OPERATION_ID);
+        createWorkChannel(context);
+        Intent openIntent = new Intent(context, MainActivity.class)
+            .setAction(ACTION_OPEN_OPERATION)
+            .setPackage(context.getPackageName())
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(EXTRA_ACTION_TOKEN, actionToken(context))
+            .putExtra(EXTRA_DEVICE_ID, deviceId)
+            .putExtra(EXTRA_OPERATION_ID, operationId);
+        int notificationId = Objects.hash(deviceId, operationId, kind) & 0x7fffffff;
+        PendingIntent contentIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+        NotificationCompat.Builder notification = new NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_pocket_link)
+            .setContentTitle("Codex Pocket Voice")
+            .setContentText(notificationText(kind))
+            .setContentIntent(contentIntent)
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setCategory("approval".equals(kind)
+                ? NotificationCompat.CATEGORY_REMINDER
+                : "failed".equals(kind) ? NotificationCompat.CATEGORY_ERROR : NotificationCompat.CATEGORY_STATUS)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT);
+        context.getSystemService(NotificationManager.class).notify(notificationId, notification.build());
+        return true;
+    }
+
     private void resolvePermission(PluginCall call) {
         JSObject result = new JSObject();
         result.put("state", permissionState());
@@ -168,7 +262,7 @@ public class PocketNotificationsPlugin extends Plugin {
         return "prompt";
     }
 
-    private void createChannel() {
+    static void createWorkChannel(Context context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationChannel channel = new NotificationChannel(
             CHANNEL_ID,
@@ -177,7 +271,7 @@ public class PocketNotificationsPlugin extends Plugin {
         );
         channel.setDescription("완료, 승인 필요, 오류 상태만 표시합니다.");
         channel.setLockscreenVisibility(NotificationCompat.VISIBILITY_PRIVATE);
-        getContext().getSystemService(NotificationManager.class).createNotificationChannel(channel);
+        context.getSystemService(NotificationManager.class).createNotificationChannel(channel);
     }
 
     private static String requiredKind(String kind) {

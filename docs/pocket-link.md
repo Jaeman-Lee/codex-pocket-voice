@@ -165,8 +165,8 @@ Android에서 mDNS 수신을 위해 `CHANGE_WIFI_MULTICAST_STATE`와 검색 시�
 - 서버 인증서 staged pin 교체와 Android client identity A/B 교체는 구현됐지만 실기기·실제 LAN 전환
   acceptance 미검증
 - 부팅 후 자동 복구, Android 계측 기반 CPU·메모리·배터리 release gate 미검증
-- opt-in 완료·승인·오류 native 알림과 retained operation 열기는 구현됐지만, WebView process 종료 뒤
-  독립 background event 수신과 실기기 deep-link acceptance 미검증
+- opt-in notification-only SSE와 Keystore cursor를 이용한 process-death 완료·승인·오류 native 알림은
+  구현됐지만, 실기기 process-kill·절전·네트워크 전환 및 deep-link acceptance 미검증
 
 따라서 CI에서만 빌드하며 현장 Companion을 재시작하거나 v2 APK를 설치하지 않는다. 위 항목이
 완성되고 실제 LAN·네트워크 전환·절전 테스트를 통과할 때까지 Termux/SSH가 검증된 rollback이다.

@@ -48,6 +48,7 @@ import {
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_EVENT_TEXT = 80_000;
+const MAX_NOTIFICATION_REPLAY_EVENTS = 16;
 const NATIVE_APP_ORIGINS = new Set(["http://localhost", "https://localhost", "capacitor://localhost"]);
 const STATIC_FILES = new Map([
   ["/", "index.html"],
@@ -129,6 +130,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   if (!rootInfo.isDirectory()) throw new Error(`Web static directory is invalid: ${options.staticDir}`);
 
   const sseClients = new Set<ServerResponse>();
+  const notificationSseClients = new Set<ServerResponse>();
   const media = options.media ?? new MediaManager({
     onUpdate: (item) => broadcast(sseClients, { type: "media", media: item }),
   });
@@ -175,7 +177,14 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
         action: event.action,
         operation: publicOperation(event.operation),
       };
-      appendAndBroadcast(journal, sseClients, event.operation.id, event.operation.cwd, publicEvent);
+      appendAndBroadcast(
+        journal,
+        sseClients,
+        notificationSseClients,
+        event.operation.id,
+        event.operation.cwd,
+        publicEvent,
+      );
       if ((event.action === "completed" || event.action === "failed")
           && event.operation.providerId === "codex"
           && handoffs.current({
@@ -189,7 +198,9 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
       return;
     }
     const forwarded = sanitizeNotification(event.event);
-    if (forwarded) appendAndBroadcast(journal, sseClients, event.operationId, event.cwd, forwarded);
+    if (forwarded) {
+      appendAndBroadcast(journal, sseClients, notificationSseClients, event.operationId, event.cwd, forwarded);
+    }
   });
   const unsubscribeApprovals = approvals.subscribe((event) => {
     const operation = runs.findByProviderRun(
@@ -207,17 +218,17 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
       approval: publicApproval(event.request, operation),
       ...(event.type === "resolved" ? { resolution: event.resolution } : {}),
     };
-    appendAndBroadcast(journal, sseClients, operation.id, operation.cwd, publicEvent);
+    appendAndBroadcast(journal, sseClients, notificationSseClients, operation.id, operation.cwd, publicEvent);
   });
 
   const requestListener = (request: IncomingMessage, response: ServerResponse) => {
-    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, workspaceChangeEngine, sseClients, undefined).catch(
+    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, undefined).catch(
       (error) => sendError(response, error),
     );
   };
   const pocketLinkRequestListener = (request: IncomingMessage, response: ServerResponse) => {
     void Promise.resolve().then(() => pocketLinkClientPublicKeyPin(request)).then((tlsPublicKeyPin) => (
-      handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, workspaceChangeEngine, sseClients, tlsPublicKeyPin)
+      handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, tlsPublicKeyPin)
     )).catch((error) => sendError(response, error));
   };
   const server = createServer(requestListener);
@@ -241,6 +252,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
 
   const heartbeat = setInterval(() => {
     for (const response of sseClients) response.write(": heartbeat\n\n");
+    for (const response of notificationSseClients) response.write(": heartbeat\n\n");
   }, 20_000);
   heartbeat.unref();
 
@@ -288,6 +300,8 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
       runs.close();
       for (const response of sseClients) response.end();
       sseClients.clear();
+      for (const response of notificationSseClients) response.end();
+      notificationSseClients.clear();
       server.closeIdleConnections();
       pocketLinkServer?.closeIdleConnections();
       try {
@@ -357,6 +371,7 @@ async function handleRequest(
   journal: EventJournal,
   workspaceChangeEngine: WorkspaceChangeEngine | undefined,
   sseClients: Set<ServerResponse>,
+  notificationSseClients: Set<ServerResponse>,
   tlsPublicKeyPin: string | undefined,
 ): Promise<void> {
   setSecurityHeaders(response);
@@ -372,7 +387,7 @@ async function handleRequest(
       response.end();
       return;
     }
-    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, workspaceChangeEngine, sseClients, tlsPublicKeyPin);
+    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, tlsPublicKeyPin);
     return;
   }
   await serveStatic(request, response, url.pathname, options.staticDir);
@@ -394,6 +409,7 @@ async function handleApi(
   journal: EventJournal,
   workspaceChangeEngine: WorkspaceChangeEngine | undefined,
   sseClients: Set<ServerResponse>,
+  notificationSseClients: Set<ServerResponse>,
   tlsPublicKeyPin: string | undefined,
 ): Promise<void> {
   if (request.method === "GET" && url.pathname === "/api/status") {
@@ -724,6 +740,44 @@ async function handleApi(
     })}\n\n`);
     sseClients.add(response);
     request.once("close", () => sseClients.delete(response));
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/events/notifications") {
+    const requestedCursor = eventCursor(request.headers["last-event-id"]);
+    const cursor = requestedCursor ?? journal.latestCursor();
+    const replay = journal.replayAfter(cursor);
+    const notificationEvents = replay.events.flatMap((event) => {
+      const notification = workNotification(event.event);
+      return notification ? [{ ...event, event: notification }] : [];
+    }).slice(-MAX_NOTIFICATION_REPLAY_EVENTS);
+    response.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-store",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    response.write(`data: ${JSON.stringify({
+      type: "notification_stream",
+      action: "connected",
+      latestCursor: replay.latestCursor,
+      replayed: notificationEvents.length,
+    })}\n\n`);
+    if (replay.gapBefore || replay.journalReset) {
+      response.write(`data: ${JSON.stringify({
+        type: "notification_stream",
+        action: "reset",
+        latestCursor: replay.latestCursor,
+      })}\n\n`);
+    }
+    for (const event of notificationEvents) response.write(journalFrame(event));
+    response.write(`data: ${JSON.stringify({
+      type: "notification_stream",
+      action: "replay_complete",
+      latestCursor: replay.latestCursor,
+    })}\n\n`);
+    notificationSseClients.add(response);
+    request.once("close", () => notificationSseClients.delete(response));
     return;
   }
 
@@ -1303,6 +1357,7 @@ function broadcast(clients: Set<ServerResponse>, event: Record<string, unknown>)
 function appendAndBroadcast(
   journal: EventJournal,
   clients: Set<ServerResponse>,
+  notificationClients: Set<ServerResponse>,
   operationId: string,
   cwd: string,
   event: Record<string, unknown>,
@@ -1311,10 +1366,60 @@ function appendAndBroadcast(
     const persisted = journal.appendEvent(operationId, cwd, event);
     const frame = journalFrame(persisted);
     for (const client of clients) client.write(frame);
+    const notification = workNotification(event);
+    if (notification) {
+      const notificationFrame = journalFrame({ ...persisted, event: notification });
+      for (const client of notificationClients) client.write(notificationFrame);
+    }
   } catch (error) {
     process.stderr.write(`[codex-event-journal] Event persistence failed: ${safeInternalError(error)}\n`);
     broadcast(clients, event);
   }
+}
+
+function workNotification(event: Record<string, unknown>): Record<string, unknown> | null {
+  if (event.type === "operation" && (event.action === "completed" || event.action === "failed")) {
+    const operation = isRecord(event.operation) ? event.operation : {};
+    const operationId = boundedIdentifier(operation.id, 200);
+    const occurredAt = isoTimestamp(operation.completedAt);
+    if (!operationId || !occurredAt) return null;
+    return {
+      schema: 1,
+      type: "work_notification",
+      kind: event.action === "failed" ? "failed" : "completed",
+      operationId,
+      occurredAt,
+    };
+  }
+  if (event.type === "approval" && event.action === "requested") {
+    const approval = isRecord(event.approval) ? event.approval : {};
+    const operationId = boundedIdentifier(approval.operationId, 200);
+    const occurredAt = isoTimestamp(approval.requestedAt);
+    const expiresAt = isoTimestamp(approval.expiresAt);
+    if (!operationId || !occurredAt || !expiresAt) return null;
+    return {
+      schema: 1,
+      type: "work_notification",
+      kind: "approval",
+      operationId,
+      occurredAt,
+      expiresAt,
+    };
+  }
+  return null;
+}
+
+function boundedIdentifier(value: unknown, maximum: number): string | undefined {
+  return typeof value === "string" && value.length > 0 && value.length <= maximum
+    && !/[\x00-\x1f\x7f]/.test(value)
+    ? value
+    : undefined;
+}
+
+function isoTimestamp(value: unknown): string | undefined {
+  return typeof value === "string" && value.length <= 40 && Number.isFinite(Date.parse(value))
+    ? value
+    : undefined;
 }
 
 function journalFrame(event: JournalReplayEvent): string {

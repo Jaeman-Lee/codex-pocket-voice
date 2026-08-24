@@ -16,7 +16,7 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | V2 development component | Version / revision | State |
 | --- | --- | --- |
 | Source version | `2.0.0` / Android `versionCode 20000` | development only; not field installed |
-| Target branch | `feature/v2-control-plane` | approved crash-recoverable text change tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, live branch/worktree identity, staged PocketLink rotations and reviewed same-LAN discovery implemented; P2P/relay and model eval next |
+| Target branch | `feature/v2-control-plane` | approved crash-recoverable text change tools, encrypted journals, durable API conversations, workspace management, dashboard, approval inbox, process-death notifications, live branch/worktree identity, staged PocketLink rotations and reviewed same-LAN discovery implemented; P2P/relay and model eval next |
 | Gateway protocol | maximum 3, minimum 2 | v1 rollout compatibility retained |
 | Codex app-server schema | `codex-cli 0.149.0` | generated bindings and no-model real integration verified |
 | Current v1 APK | 1.8.2 candidate | signed APK/checksum/SBOM prepared from hotfix PR #4; install not performed |
@@ -27,11 +27,21 @@ v1.8.1을 검증된 rollback 세트로 유지하고, 첫 2.0 candidate를 설치
 | Android journal milestone | app-owned SQLite schema 1 | encrypted snapshot migration and rollback mirror implemented; CI-only, no device migration performed |
 | Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, HMAC-authenticated bounded user retention, workspace JSON export and protected delete implemented; no field restart performed |
 | Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation, touch-only approvals, durable goal/pin/archive and two-touch history deletion implemented; no field APK handed off |
-| Android work notifications | opt-in native channel | generic private completed/approval/error alerts and authenticated retained-operation navigation implemented while WebView SSE is alive; process-death delivery and field acceptance pending |
+| Android work notifications | opt-in connectedDevice service | maximum 8 encrypted loopback subscriptions, notification-only authenticated SSE, durable cursor/replay freshness and generic retained-operation navigation implemented; field process-kill/deep-link acceptance pending |
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
 | PocketLink TLS bootstrap | opt-in LAN mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD address discovery, observed backup-pin server certificate promotion and recoverable Keystore A/B client identity rotation implemented; P2P, relay and field validation pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+Process-death notification checkpoint decision: WebView 회수 뒤에도 완료·승인·오류를 받는 새 user-visible v2
+기능이므로 기존 `breaking`/`2.0.0`, Android `versionCode 20000`, 대상
+`feature/v2-control-plane`을 유지한다. Companion은 paired bearer가 필요한 별도 SSE에서 schema/kind/
+operation ID/시각/승인 만료시각만 보내고 prompt·workspace·응답·도구 세부정보는 내보내지 않는다. Android는
+사용자가 켠 경우에만 최대 8개의 loopback target과 cursor/bearer를 별도 Keystore AES-GCM state에 저장하고
+`connectedDevice` foreground service로 복구한다. 최초 구독은 현재 cursor에서 시작하고 10분 초과·만료
+replay를 최신 16건으로 제한하며 foreground UI 중복을 억제한다. 이 checkpoint는 source와 CI-only APK만 갱신하며 현장 설치·
+Companion 재시작은 하지 않는다. current v1 후보 1.8.2, 별도 staged 1.8.3과 검증된 rollback 1.8.1을
+변경하지 않는다.
 
 Official release discovery checkpoint decision: 공식 GitHub 정식판 조회·다운로드는 새 v2 user workflow이므로
 기존 `breaking`/`2.0.0`, Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지한다. Android가

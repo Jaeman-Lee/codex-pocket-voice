@@ -367,6 +367,8 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const initial = await reader.read();
   assert.match(new TextDecoder().decode(initial.value), /connected/);
   streamAbort.abort();
+  const unauthenticatedNotificationStream = await fetch(`${base}/api/events/notifications`);
+  assert.equal(unauthenticatedNotificationStream.status, 401);
 
   const uploadedResponse = await fetch(`${base}/api/media?name=screen.png`, {
     method: "POST",
@@ -598,6 +600,19 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(interrupted.interruptRequested, true);
   assert.deepEqual(fake.interrupted, ["thread-web", "turn-web"]);
 
+  const liveNotificationAbort = new AbortController();
+  const liveNotificationResponse = await fetch(`${base}/api/events/notifications`, {
+    headers: authorized(),
+    signal: liveNotificationAbort.signal,
+  });
+  assert.equal(liveNotificationResponse.status, 200);
+  const liveNotificationReader = liveNotificationResponse.body!.getReader();
+  const liveNotificationInitial = await readUntil(
+    liveNotificationReader,
+    (text) => text.includes('"action":"replay_complete"'),
+  );
+  assert.doesNotMatch(liveNotificationInitial, /"type":"work_notification"/);
+
   fake.finish("interrupted");
   await waitFor(async () => {
     const operation = await jsonFetch(`${base}/api/runs/${operationId}`, { headers: authorized() });
@@ -605,6 +620,15 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   });
   await waitFor(async () => fake.unsubscribed.length === 1);
   assert.deepEqual(fake.unsubscribed, ["thread-web"]);
+  const liveNotification = await readUntil(
+    liveNotificationReader,
+    (text) => text.includes('"type":"work_notification"'),
+  );
+  liveNotificationAbort.abort();
+  assert.match(liveNotification, /"schema":1/);
+  assert.match(liveNotification, /"kind":"completed"/);
+  assert.match(liveNotification, new RegExp(`"operationId":"${operationId}"`));
+  assert.doesNotMatch(liveNotification, /change a file|Mobile release audit|package\.json|workspace|cwd|result/);
   const claimed = await jsonFetch(`${base}/api/session/handoffs/${released.handoff.id}/claim`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: base }),
@@ -637,10 +661,32 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(typeof archived.operation.archivedAt, "string");
   assert.equal(archived.operation.pinnedAt, undefined);
 
+  const failedRun = await jsonFetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({
+      requestId: "failed-notification-run",
+      prompt: "private failed notification prompt",
+      cwd,
+      provider: "codex",
+      accountId: "cli-default",
+      model: "test-codex",
+    }),
+  });
+  fake.finish("failed");
+  await waitFor(async () => {
+    const current = await jsonFetch(`${base}/api/runs/${failedRun.operation.id}`, { headers: authorized() });
+    return current.operation.status === "failed";
+  });
+
   const invalidCursor = await fetch(`${base}/api/events`, {
     headers: authorized({ "Last-Event-ID": "not-a-cursor" }),
   });
   assert.equal(invalidCursor.status, 400);
+  const invalidNotificationCursor = await fetch(`${base}/api/events/notifications`, {
+    headers: authorized({ "Last-Event-ID": "not-a-cursor" }),
+  });
+  assert.equal(invalidNotificationCursor.status, 400);
 
   const replayAbort = new AbortController();
   const replayResponse = await fetch(`${base}/api/events`, {
@@ -664,6 +710,30 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.match(replayText, /"action":"resolved"/);
   assert.match(replayText, /"latestCursor":\d+/);
 
+  const notificationReplayAbort = new AbortController();
+  const notificationReplayResponse = await fetch(`${base}/api/events/notifications`, {
+    headers: authorized({ "Last-Event-ID": "0" }),
+    signal: notificationReplayAbort.signal,
+  });
+  assert.equal(notificationReplayResponse.status, 200);
+  const notificationReplayText = await readUntil(
+    notificationReplayResponse.body!.getReader(),
+    (text) => text.includes('"action":"replay_complete"'),
+  );
+  notificationReplayAbort.abort();
+  assert.match(notificationReplayText, /id: \d+/);
+  assert.match(notificationReplayText, /"type":"notification_stream","action":"connected"/);
+  assert.match(notificationReplayText, /"schema":1,"type":"work_notification","kind":"approval"/);
+  assert.match(notificationReplayText, /"kind":"completed"/);
+  assert.match(notificationReplayText, /"kind":"failed"/);
+  assert.match(notificationReplayText, /"occurredAt":"[^"]+"/);
+  assert.match(notificationReplayText, /"expiresAt":"[^"]+"/);
+  assert.match(notificationReplayText, /"action":"replay_complete","latestCursor":\d+/);
+  assert.doesNotMatch(
+    notificationReplayText,
+    /change a file|different request|private failed notification prompt|Mobile release audit|검증된 명령|package\.json|workspace|cwd|prompt|result|redacted/,
+  );
+
   const missingDeleteConfirmation = await fetch(`${base}/api/journal/workspace`, {
     method: "DELETE",
     headers: authorized({ "Content-Type": "application/json", Origin: base }),
@@ -675,7 +745,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
     headers: authorized({ "Content-Type": "application/json", Origin: base }),
     body: JSON.stringify({ workspace: cwd, confirm: "delete-companion-history" }),
   });
-  assert.equal(deletedHistory.deletedOperations, 1);
+  assert.equal(deletedHistory.deletedOperations, 2);
   assert.ok(deletedHistory.deletedEvents >= 1);
   assert.deepEqual((await jsonFetch(`${base}/api/runs`, { headers: authorized() })).operations, []);
   const emptyJournal = await jsonFetch(
@@ -768,6 +838,75 @@ test("gateway restart persists unknown-operation acknowledgement and replays it"
   assert.equal(persisted?.acknowledgedAt, acknowledged.operation.acknowledgedAt);
   journal.close();
   running = undefined;
+});
+
+test("notification replay keeps only the latest sixteen minimal events", async (t) => {
+  const paths = await PathPolicy.fromEnvironment(cwd);
+  const root = await mkdtemp(join(tmpdir(), "codex-pocket-notification-replay-"));
+  const auth = await GatewayAuth.create({
+    stateFile: join(root, "auth.json"),
+    pairingCode: "24681357",
+    deviceKind: "linux",
+    deviceName: "Notification replay PC",
+  });
+  const journal = await EventJournal.create(join(root, "events.sqlite3"));
+  for (let index = 0; index < 20; index += 1) {
+    const completedAt = `2026-08-24T00:00:${String(index).padStart(2, "0")}.000Z`;
+    journal.saveOperation({
+      id: `operation-${index}`,
+      providerId: "codex",
+      conversationId: `conversation-${index}`,
+      runId: `run-${index}`,
+      cwd,
+      prompt: `private prompt ${index}`,
+      status: "completed",
+      startedAt: completedAt,
+      completedAt,
+    });
+    journal.appendEvent(`operation-${index}`, cwd, {
+      type: "operation",
+      action: "completed",
+      operation: {
+        id: `operation-${index}`,
+        completedAt,
+        prompt: `private prompt ${index}`,
+        cwd,
+      },
+    });
+  }
+  const running = await startWebServer({
+    client: new FakeWebClient(),
+    paths,
+    staticDir: resolve(cwd, "client/dist"),
+    media: new MediaManager({ rootDir: join(root, "media") }),
+    projects: await ProjectManager.fromEnvironment(paths, root),
+    auth,
+    journal,
+    port: 0,
+  });
+  t.after(() => running.close().catch(() => undefined));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const base = `http://127.0.0.1:${running.port}`;
+  const paired = await jsonFetch(`${base}/api/pairing/claim`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: "http://localhost" },
+    body: JSON.stringify({ code: "24681357", label: "Replay test" }),
+  });
+  const abort = new AbortController();
+  const response = await fetch(`${base}/api/events/notifications`, {
+    headers: { Authorization: `Bearer ${paired.token}`, "Last-Event-ID": "0" },
+    signal: abort.signal,
+  });
+  const replay = await readUntil(
+    response.body!.getReader(),
+    (text) => text.includes('"action":"replay_complete"'),
+  );
+  abort.abort();
+  assert.match(replay, /"replayed":16/);
+  assert.equal(replay.match(/"type":"work_notification"/g)?.length, 16);
+  assert.match(replay, /"operationId":"operation-4"/);
+  assert.match(replay, /"operationId":"operation-19"/);
+  assert.doesNotMatch(replay, /operation-3|private prompt|workspace|cwd/);
 });
 
 class FakeWebClient implements WebCodexClient {

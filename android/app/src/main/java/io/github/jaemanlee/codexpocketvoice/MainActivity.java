@@ -23,4 +23,16 @@ public class MainActivity extends BridgeActivity {
         setIntent(intent);
         PocketNotificationsPlugin.captureIntent(this, intent);
     }
+
+    @Override
+    public void onStart() {
+        super.onStart();
+        PocketNotificationsPlugin.setUiVisible(true);
+    }
+
+    @Override
+    public void onStop() {
+        PocketNotificationsPlugin.setUiVisible(false);
+        super.onStop();
+    }
 }

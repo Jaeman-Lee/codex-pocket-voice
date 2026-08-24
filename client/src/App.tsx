@@ -7,6 +7,7 @@ import {
   addLinuxDevice,
   ApiError,
   beginActiveDeviceIdentityRotation,
+  backgroundEventSubscriptions,
   clearActiveDeviceIdentityRotation,
   completeActiveDeviceIdentityRotation,
   deviceTargetLabel,
@@ -34,7 +35,6 @@ import {
   type NativeSpeechResult,
   type NativeSpeechState,
   type NativeNotificationAction,
-  type NativeNotificationKind,
   type NativeOfficialReleaseStatus,
   type NativeUpdateReview,
   type PocketLinkStatus,
@@ -293,7 +293,6 @@ export function App() {
   const initializeRef = useRef<() => Promise<void>>(async () => undefined);
   const replayingEventsRef = useRef(false);
   const notificationsEnabledRef = useRef(notificationsEnabled);
-  const notifiedNativeEventsRef = useRef(new Set<string>());
   const pendingNotificationActionRef = useRef<NativeNotificationAction | null>(null);
   const openOperationFromDashboardRef = useRef<(operation: Operation) => void>(() => undefined);
 
@@ -427,6 +426,22 @@ export function App() {
     document.addEventListener("visibilitychange", consume);
     return () => document.removeEventListener("visibilitychange", consume);
   }, [showToast]);
+
+  useEffect(() => {
+    if (!isNativeApp()) return;
+    let disposed = false;
+    if (!notificationsEnabled) {
+      void NativeNotifications.disable().catch(() => undefined);
+      return () => { disposed = true; };
+    }
+    void NativeNotifications.configure({ subscriptions: backgroundEventSubscriptions() }).catch((error) => {
+      if (disposed) return;
+      notificationsEnabledRef.current = false;
+      setNotificationsEnabled(false);
+      showToast(errorMessage(error));
+    });
+    return () => { disposed = true; };
+  }, [authRevision, deviceTargets, notificationsEnabled, showToast]);
 
   const requestPairing = useCallback(async () => {
     try {
@@ -1167,16 +1182,12 @@ export function App() {
       return;
     }
     if (event.type === "operation" && event.operation) {
-      if (event.action === "completed" || event.action === "failed") {
-        maybePostNativeNotification(event.action === "failed" ? "failed" : "completed", event.operation.id);
-      }
       handleOperationEvent(event.action ?? "", event.operation);
       return;
     }
     if (event.type === "approval" && event.approval) {
       setApprovalInbox((current) => applyApprovalEvent(current, event));
       if (event.action === "requested" && !replayingEventsRef.current) {
-        maybePostNativeNotification("approval", event.approval.operationId);
         setShowOperationsDashboard(true);
         showToast("화면에서 검토해야 할 도구 승인이 도착했습니다.");
       }
@@ -1259,25 +1270,17 @@ export function App() {
     }
   }
 
-  function maybePostNativeNotification(kind: NativeNotificationKind, operationId: string) {
-    if (!isNativeApp() || !notificationsEnabledRef.current || document.visibilityState === "visible"
-      || replayingEventsRef.current) return;
-    const key = `${deviceRef.current}\u0000${kind}\u0000${operationId}`;
-    if (notifiedNativeEventsRef.current.has(key)) return;
-    if (notifiedNativeEventsRef.current.size >= 1_000) notifiedNativeEventsRef.current.clear();
-    notifiedNativeEventsRef.current.add(key);
-    void NativeNotifications.post({ kind, deviceId: deviceRef.current, operationId }).catch(() => {
-      notificationsEnabledRef.current = false;
-      setNotificationsEnabled(false);
-    });
-  }
-
   async function toggleNativeNotifications() {
     if (!isNativeApp()) return;
     if (notificationsEnabledRef.current) {
-      notificationsEnabledRef.current = false;
-      setNotificationsEnabled(false);
-      showToast("Android 작업 알림을 껐습니다.");
+      try {
+        await NativeNotifications.disable();
+        notificationsEnabledRef.current = false;
+        setNotificationsEnabled(false);
+        showToast("Android 작업 알림을 껐습니다.");
+      } catch (error) {
+        showToast(errorMessage(error));
+      }
       return;
     }
     try {
@@ -1288,9 +1291,15 @@ export function App() {
           : "작업 알림 권한을 허용해야 켤 수 있습니다.");
         return;
       }
+      const subscriptions = backgroundEventSubscriptions();
+      if (subscriptions.length === 0) {
+        showToast("먼저 알림을 받을 Linux Companion을 페어링해 주세요.");
+        return;
+      }
+      await NativeNotifications.configure({ subscriptions });
       notificationsEnabledRef.current = true;
       setNotificationsEnabled(true);
-      showToast("앱이 화면에 없을 때 완료·승인·오류 알림을 표시합니다.");
+      showToast("앱 프로세스가 종료되어도 완료·승인·오류 알림을 확인합니다.");
     } catch (error) {
       showToast(errorMessage(error));
     }
@@ -3198,6 +3207,7 @@ export function App() {
               {isNativeApp() && (
                 <label className="notification-preference">
                   <span>백그라운드 작업 알림</span>
+                  <small>켜면 Android 연결 상태 알림이 유지되며 완료·승인·오류만 표시합니다.</small>
                   <button
                     type="button"
                     aria-pressed={notificationsEnabled}

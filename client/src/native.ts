@@ -91,10 +91,25 @@ export interface NativeNotificationAction {
   operationId?: string;
 }
 
+export interface NativeBackgroundEventSubscription {
+  deviceId: string;
+  localPort: number;
+  token: string;
+}
+
+export interface NativeBackgroundNotificationStatus {
+  enabled: boolean;
+  subscriptionCount: number;
+  running?: boolean;
+}
+
 interface NativeNotificationsPlugin {
   checkPermission(): Promise<{ state: NativeNotificationPermission }>;
   requestPermission(): Promise<{ state: NativeNotificationPermission }>;
   post(options: { kind: NativeNotificationKind; deviceId: string; operationId: string }): Promise<{ posted: boolean }>;
+  configure(options: { subscriptions: NativeBackgroundEventSubscription[] }): Promise<NativeBackgroundNotificationStatus>;
+  disable(): Promise<NativeBackgroundNotificationStatus>;
+  status(): Promise<NativeBackgroundNotificationStatus>;
   consumePendingAction(): Promise<NativeNotificationAction>;
 }
 

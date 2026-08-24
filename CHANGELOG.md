@@ -66,8 +66,12 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 - Android에서 사용자가 직접 켠 경우에만 앱이 화면에 없을 때 완료·승인·오류 알림을 표시한다. 잠금
   화면 알림에는 프롬프트·프로젝트 경로·Provider 응답을 넣지 않고 generic 상태만 표시한다. 알림의
   PendingIntent는 앱 전용 random token과 bounded device/operation ID로 검증하며, 누르면 해당 Linux PC의
-  현재 retained operation을 다시 조회한 뒤 정확한 작업만 연다. SSE replay와 같은 operation 이벤트는
-  중복 알림을 만들지 않는다. WebView process가 종료된 뒤의 독립 background 수신은 아직 포함하지 않는다.
+  현재 retained operation을 다시 조회한 뒤 정확한 작업만 연다. opt-in foreground monitor는 최대 8개의
+  loopback Companion에서 인증된 notification-only SSE를 구독하며, 서버는 schema/kind/operation ID/시각과
+  승인 만료시각만 보내 prompt·workspace·응답·도구 세부정보를 네이티브 계층에 내리지 않는다. bearer와
+  cursor는 Android Keystore AES-GCM 설정에 저장하고 process 회수 뒤 `Last-Event-ID`로 복구한다. 최초
+  활성화는 현재 cursor에서 시작하고 replay는 최신 16건으로 제한해 10분보다 오래됐거나 만료된 요청을
+  알리지 않으며, WebView가 보일 때에는 native monitor가 cursor만 전진시켜 중복 알림을 만들지 않는다.
 - 승인 요청은 run과 workspace가 일치할 때만 승인함에 노출한다. redacted summary/details의 크기와 JSON
   형식을 제한하고, approve/decline 모두 same-origin 화면 터치 API로만 처리한다. 음성 source를 보내도
   서버가 `touch`로 고정하며 만료·거절·재연결 중 자동 승인은 없다.
