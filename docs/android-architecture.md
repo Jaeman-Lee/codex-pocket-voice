@@ -165,4 +165,8 @@ PC Companion의 공식 실행 환경은 Linux로 한정한다. Windows/macOS용 
 - 장시간 연결에서 CPU·메모리·배터리 사용량을 측정하고 회귀 테스트한다.
 - Termux는 네이티브 전송 모듈이 완성될 때까지만 SSH 호환 계층으로 남는다.
 
+장시간 측정의 고정 기준과 개인정보를 남기지 않는 읽기 전용 ADB 절차는
+[Android 저부하 현장 검증](android-field-acceptance.md)에 기록한다. 도구와 fixture 통과만으로 완료 처리하지
+않고, 실제 release APK를 설치한 물리 단말의 direct/P2P/relay별 report와 잠금·절전·복구 결과가 필요하다.
+
 구현 세부 단계와 최종 완료 기준은 [로드맵](roadmap.md)에 기록한다.

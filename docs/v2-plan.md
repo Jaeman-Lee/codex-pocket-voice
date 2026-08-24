@@ -555,7 +555,12 @@ Linux Companion은 별도 명시적 root foreground CLI에서 unmanaged
 wpa_supplicant interface의 첫 PBC peer만 수락하고 `go_intent=15`·GO-only 결과를 강제한다. 별도 group
 interface에만 고정 주소와 leasefile 없는 1-client DHCP를 붙이고 DNS/default route를 광고하지 않으며,
 Companion TCP listener 확인 뒤 timeout·signal·오류에서 역순 정리한다. 외부 edge DDoS·실부하와 metadata
-정책, 실제 P2P group formation과 실기기 background release gate는 남아 있다.
+정책, 실제 P2P group formation과 실기기 background release gate는 남아 있다. 장시간 gate용 Linux
+도구는 설치 version을 대조한 뒤 exact app process의 CPU/PSS/RSS 표본과 unplugged battery, UID aggregate
+background partial wake의 시작·종료 delta만 읽는다. 60분·95% coverage·CPU p95 5%·PSS max 192 MiB·
+battery 4%/h·background wake 10%의 고정 기준을 모두 만족해야 통과하며 unknown/charging/reset은 실패한다.
+create-once 0600 report에는 aggregate verdict만 남기고 device/network/UID/PID/path와 원본 ADB 출력은
+포함하지 않는다. fixture 검증은 구현했지만 물리 단말 수치는 아직 없다.
 
 Android CI는 APK와 SBOM의 SHA-256·크기, package, SemVer/versionCode, commit을 담은 canonical
 `update-manifest.json`을 생성한다. official signed build는 APK release key로 manifest 원문에 RSA/ECDSA

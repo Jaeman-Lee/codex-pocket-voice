@@ -116,8 +116,9 @@ interface-only non-routing DHCP without a lease file, verifies the existing Comp
 resource in reverse. Public relay pre-TLS deadlines and aggregate-only load regression are implemented. A
 SystemUI-capable API 30 AOSP managed device now executes the token-gated notification Intent capture/consume
 boundary and an AndroidX UI Automator system-tray tap through MainActivity to one-time operation consumption.
-Physical locked-screen/process-kill taps,
-P2P/battery/background measurements and external relay load remain open.
+Physical locked-screen/process-kill taps, actual P2P formation, privacy-safe 60-minute CPU/PSS/battery/background-wake
+measurement results and external relay load remain open. The read-only ADB collector, fixed release thresholds and
+fixture/privacy regression are implemented; synthetic output does not satisfy the physical measurement gate.
 
 ## Final definition of done
 

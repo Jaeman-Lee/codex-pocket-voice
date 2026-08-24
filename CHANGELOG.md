@@ -10,6 +10,19 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Android 저부하 field acceptance harness는 기존 Phase E release 검증을 자동 판정하는 internal
+  compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
+  `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. APK
+  전달·설치, 실제 Provider 호출과 실행 중 Companion 재시작은 하지 않으며 current v1 후보 1.8.2,
+  staged v1.8.4와 검증된 v1.8.1 rollback을 그대로 보존한다.
+- 읽기 전용 ADB 도구는 설치 versionName/versionCode를 먼저 대조하고 60분 동안 exact app process의 CPU,
+  PSS/RSS, unplugged battery 감소와 UID background partial wake delta를 bounded 수집한다. release mode는
+  process·metric coverage 95%, CPU p95 5%, PSS max 192 MiB, battery 4%/h, background wake 10% 기준을 모두
+  만족해야 통과한다. unknown 형식·충전·counter reset·수집 누락은 fail closed다.
+- owner-only create-once JSON에는 aggregate와 기준별 verdict만 남기고 device serial/model/UID, PID,
+  주소·SSID·port, 설치 경로와 원본 ADB 출력은 넣지 않는다. fixture 검사는 비밀 표식 비노출과
+  `--reset`/`--checkin`/앱·네트워크 변경 명령 부재를 고정한다. 실제 물리 단말 수치는 아직 측정하지 않았고
+  direct/P2P/relay별 장시간 결과는 계속 field release gate다.
 - Android notification tray deep-link 계측은 기존 v2 알림의 실제 system-UI 경로를 자동 검증하는 internal
   compatibility `patch`다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
   `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. APK
