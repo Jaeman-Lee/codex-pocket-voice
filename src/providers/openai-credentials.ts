@@ -1,4 +1,5 @@
 import {
+  enforceProviderCredentialState,
   LinuxProviderCredentialError,
   normalizeProviderKey,
   readLinuxProviderCredential,
@@ -21,6 +22,12 @@ export class EnvironmentOpenAICredentialSource implements OpenAICredentialSource
 
   async load(): Promise<OpenAICredential | null> {
     try {
+      await enforceProviderCredentialState(
+        this.environment,
+        "OpenAI",
+        "openai-api-key",
+        "CODEX_POCKET_OPENAI_CREDENTIAL_GENERATION",
+      );
       const credentialPath = systemdCredentialPath(this.environment, "openai-api-key");
       if (credentialPath) {
         const systemdKey = await readLinuxProviderCredential(credentialPath, "OpenAI", true);

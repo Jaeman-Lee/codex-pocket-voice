@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -95,6 +96,24 @@ test("Provider credentials fail closed on symlinks, broad permissions, and inval
   await assert.rejects(new EnvironmentOpenAICredentialSource({
     CREDENTIALS_DIRECTORY: "relative/credentials",
   }).load(), /systemd credential 디렉터리/);
+
+  const stateFile = join(directory, "openrouter-api-key.state");
+  await writeFile(stateFile, "enabled:0123456789abcdef0123456789abcdef\n", { mode: 0o644 });
+  await assert.rejects(new EnvironmentOpenRouterCredentialSource({
+    CODEX_POCKET_PROVIDER_CREDENTIAL_STATE_DIR: directory,
+    CODEX_POCKET_OPENROUTER_CREDENTIAL_GENERATION: "0123456789abcdef0123456789abcdef",
+  }).load(), /0600 또는 0400/);
+  await chmod(stateFile, 0o600);
+  await writeFile(stateFile, "enabled:not-a-generation\n");
+  await assert.rejects(new EnvironmentOpenRouterCredentialSource({
+    CODEX_POCKET_PROVIDER_CREDENTIAL_STATE_DIR: directory,
+    CODEX_POCKET_OPENROUTER_CREDENTIAL_GENERATION: "not-a-generation",
+  }).load(), /state 형식/);
+  await rm(stateFile);
+  await symlink(target, stateFile);
+  await assert.rejects(new EnvironmentOpenRouterCredentialSource({
+    CODEX_POCKET_PROVIDER_CREDENTIAL_STATE_DIR: directory,
+  }).load(), /symlink/);
 });
 
 test("credential manager encrypts, rotates, and recoverably removes without restarting the service", async (t) => {
@@ -134,9 +153,29 @@ esac
   await writeFile(secretFile, "fixture-provider-key-one\n", { mode: 0o600 });
   const first = await execFileAsync(script, ["set", "openai"], { env: environment });
   const credentialFile = join(configHome, "codex-pocket-voice", "credentials.encrypted", "openai-api-key.cred");
+  const stateFile = join(configHome, "codex-pocket-voice", "credentials.encrypted", "openai-api-key.state");
   assert.equal(await readFile(credentialFile, "utf8"), "fixture-ciphertext-one\n");
   assert.equal((await stat(credentialFile)).mode & 0o777, 0o600);
   assert.doesNotMatch(`${first.stdout}${first.stderr}`, /fixture-provider-key|systemctl|restart.*service/i);
+  const firstState = (await readFile(stateFile, "utf8")).trim();
+  assert.match(firstState, /^enabled:[a-f0-9]{32}$/);
+  const firstGeneration = firstState.slice("enabled:".length);
+  const runtimeDirectory = join(root, "runtime-credentials");
+  await mkdir(runtimeDirectory, { mode: 0o700 });
+  await writeFile(join(runtimeDirectory, "openai-api-key"), "fixture-runtime-openai\n", { mode: 0o400 });
+  const baseRuntimeEnvironment = {
+    XDG_CONFIG_HOME: configHome,
+    CREDENTIALS_DIRECTORY: runtimeDirectory,
+    OPENAI_API_KEY: "fixture-fallback-must-remain-blocked",
+  };
+  await assert.rejects(
+    new EnvironmentOpenAICredentialSource(baseRuntimeEnvironment).load(),
+    /활성 turn 종료 후 Companion을 다시 시작/,
+  );
+  assert.deepEqual(await new EnvironmentOpenAICredentialSource({
+    ...baseRuntimeEnvironment,
+    CODEX_POCKET_OPENAI_CREDENTIAL_GENERATION: firstGeneration,
+  }).load(), { apiKey: "fixture-runtime-openai", source: "systemd_credential" });
 
   await writeFile(secretFile, "fixture-provider-key-two\n", { mode: 0o600 });
   const second = await execFileAsync(script, ["set", "openai"], { env: environment });
@@ -146,11 +185,24 @@ esac
   assert.equal(firstArchives.length, 1);
   assert.equal(await readFile(join(archiveDirectory, firstArchives[0]!), "utf8"), "fixture-ciphertext-one\n");
   assert.doesNotMatch(`${second.stdout}${second.stderr}`, /fixture-provider-key|systemctl/i);
+  const secondState = (await readFile(stateFile, "utf8")).trim();
+  assert.match(secondState, /^enabled:[a-f0-9]{32}$/);
+  const secondGeneration = secondState.slice("enabled:".length);
+  assert.notEqual(secondGeneration, firstGeneration);
+  await assert.rejects(new EnvironmentOpenAICredentialSource({
+    ...baseRuntimeEnvironment,
+    CODEX_POCKET_OPENAI_CREDENTIAL_GENERATION: firstGeneration,
+  }).load(), /활성 turn 종료 후 Companion을 다시 시작/);
 
   const removed = await execFileAsync(script, ["remove", "openai"], { env: environment });
   await assert.rejects(readFile(credentialFile, "utf8"), /ENOENT/);
   assert.equal((await readdir(archiveDirectory)).length, 2);
   assert.doesNotMatch(`${removed.stdout}${removed.stderr}`, /fixture-provider-key|systemctl/i);
+  assert.match((await readFile(stateFile, "utf8")).trim(), /^disabled:[a-f0-9]{32}$/);
+  await assert.rejects(new EnvironmentOpenAICredentialSource({
+    ...baseRuntimeEnvironment,
+    CODEX_POCKET_OPENAI_CREDENTIAL_GENERATION: secondGeneration,
+  }).load(), /credential이 해제되어 새 run/);
 });
 
 test("Linux installer binds encrypted credentials on systemd 256 and rejects them on legacy systemd", async (t) => {
@@ -172,6 +224,18 @@ test("Linux installer binds encrypted credentials on systemd 256 and rejects the
   await mkdir(credentialDirectory, { recursive: true, mode: 0o700 });
   const encrypted = "fixture-encrypted-credential-not-a-key";
   await writeFile(join(credentialDirectory, "openai-api-key.cred"), encrypted, { mode: 0o600 });
+  const openaiGeneration = "0123456789abcdef0123456789abcdef";
+  const openrouterGeneration = "abcdef0123456789abcdef0123456789";
+  await writeFile(
+    join(credentialDirectory, "openai-api-key.state"),
+    `enabled:${openaiGeneration}\n`,
+    { mode: 0o600 },
+  );
+  await writeFile(
+    join(credentialDirectory, "openrouter-api-key.state"),
+    `disabled:${openrouterGeneration}\n`,
+    { mode: 0o600 },
+  );
   const environment = {
     ...process.env,
     HOME: root,
@@ -184,6 +248,10 @@ test("Linux installer binds encrypted credentials on systemd 256 and rejects the
   const result = await execFileAsync(resolve("scripts/install-linux-companion.sh"), [], { env: environment });
   const service = await readFile(join(configHome, "systemd", "user", "codex-pocket-companion.service"), "utf8");
   assert.match(service, new RegExp(`LoadCredentialEncrypted=openai-api-key:${escapeRegex(join(credentialDirectory, "openai-api-key.cred"))}`));
+  assert.doesNotMatch(service, /LoadCredentialEncrypted=openrouter-api-key/);
+  assert.match(service, new RegExp(`Environment=CODEX_POCKET_PROVIDER_CREDENTIAL_STATE_DIR=${escapeRegex(credentialDirectory)}`));
+  assert.match(service, new RegExp(`Environment=CODEX_POCKET_OPENAI_CREDENTIAL_GENERATION=${openaiGeneration}`));
+  assert.match(service, new RegExp(`Environment=CODEX_POCKET_OPENROUTER_CREDENTIAL_GENERATION=${openrouterGeneration}`));
   assert.doesNotMatch(service, new RegExp(encrypted));
   assert.match(await readFile(systemctlLog, "utf8"), /daemon-reload[\s\S]*enable --now codex-pocket-companion\.service/);
   assert.doesNotMatch(`${result.stdout}${result.stderr}${service}`, /API_KEY=|fixture-provider-key/);
@@ -193,6 +261,11 @@ test("Linux installer binds encrypted credentials on systemd 256 and rejects the
   const legacyCredentialDirectory = join(legacyConfig, "codex-pocket-voice", "credentials.encrypted");
   await mkdir(legacyCredentialDirectory, { recursive: true, mode: 0o700 });
   await writeFile(join(legacyCredentialDirectory, "openrouter-api-key.cred"), encrypted, { mode: 0o600 });
+  await writeFile(
+    join(legacyCredentialDirectory, "openrouter-api-key.state"),
+    `enabled:${openrouterGeneration}\n`,
+    { mode: 0o600 },
+  );
   await assert.rejects(execFileAsync(resolve("scripts/install-linux-companion.sh"), [], {
     env: { ...environment, XDG_CONFIG_HOME: legacyConfig },
   }), /systemd 256 or newer; found 245/);

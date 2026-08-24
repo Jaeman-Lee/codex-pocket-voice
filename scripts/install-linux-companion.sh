@@ -14,6 +14,8 @@ service_file=$systemd_dir/codex-pocket-companion.service
 encrypted_credential_dir=$config_dir/credentials.encrypted
 openai_credential_file=$encrypted_credential_dir/openai-api-key.cred
 openrouter_credential_file=$encrypted_credential_dir/openrouter-api-key.cred
+openai_state_file=$encrypted_credential_dir/openai-api-key.state
+openrouter_state_file=$encrypted_credential_dir/openrouter-api-key.state
 projects_home=${CODEX_PROJECTS_HOME:-"$HOME/workspace"}
 
 if LC_ALL=C printf '%s' "$repo_dir$config_dir$systemd_dir$projects_home" | grep -q '[[:cntrl:]]'; then
@@ -53,10 +55,59 @@ if [ ! -f "$environment_file" ]; then
   } > "$environment_file"
 fi
 
-encrypted_credentials_present=false
+read_credential_state() {
+  state_file=$1
+  state_label=$2
+  if [ ! -e "$state_file" ] && [ ! -L "$state_file" ]; then
+    return
+  fi
+  if [ -L "$state_file" ] || [ ! -f "$state_file" ]; then
+    printf '%s credential state must be a regular non-symlink file.\n' "$state_label" >&2
+    exit 1
+  fi
+  state_mode=$(stat -c '%a' "$state_file")
+  state_owner=$(stat -c '%u' "$state_file")
+  state_size=$(stat -c '%s' "$state_file")
+  if [ "$state_owner" != "$(id -u)" ] || [ $((0$state_mode & 077)) -ne 0 ]; then
+    printf '%s credential state must be owned by this user with 0600 or 0400 permissions.\n' "$state_label" >&2
+    exit 1
+  fi
+  if [ "$state_size" -le 0 ] || [ "$state_size" -gt 128 ]; then
+    printf '%s credential state is empty or oversized.\n' "$state_label" >&2
+    exit 1
+  fi
+  state_value=$(LC_ALL=C cat -- "$state_file")
+  state_text_size=${#state_value}
+  if [ "$state_size" -ne "$state_text_size" ] && [ "$state_size" -ne $((state_text_size + 1)) ]; then
+    printf '%s credential state contains extra data.\n' "$state_label" >&2
+    exit 1
+  fi
+  state_status=${state_value%%:*}
+  state_generation=${state_value#*:}
+  if [ "${#state_generation}" -ne 32 ]; then
+    printf '%s credential state has an invalid generation.\n' "$state_label" >&2
+    exit 1
+  fi
+  case "$state_status:$state_generation" in
+    enabled:*|disabled:*) ;;
+    *) printf '%s credential state has an invalid status.\n' "$state_label" >&2; exit 1 ;;
+  esac
+  case "$state_generation" in
+    *[!0-9a-f]*) printf '%s credential state has an invalid generation.\n' "$state_label" >&2; exit 1 ;;
+  esac
+  if [ "$state_value" != "$state_status:$state_generation" ]; then
+    printf '%s credential state contains invalid data.\n' "$state_label" >&2
+    exit 1
+  fi
+  printf '%s\n' "$state_status:$state_generation"
+}
+
+openai_state=$(read_credential_state "$openai_state_file" OpenAI)
+openrouter_state=$(read_credential_state "$openrouter_state_file" OpenRouter)
+openai_load=false
+openrouter_load=false
 for credential_file in "$openai_credential_file" "$openrouter_credential_file"; do
   if [ -e "$credential_file" ] || [ -L "$credential_file" ]; then
-    encrypted_credentials_present=true
     if [ -L "$credential_file" ] || [ ! -f "$credential_file" ]; then
       printf 'Encrypted credential must be a regular non-symlink file: %s\n' "$credential_file" >&2
       exit 1
@@ -75,7 +126,28 @@ for credential_file in "$openai_credential_file" "$openrouter_credential_file"; 
   fi
 done
 
-if [ "$encrypted_credentials_present" = true ]; then
+if [ -f "$openai_credential_file" ]; then openai_load=true; fi
+if [ -f "$openrouter_credential_file" ]; then openrouter_load=true; fi
+case "$openai_state" in
+  enabled:*)
+    if [ "$openai_load" != true ]; then
+      printf '%s\n' 'OpenAI credential state is enabled but its encrypted credential is missing.' >&2
+      exit 1
+    fi
+    ;;
+  disabled:*) openai_load=false ;;
+esac
+case "$openrouter_state" in
+  enabled:*)
+    if [ "$openrouter_load" != true ]; then
+      printf '%s\n' 'OpenRouter credential state is enabled but its encrypted credential is missing.' >&2
+      exit 1
+    fi
+    ;;
+  disabled:*) openrouter_load=false ;;
+esac
+
+if [ "$openai_load" = true ] || [ "$openrouter_load" = true ]; then
   if ! command -v systemd-creds >/dev/null 2>&1; then
     printf '%s\n' 'Encrypted Provider credentials require systemd-creds 256 or newer.' >&2
     exit 1
@@ -104,10 +176,17 @@ umask 077
   printf '%s\n' '' '[Service]'
   printf 'WorkingDirectory=%s\n' "$repo_dir"
   printf 'EnvironmentFile=%s\n' "$environment_file"
-  if [ -f "$openai_credential_file" ]; then
+  printf 'Environment=CODEX_POCKET_PROVIDER_CREDENTIAL_STATE_DIR=%s\n' "$encrypted_credential_dir"
+  if [ -n "$openai_state" ]; then
+    printf 'Environment=CODEX_POCKET_OPENAI_CREDENTIAL_GENERATION=%s\n' "${openai_state#*:}"
+  fi
+  if [ -n "$openrouter_state" ]; then
+    printf 'Environment=CODEX_POCKET_OPENROUTER_CREDENTIAL_GENERATION=%s\n' "${openrouter_state#*:}"
+  fi
+  if [ "$openai_load" = true ]; then
     printf 'LoadCredentialEncrypted=openai-api-key:%s\n' "$openai_credential_file"
   fi
-  if [ -f "$openrouter_credential_file" ]; then
+  if [ "$openrouter_load" = true ]; then
     printf 'LoadCredentialEncrypted=openrouter-api-key:%s\n' "$openrouter_credential_file"
   fi
   printf 'ExecStart=%s/scripts/start-web-pc.sh\n' "$repo_dir"

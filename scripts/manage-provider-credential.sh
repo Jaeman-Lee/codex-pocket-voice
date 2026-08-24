@@ -30,6 +30,7 @@ config_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/codex-pocket-voice
 credential_dir=$config_dir/credentials.encrypted
 archive_dir=$credential_dir/archive
 credential_file=$credential_dir/$credential_name.cred
+state_file=$credential_dir/$credential_name.state
 
 if LC_ALL=C printf '%s' "$config_dir" | grep -q '[[:cntrl:]]'; then
   printf '%s\n' 'Credential path must not contain control characters.' >&2
@@ -51,6 +52,27 @@ for protected_directory in "$credential_dir" "$archive_dir"; do
 done
 chmod 700 "$config_dir" "$credential_dir" "$archive_dir"
 
+if [ -L "$state_file" ] || { [ -e "$state_file" ] && [ ! -f "$state_file" ]; }; then
+  printf '%s\n' 'Existing credential state is not a regular non-symlink file.' >&2
+  exit 1
+fi
+
+write_state() {
+  state_status=$1
+  state_generation=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+  case "$state_generation" in
+    ????????????????????????????????) ;;
+    *) printf '%s\n' 'Could not generate a credential activation ID.' >&2; exit 1 ;;
+  esac
+  case "$state_generation" in
+    *[!0-9a-f]*) printf '%s\n' 'Credential activation ID has an invalid format.' >&2; exit 1 ;;
+  esac
+  temporary_state=$(mktemp "$credential_dir/.state.XXXXXX")
+  printf '%s:%s\n' "$state_status" "$state_generation" > "$temporary_state"
+  chmod 600 "$temporary_state"
+  mv -- "$temporary_state" "$state_file"
+}
+
 archive_existing() {
   if [ ! -e "$credential_file" ] && [ ! -L "$credential_file" ]; then
     return
@@ -70,12 +92,14 @@ archive_existing() {
 }
 
 if [ "$action" = remove ]; then
+  write_state disabled
   if [ ! -e "$credential_file" ] && [ ! -L "$credential_file" ]; then
-    printf '%s\n' "$provider_label encrypted credential is already absent."
+    printf '%s\n' "$provider_label credential is disabled for new runs; no encrypted file was present."
+    printf '%s\n' 'Rerun install-linux-companion.sh before the next service activation.'
     exit 0
   fi
   archive_existing
-  printf '%s\n' "$provider_label encrypted credential was moved to the local recoverable archive."
+  printf '%s\n' "$provider_label credential is disabled for new runs and its ciphertext was archived."
   printf '%s\n' 'Rerun install-linux-companion.sh, then restart only after active turns have finished.'
   exit 0
 fi
@@ -136,8 +160,9 @@ if ! mv -- "$temporary_file" "$credential_file"; then
   exit 1
 fi
 chmod 600 "$credential_file"
+write_state enabled
 trap - EXIT HUP INT TERM
 rmdir -- "$temporary_dir"
 
-printf '%s\n' "$provider_label encrypted credential was installed without writing a plaintext key file."
+printf '%s\n' "$provider_label encrypted credential was installed and stale activations are blocked."
 printf '%s\n' 'Rerun install-linux-companion.sh, then restart only after active turns have finished.'

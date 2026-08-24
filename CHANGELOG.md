@@ -10,6 +10,15 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Provider credential activation gate는 교체·해제 후 이전 systemd runtime key로 새 run이 열릴 수 있던
+  결함을 고치는 internal compatibility `patch`다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서
+  `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
+  대체한다. APK 전달·설치, 실제 key 변경과 Companion 재시작은 하지 않으며 v1.8.2 current 후보, 별도
+  staged v1.8.3과 검증된 v1.8.1 rollback을 그대로 보존한다.
+- 0600 state의 enabled/disabled와 128-bit generation을 unit activation에 묶는다. rotate/set generation이
+  달라지는 즉시 이전 process의 새 run은 차단되고, remove는 systemd runtime·환경변수·protected file
+  fallback을 즉시 차단한다. 이미 credential을 읽은 활성 turn은 보존하며 새 key는 검토된 재시작 뒤에만
+  활성화된다. malformed·symlink·broad-mode state와 enabled 상태의 cipher 누락도 fail-closed다.
 - Linux Provider encrypted credential은 새 server credential workflow이므로 `feature`로 분류한다. 아직
   현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,
   `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. APK 전달·설치, 실제 key 설정과

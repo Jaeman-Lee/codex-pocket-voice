@@ -1,4 +1,5 @@
 import {
+  enforceProviderCredentialState,
   LinuxProviderCredentialError,
   normalizeProviderKey,
   readLinuxProviderCredential,
@@ -21,6 +22,12 @@ export class EnvironmentOpenRouterCredentialSource implements OpenRouterCredenti
 
   async load(): Promise<OpenRouterCredential | null> {
     try {
+      await enforceProviderCredentialState(
+        this.environment,
+        "OpenRouter",
+        "openrouter-api-key",
+        "CODEX_POCKET_OPENROUTER_CREDENTIAL_GENERATION",
+      );
       const credentialPath = systemdCredentialPath(this.environment, "openrouter-api-key");
       if (credentialPath) {
         const systemdKey = await readLinuxProviderCredential(credentialPath, "OpenRouter", true);

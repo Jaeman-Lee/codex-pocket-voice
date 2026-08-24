@@ -26,7 +26,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Deployed v1 Companion | 1.8.3 at `e0f6ea1` | separate versioned runtime active; completed target writer release verified |
 | OpenAI API milestone | official SDK 6.49.0 | encrypted bounded `store:false` multi-turn replay, fake tool-loop/SSE/Models tests and protected 2-call smoke harness; no API key configured and no paid request sent |
 | OpenRouter milestone | Chat Completions + user/ZDR model, endpoint and key APIs | encrypted bounded multi-turn replay, exact upstream lock/approved backup, bounded price/performance/quota UI, fake routing/tool-loop/SSE and protected 2-call smoke harness; no API key configured and no paid request sent |
-| Provider credential boundary | systemd 256+ encrypted user credential | fixed-name runtime files, no-follow/owner/mode/size validation and recoverable ciphertext rotation/removal implemented; legacy 0600 file retained |
+| Provider credential boundary | systemd 256+ encrypted user credential | fixed-name runtime files, generation-bound activation, immediate new-run revoke, no-follow/owner/mode/size validation and recoverable ciphertext rotation/removal implemented; legacy 0600 file retained |
 | Provider runtime contract | exact run ownership + ordered single-terminal events | Codex/OpenAI/OpenRouter shared success/partial-failure/cancel/timeout suite and fake 401/403/429/5xx/malformed SSE fixtures passing |
 | Android journal milestone | app-owned SQLite schema 1 | encrypted snapshot migration and rollback mirror implemented; CI-only, no device migration performed |
 | Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, HMAC-authenticated bounded user retention, workspace JSON export and protected delete implemented in v2; not field deployed |
@@ -38,6 +38,15 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, standalone Linux GO/PBC + memory-only DHCP cleanup lifecycle, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; actual P2P field validation pending |
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+Provider credential activation checkpoint decision: 이전 systemd runtime credential이 rotate/remove 뒤 새 run에
+재사용될 수 있던 결함을 고치는 internal compatibility `patch`다. 아직 현장 전달하지 않은 incompatible v2
+범위 안에서 SemVer `2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전
+CI-only candidate를 대체한다. 0600 state의 enabled/disabled와 128-bit generation을 user unit environment에
+묶어 mismatch와 revoke를 모든 Provider source보다 먼저 검사한다. rotate는 이전 activation의 새 run을,
+remove는 systemd runtime·환경변수·protected file fallback의 새 run을 즉시 차단하되 이미 시작한 turn을
+강제 종료하지 않는다. 실제 key 변경·APK 전달·설치·Companion 재시작은 수행하지 않으며 current v1 후보
+1.8.2, 별도 staged v1.8.3과 검증된 rollback 1.8.1은 그대로 보존한다.
 
 Linux Provider credential checkpoint decision: systemd encrypted credential 설정·교체·해제는 새 server credential
 workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 SemVer

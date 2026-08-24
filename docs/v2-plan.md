@@ -185,7 +185,8 @@ Provider와 fallback 범위를 명시적으로 선택한 경우에만 위 개인
   절대로 전달하지 않는다.
 - Linux 환경 변수 또는 권한 `0600`의 별도 credential 파일 호환을 유지한다.
 - systemd 256+ user service는 `LoadCredentialEncrypted=`와 `$CREDENTIALS_DIRECTORY`를 사용하고,
-  평문 파일 없는 set·recoverable rotation/removal을 지원한다.
+  평문 파일 없는 set·recoverable rotation/removal과 generation 불일치·disabled 상태의 즉시 새 run 차단을
+  지원한다. 진행 중인 turn은 명시적 취소 없이 강제 종료하지 않는다.
 - 스마트폰의 AI 연결 센터는 `설정됨/없음/검증 실패`, 계정 별명과 마지막 검증 시각만 표시한다.
 - 연결 테스트는 모델 목록과 인증 상태만 확인하고 유료 모델 요청을 보내지 않는다.
 - 로그, 오류, diagnostics와 support bundle에서 Authorization 헤더, 키 형식, 개인 경로와 요청 본문을
