@@ -553,6 +553,7 @@ function passingProviderGradeTexts(
         projectRead: "pass",
         coding: "pass",
       },
+      ...passingProviderGradeAccounting("openai"),
       evaluation: passingCodingEvaluation(),
       checkedAt,
     }),
@@ -569,6 +570,7 @@ function passingProviderGradeTexts(
         projectRead: "pass",
         coding: "pass",
       },
+      ...passingProviderGradeAccounting("openrouter"),
       evaluation: passingCodingEvaluation(),
       checkedAt,
     })) as [string, string],
@@ -586,6 +588,30 @@ function passingCodingEvaluation() {
       { name: "workspace_read", status: "completed" },
       { name: "workspace_replace_text", status: "completed" },
     ],
+  };
+}
+
+function passingProviderGradeAccounting(provider: "openai" | "openrouter") {
+  return {
+    budgetUsd: 0.05,
+    estimatedMaximumUsd: 0.026112,
+    calls: 3,
+    usage: {
+      requestCount: 3,
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 120,
+      ...(provider === "openrouter" ? { costCredits: 0.001 } : {}),
+    },
+    actualEstimatedUsd: 0.00014,
+    ...(provider === "openai" ? {
+      pricingBasis: {
+        currency: "USD",
+        inputUsdPerMillion: 1,
+        outputUsdPerMillion: 2,
+        source: "operator_reviewed",
+      },
+    } : { actualCostCredits: 0.001 }),
   };
 }
 

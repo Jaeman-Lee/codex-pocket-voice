@@ -21,7 +21,7 @@ fail-closed로 차단한다. report 원문과 비용·usage는 Gateway, SSE와 j
 ```sh
 grade_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/codex-pocket-voice/provider-grades
 install -d -m 700 "$grade_dir"
-install -m 600 /reviewed/path/openai-smoke-report.json "$grade_dir/openai-reviewed.json"
+install -m 600 /reviewed/path/openai-project-grade-report.json "$grade_dir/openai-reviewed.json"
 ```
 
 활성 run은 시작 시 고정한 권한을 유지한다. report 추가·교체·제거는 진행 중인 turn을 중단하지 않고
@@ -37,6 +37,12 @@ install -m 600 /reviewed/path/openai-smoke-report.json "$grade_dir/openai-review
 - OpenAI는 `requestedModel`과 허용된 actual snapshot을 exact model 등급에 묶는다.
 - OpenRouter는 exact model과 `requestedUpstream` tag에 묶는다. 사용자가 고른 primary/backup이 모두
   등급과 현재 endpoint `tools` 지원을 통과해야 그 교집합을 허용한다. 자동 routing은 chat-only다.
+- `projectRead` 또는 `coding` 권한을 올릴 때 Companion은 등급 문자열만 믿지 않는다. 합성 평가의 exact
+  scope·승인 문구·2/3회 요청 상한·`workspace_read`→`workspace_replace_text` 증거, 누적 token/호출 수와
+  실제 비용을 다시 계산한다. OpenAI는 `store: false`/`serviceTier: default`와 operator-reviewed 가격,
+  OpenRouter는 실제 USD credit 비용까지 일치해야 한다.
+- 프로젝트 평가 예산은 실행 경로와 report 재검증 모두 최대 `$0.05`다. 초과·누락·불일치 report 하나는
+  해당 Provider의 전체 project tool을 fail-closed로 차단한다.
 
 현재 `openai-smoke.mjs`와 `openrouter-smoke.mjs`의 synthetic 2-call report는 conversation/tool contract만
 검증하고 `projectRead`와 `coding`을 `not_tested`로 기록한다. 따라서 이 artifact를 설치해도 project

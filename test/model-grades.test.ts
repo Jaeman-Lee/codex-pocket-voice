@@ -7,6 +7,7 @@ import {
   combinedModelVerification,
   modelToolAccess,
   modelVerification,
+  parseProviderModelGradeReport,
   ProtectedProviderModelGradeSource,
   safeLoadModelGrades,
 } from "../src/providers/model-grades.js";
@@ -123,7 +124,62 @@ test("same-time conflicting reports invalidate the provider grade set", async (t
   assert.equal((await safeLoadModelGrades(source, "openai")).invalid, true);
 });
 
+test("project tool grades require exact protected evaluation, usage, and cost evidence", () => {
+  const missingEvaluation = openAIReport();
+  delete (missingEvaluation as Partial<typeof missingEvaluation>).evaluation;
+  assert.throws(
+    () => parseProviderModelGradeReport(JSON.stringify(missingEvaluation), currentTime),
+    /보호된 평가 증거가 없습니다/,
+  );
+
+  const wrongRequestLimit = openAIReport();
+  wrongRequestLimit.evaluation.maximumRequests = 2;
+  assert.throws(
+    () => parseProviderModelGradeReport(JSON.stringify(wrongRequestLimit), currentTime),
+    /요청 상한이 잘못됐습니다/,
+  );
+
+  const excessiveBudget = openRouterReport();
+  excessiveBudget.budgetUsd = 0.050001;
+  assert.throws(
+    () => parseProviderModelGradeReport(JSON.stringify(excessiveBudget), currentTime),
+    /비용 상한이 잘못됐습니다/,
+  );
+
+  const mismatchedUsageCost = openAIReport();
+  mismatchedUsageCost.actualEstimatedUsd = 0.01;
+  assert.throws(
+    () => parseProviderModelGradeReport(JSON.stringify(mismatchedUsageCost), currentTime),
+    /비용 계산이 일치하지 않습니다/,
+  );
+
+  const wrongServiceTier = openAIReport();
+  wrongServiceTier.privacyProfile.serviceTier = "flex";
+  assert.throws(
+    () => parseProviderModelGradeReport(JSON.stringify(wrongServiceTier), currentTime),
+    /privacy profile이 잘못됐습니다/,
+  );
+});
+
+test("a complete read-only evaluation grants read tools but never coding tools", () => {
+  const report = openAIReport({ coding: "not_tested" });
+  report.calls = 2;
+  report.estimatedMaximumUsd = 0.017408;
+  report.evaluation = {
+    scope: "read",
+    fixture: "ephemeral_synthetic_workspace",
+    approval: "not_required",
+    maximumRequests: 2,
+    outcome: "pass",
+    tools: [{ name: "workspace_read", status: "completed" }],
+  };
+  report.usage.requestCount = 2;
+  const parsed = parseProviderModelGradeReport(JSON.stringify(report), currentTime);
+  assert.equal(modelToolAccess(parsed.verification), "read");
+});
+
 function openAIReport(overrides: Record<string, string> = {}) {
+  const codingPassed = overrides.coding !== "fail" && overrides.coding !== "not_tested";
   return {
     schemaVersion: 1,
     provider: "openai",
@@ -138,6 +194,37 @@ function openAIReport(overrides: Record<string, string> = {}) {
       projectRead: "pass",
       coding: "pass",
       ...overrides,
+    },
+    budgetUsd: 0.05,
+    estimatedMaximumUsd: 0.026112,
+    calls: 3,
+    usage: {
+      requestCount: 3,
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 120,
+      cachedInputTokens: 0,
+      reasoningTokens: 0,
+    },
+    actualEstimatedUsd: 0.00014,
+    pricingBasis: {
+      currency: "USD",
+      inputUsdPerMillion: 1,
+      outputUsdPerMillion: 2,
+      source: "operator_reviewed",
+    },
+    evaluation: {
+      scope: "coding",
+      fixture: "ephemeral_synthetic_workspace",
+      approval: "protected_workflow_and_exact_confirmation",
+      maximumRequests: 3,
+      outcome: codingPassed ? "pass" : "contract_failed",
+      tools: codingPassed
+        ? [
+            { name: "workspace_read", status: "completed" },
+            { name: "workspace_replace_text", status: "completed" },
+          ]
+        : [{ name: "workspace_read", status: "completed" }],
     },
     checkedAt,
   };
@@ -156,6 +243,29 @@ function openRouterReport() {
       toolCalling: "pass",
       projectRead: "pass",
       coding: "pass",
+    },
+    budgetUsd: 0.05,
+    estimatedMaximumUsd: 0.026112,
+    calls: 3,
+    usage: {
+      requestCount: 3,
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 120,
+      costCredits: 0.001,
+    },
+    actualEstimatedUsd: 0.00014,
+    actualCostCredits: 0.001,
+    evaluation: {
+      scope: "coding",
+      fixture: "ephemeral_synthetic_workspace",
+      approval: "protected_workflow_and_exact_confirmation",
+      maximumRequests: 3,
+      outcome: "pass",
+      tools: [
+        { name: "workspace_read", status: "completed" },
+        { name: "workspace_replace_text", status: "completed" },
+      ],
     },
     checkedAt,
   };

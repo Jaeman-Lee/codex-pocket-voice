@@ -10,6 +10,19 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Runtime project-grade evidence validation fix는 Companion의 일반 model-grade 로더가 보호된 project
+  eval의 `projectRead`/`coding` 문자열만 검사하고 scope·승인·도구 순서·요청/token/비용 증거를 다시
+  검증하지 않아, 잘못 복사되거나 변형된 report가 프로젝트 도구 권한을 올릴 수 있던 authorization
+  공백을 고치는 internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서
+  `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
+  교체한다. 실제 Provider/field 호출, APK 전달·설치와 Companion 재시작은 하지 않으며 current v1 후보
+  1.8.2, staged v1.8.4, 검증된 1.8.1 rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- 권한 로더는 read/coding별 exact protected evaluation, 2/3회 요청 상한, `workspace_read`→
+  `workspace_replace_text` 성공 증거, 누적 usage와 최대 `$0.05` 비용을 독립적으로 확인한다. OpenAI는
+  `store:false`/`serviceTier:default`와 operator-reviewed 가격에서 실제 비용을 재계산하고, OpenRouter는
+  reported USD credit 비용을 report와 대조한다. 증거 누락·요청 상한 변조·비용 초과/불일치는 Provider의
+  project tool 전체를 fail-closed로 차단한다. `release:check`의 단위 검사 319개와 실제 app-server 통합
+  3개, production build·schema 일치·SBOM이 통과했다.
 - Provider-grade-bound release evidence fix는 기능 observation이 OpenRouter upstream 수만 기록하고 최종
   evidence CLI가 보호된 Provider grade 원문을 읽지 않아, 실제 OpenAI coding grade와 서로 다른 두
   OpenRouter upstream family의 성공 없이도 구조상 최종 gate를 통과할 수 있던 release validation 공백을

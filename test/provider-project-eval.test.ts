@@ -115,7 +115,17 @@ test("coding eval preserves a verified read grade when the model does not perfor
   assert.equal((result.report.grades as Record<string, unknown>).projectRead, "pass");
   assert.equal((result.report.grades as Record<string, unknown>).coding, "fail");
   assert.equal((result.report.evaluation as Record<string, unknown>).outcome, "contract_failed");
-  assert.doesNotMatch(await readFile(fixture.config.reportPath, "utf8"), /partial-marker/);
+  const report = await readFile(fixture.config.reportPath, "utf8");
+  assert.doesNotMatch(report, /partial-marker/);
+  const gradeDirectory = join(fixture.config.reportPath, "..", "partial-installed-grades");
+  await mkdir(gradeDirectory, { mode: 0o700 });
+  await writeFile(join(gradeDirectory, "openai-reviewed.json"), report, { mode: 0o600 });
+  const installed = await new ProtectedProviderModelGradeSource(
+    { CODEX_POCKET_PROVIDER_GRADE_DIR: gradeDirectory },
+    () => now,
+  ).load("openai");
+  assert.equal(installed[0]?.verification.projectRead, "pass");
+  assert.equal(installed[0]?.verification.coding, "fail");
 });
 
 test("coding eval rejects a missing exact confirmation before model preflight", async (t) => {
@@ -132,6 +142,24 @@ test("coding eval rejects a missing exact confirmation before model preflight", 
     }),
     (error: unknown) => error instanceof ProviderProjectEvalError
       && /confirmation is missing/.test(error.message),
+  );
+  assert.equal(adapterCreated, false);
+  await assert.rejects(readFile(fixture.config.reportPath, "utf8"), /ENOENT/);
+});
+
+test("project eval rejects a budget above the documented five-cent ceiling before model preflight", async (t) => {
+  const fixture = await evalFixture(t, "openai", "read");
+  fixture.config.budgetUsd = 0.050001;
+  let adapterCreated = false;
+  await assert.rejects(
+    runProviderProjectEval(fixture.config, {
+      now: () => now,
+      createAdapter: (context) => {
+        adapterCreated = true;
+        return new FakeEvalAdapter(context);
+      },
+    }),
+    /budget is invalid/,
   );
   assert.equal(adapterCreated, false);
   await assert.rejects(readFile(fixture.config.reportPath, "utf8"), /ENOENT/);

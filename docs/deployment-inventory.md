@@ -52,6 +52,19 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
 
+Runtime project-grade evidence checkpoint decision: Companion의 일반 model-grade 로더가 보호된 project eval의
+`projectRead`/`coding` 문자열만 검사하고 scope·승인·도구 순서·요청/token/비용 증거를 다시 검증하지 않아
+변형된 report가 프로젝트 도구 권한을 올릴 수 있던 authorization 공백을 고치므로 internal compatibility
+`patch`로 분류한다. 아직 전달하지 않은 incompatible v2 범위 안에서 SemVer `2.0.0`/Android
+`versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 교체한다.
+권한 로더는 read/coding별 exact protected evaluation, 2/3회 요청 상한, read→replace 도구 증거와 누적
+usage를 확인한다. 최대 eval 예산을 실행·report 재검증 모두 `$0.05`로 고정하고 OpenAI의
+`store:false`/`serviceTier:default` 및 operator-reviewed 비용 재계산, OpenRouter의 reported USD credit
+일치를 요구한다. 실제 field·Provider 호출, APK 전달·설치와 Companion 재시작 없이 current v1 후보
+1.8.2, staged v1.8.4, 검증된 rollback 1.8.1과 배포 중인 v1.8.3 Companion을 그대로 보존한다. 관련 타입
+검사와 `release:check`의 단위 검사 319개, 실제 app-server 통합 3개, production build·schema 일치·SBOM이
+통과했다.
+
 Provider-grade-bound release evidence checkpoint decision: 기능 observation이 OpenRouter upstream family 수만
 기록하고 최종 evidence CLI가 보호된 grade report 원문을 읽지 않아 실제 OpenAI coding grade와 서로 다른
 두 OpenRouter family가 없어도 구조상 release gate를 통과할 수 있던 validation 공백을 고치므로 internal

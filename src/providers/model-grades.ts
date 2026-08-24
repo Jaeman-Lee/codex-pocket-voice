@@ -10,6 +10,9 @@ const MAX_REPORT_FILES = 64;
 const MAX_REPORT_BYTES = 64 * 1024;
 const MAX_REPORT_AGE_MS = 30 * 24 * 60 * 60_000;
 const MAX_FUTURE_SKEW_MS = 5 * 60_000;
+const MAX_PROJECT_EVAL_BUDGET_USD = 0.05;
+const MAX_PROJECT_EVAL_INPUT_TOKENS_PER_REQUEST = 8_192;
+const MAX_PROJECT_EVAL_OUTPUT_TOKENS_PER_REQUEST = 256;
 const REPORT_FILE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,119}\.json$/;
 const MODEL_PATTERN = /^[a-z0-9][a-z0-9._:/-]{0,199}$/;
 const UPSTREAM_PATTERN = /^[a-z0-9][a-z0-9._/-]{0,119}$/;
@@ -219,7 +222,7 @@ export function parseProviderModelGradeReport(
   if (report.provider === "openai") {
     if (report.schemaVersion !== 1) throw new ProviderModelGradeError("OpenAI grade report schema가 잘못됐습니다.");
     const privacyProfile = record(report.privacyProfile);
-    if (privacyProfile?.store !== false) {
+    if (privacyProfile?.store !== false || privacyProfile.serviceTier !== "default") {
       throw new ProviderModelGradeError("OpenAI grade report의 privacy profile이 잘못됐습니다.");
     }
     const modelId = modelIdValue(report.requestedModel);
@@ -235,6 +238,7 @@ export function parseProviderModelGradeReport(
       grade(grades?.functionCalling),
       grade(grades?.statelessReplay),
     ]);
+    validateProjectGradeEvidence(report, grades, "openai");
     return normalizedRecord("openai", modelId, undefined, checkedAt, expiresAt, expired, contract, grades);
   }
   if (report.schemaVersion !== 2) throw new ProviderModelGradeError("OpenRouter grade report schema가 잘못됐습니다.");
@@ -252,6 +256,7 @@ export function parseProviderModelGradeReport(
   const upstreamId = upstreamIdValue(report.requestedUpstream);
   const grades = record(report.grades);
   const contract = contractGrade([grade(grades?.conversation), grade(grades?.toolCalling)]);
+  validateProjectGradeEvidence(report, grades, "openrouter");
   return normalizedRecord(
     "openrouter",
     modelId,
@@ -277,34 +282,196 @@ export function parseProtectedProviderCodingGradeReport(
     throw new ProviderModelGradeError("Provider coding grade report가 올바른 JSON이 아닙니다.");
   }
   const report = record(value);
-  const evaluation = record(report?.evaluation);
-  if (!evaluation || evaluation.scope !== "coding"
-      || evaluation.fixture !== "ephemeral_synthetic_workspace"
-      || evaluation.approval !== "protected_workflow_and_exact_confirmation"
-      || evaluation.maximumRequests !== 3
-      || !["pass", "contract_failed", "infrastructure_failed"].includes(String(evaluation.outcome))) {
+  const grades = record(report?.grades);
+  const evaluation = report && grades
+    ? validateProjectGradeEvidence(report, grades, normalized.providerId)
+    : null;
+  if (!evaluation || evaluation.scope !== "coding") {
     throw new ProviderModelGradeError("Provider coding grade evaluation이 잘못됐습니다.");
   }
-  if (!Array.isArray(evaluation.tools) || evaluation.tools.length > 2
-      || evaluation.tools.some((tool) => {
-        const item = record(tool);
-        return !item || Object.keys(item).sort().join(":") !== "name:status"
-          || typeof item.name !== "string" || !["workspace_read", "workspace_replace_text"].includes(item.name)
-          || typeof item.status !== "string" || !["completed", "denied", "failed"].includes(item.status);
-      })) {
-    throw new ProviderModelGradeError("Provider coding grade tool evidence가 잘못됐습니다.");
+  return normalized;
+}
+
+interface ProjectEvaluationEvidence {
+  scope: "read" | "coding";
+  outcome: "pass" | "contract_failed" | "infrastructure_failed";
+  tools: Array<{
+    name: "workspace_read" | "workspace_replace_text";
+    status: "completed" | "denied" | "failed";
+  }>;
+}
+
+function validateProjectGradeEvidence(
+  report: Record<string, unknown>,
+  grades: Record<string, unknown> | null,
+  providerId: GradedProviderId,
+): ProjectEvaluationEvidence | null {
+  const projectRead = grade(grades?.projectRead);
+  const coding = grade(grades?.coding);
+  const evaluation = record(report.evaluation);
+  if (!evaluation) {
+    if (projectRead === "pass" || coding === "pass") {
+      throw new ProviderModelGradeError("Provider project grade에 보호된 평가 증거가 없습니다.");
+    }
+    return null;
   }
-  const grades = record(report?.grades);
-  const codingPassed = grades?.projectRead === "pass" && grades.coding === "pass";
-  const exactPassingTools = evaluation.tools.length === 2
-    && record(evaluation.tools[0])?.name === "workspace_read"
-    && record(evaluation.tools[0])?.status === "completed"
-    && record(evaluation.tools[1])?.name === "workspace_replace_text"
-    && record(evaluation.tools[1])?.status === "completed";
-  if (codingPassed !== (evaluation.outcome === "pass" && exactPassingTools)) {
+  if (!exactKeys(evaluation, ["scope", "fixture", "approval", "maximumRequests", "outcome", "tools"])
+      || (evaluation.scope !== "read" && evaluation.scope !== "coding")
+      || evaluation.fixture !== "ephemeral_synthetic_workspace"
+      || !["pass", "contract_failed", "infrastructure_failed"].includes(String(evaluation.outcome))) {
+    throw new ProviderModelGradeError("Provider project grade evaluation이 잘못됐습니다.");
+  }
+  const scope = evaluation.scope;
+  const maximumRequests = scope === "read" ? 2 : 3;
+  const expectedApproval = scope === "read"
+    ? "not_required"
+    : "protected_workflow_and_exact_confirmation";
+  if (evaluation.approval !== expectedApproval || evaluation.maximumRequests !== maximumRequests) {
+    throw new ProviderModelGradeError("Provider project grade 승인 또는 요청 상한이 잘못됐습니다.");
+  }
+  if (!Array.isArray(evaluation.tools) || evaluation.tools.length > (scope === "read" ? 1 : 2)) {
+    throw new ProviderModelGradeError("Provider project grade tool evidence가 잘못됐습니다.");
+  }
+  const tools: ProjectEvaluationEvidence["tools"] = [];
+  for (const value of evaluation.tools) {
+    const item = record(value);
+    const name = item?.name;
+    const status = item?.status;
+    if (!item || !exactKeys(item, ["name", "status"])
+        || (name !== "workspace_read" && name !== "workspace_replace_text")
+        || (status !== "completed" && status !== "denied" && status !== "failed")) {
+      throw new ProviderModelGradeError("Provider project grade tool evidence가 잘못됐습니다.");
+    }
+    tools.push({ name, status });
+  }
+  const outcome = evaluation.outcome as ProjectEvaluationEvidence["outcome"];
+  const readCompleted = tools[0]?.name === "workspace_read" && tools[0].status === "completed";
+  const codingCompleted = tools.length === 2
+    && readCompleted
+    && tools[1]?.name === "workspace_replace_text"
+    && tools[1].status === "completed";
+  if (scope === "read") {
+    const readEvidencePassed = outcome === "pass" && tools.length === 1 && readCompleted;
+    if (coding !== "not_tested" || (projectRead === "pass") !== readEvidencePassed) {
+      throw new ProviderModelGradeError("Provider read grade verdict와 tool evidence가 일치하지 않습니다.");
+    }
+  } else if ((projectRead === "pass" && !readCompleted)
+      || (coding === "pass") !== (outcome === "pass" && codingCompleted)
+      || (coding === "pass" && projectRead !== "pass")) {
     throw new ProviderModelGradeError("Provider coding grade verdict와 tool evidence가 일치하지 않습니다.");
   }
-  return normalized;
+  validateProjectGradeEnvelope(report, providerId, maximumRequests, projectRead === "pass" || coding === "pass");
+  return { scope, outcome, tools };
+}
+
+function validateProjectGradeEnvelope(
+  report: Record<string, unknown>,
+  providerId: GradedProviderId,
+  maximumRequests: number,
+  grantsToolAccess: boolean,
+): void {
+  const budgetUsd = boundedNumber(report.budgetUsd, 0.0001, MAX_PROJECT_EVAL_BUDGET_USD);
+  if (budgetUsd === null) {
+    throw new ProviderModelGradeError("Provider project grade 비용 상한이 잘못됐습니다.");
+  }
+  const estimatedMaximumUsd = boundedNumber(report.estimatedMaximumUsd, 0, budgetUsd);
+  if (estimatedMaximumUsd === null) {
+    throw new ProviderModelGradeError("Provider project grade 비용 상한이 잘못됐습니다.");
+  }
+  const calls = boundedInteger(report.calls, 0, maximumRequests);
+  const usage = record(report.usage);
+  const actualEstimatedUsd = report.actualEstimatedUsd === null
+    ? null
+    : boundedNumber(report.actualEstimatedUsd, 0, budgetUsd);
+  if (calls === null || (report.usage !== null && usage === null)
+      || (report.actualEstimatedUsd !== null && actualEstimatedUsd === null)
+      || (report.usage === null) !== (report.actualEstimatedUsd === null)) {
+    throw new ProviderModelGradeError("Provider project grade usage 증거가 잘못됐습니다.");
+  }
+  let parsedUsage: {
+    requestCount: number;
+    inputTokens: number;
+    outputTokens: number;
+    costCredits?: number;
+  } | null = null;
+  if (usage) {
+    if (!allowedKeys(usage, [
+      "requestCount", "inputTokens", "outputTokens", "totalTokens",
+      "cachedInputTokens", "reasoningTokens", "costCredits",
+    ]) || !["requestCount", "inputTokens", "outputTokens", "totalTokens"].every((key) => key in usage)) {
+      throw new ProviderModelGradeError("Provider project grade usage 증거가 잘못됐습니다.");
+    }
+    const requestCount = boundedInteger(usage.requestCount, 1, maximumRequests);
+    const inputTokens = boundedInteger(
+      usage.inputTokens,
+      0,
+      maximumRequests * MAX_PROJECT_EVAL_INPUT_TOKENS_PER_REQUEST,
+    );
+    const outputTokens = boundedInteger(
+      usage.outputTokens,
+      0,
+      maximumRequests * MAX_PROJECT_EVAL_OUTPUT_TOKENS_PER_REQUEST,
+    );
+    const totalTokens = boundedInteger(
+      usage.totalTokens,
+      0,
+      maximumRequests * (
+        MAX_PROJECT_EVAL_INPUT_TOKENS_PER_REQUEST + MAX_PROJECT_EVAL_OUTPUT_TOKENS_PER_REQUEST
+      ),
+    );
+    const cachedInputTokens = usage.cachedInputTokens === undefined
+      ? undefined
+      : boundedInteger(usage.cachedInputTokens, 0, inputTokens ?? -1);
+    const reasoningTokens = usage.reasoningTokens === undefined
+      ? undefined
+      : boundedInteger(usage.reasoningTokens, 0, outputTokens ?? -1);
+    if (requestCount === null || inputTokens === null || outputTokens === null || totalTokens === null
+        || totalTokens !== inputTokens + outputTokens || requestCount !== calls
+        || cachedInputTokens === null || reasoningTokens === null) {
+      throw new ProviderModelGradeError("Provider project grade usage 증거가 잘못됐습니다.");
+    }
+    const costCredits = usage.costCredits === undefined
+      ? undefined
+      : boundedNumber(usage.costCredits, 0, budgetUsd);
+    if (costCredits === null) {
+      throw new ProviderModelGradeError("Provider project grade usage 증거가 잘못됐습니다.");
+    }
+    parsedUsage = { requestCount, inputTokens, outputTokens, ...(costCredits === undefined ? {} : { costCredits }) };
+  } else if (calls !== 0) {
+    throw new ProviderModelGradeError("Provider project grade usage 증거가 잘못됐습니다.");
+  }
+  if (providerId === "openai") {
+    const pricing = record(report.pricingBasis);
+    const inputPrice = boundedNumber(pricing?.inputUsdPerMillion, 0.000001, 1_000);
+    const outputPrice = boundedNumber(pricing?.outputUsdPerMillion, 0.000001, 1_000);
+    if (!pricing || !exactKeys(pricing, [
+      "currency", "inputUsdPerMillion", "outputUsdPerMillion", "source",
+    ]) || pricing.currency !== "USD" || pricing.source !== "operator_reviewed"
+        || inputPrice === null || outputPrice === null || parsedUsage?.costCredits !== undefined) {
+      throw new ProviderModelGradeError("OpenAI project grade 가격 증거가 잘못됐습니다.");
+    }
+    if (parsedUsage && actualEstimatedUsd !== null) {
+      const expected = parsedUsage.inputTokens * inputPrice / 1_000_000
+        + parsedUsage.outputTokens * outputPrice / 1_000_000;
+      if (Math.abs(expected - actualEstimatedUsd) > 1e-12) {
+        throw new ProviderModelGradeError("OpenAI project grade 비용 계산이 일치하지 않습니다.");
+      }
+    }
+  } else {
+    const actualCostCredits = report.actualCostCredits === null
+      ? null
+      : boundedNumber(report.actualCostCredits, 0, budgetUsd);
+    if (actualCostCredits === null && report.actualCostCredits !== null) {
+      throw new ProviderModelGradeError("OpenRouter project grade 비용 증거가 잘못됐습니다.");
+    }
+    if ((parsedUsage?.costCredits ?? null) !== actualCostCredits) {
+      throw new ProviderModelGradeError("OpenRouter project grade 비용 증거가 일치하지 않습니다.");
+    }
+  }
+  if (grantsToolAccess && (!parsedUsage || actualEstimatedUsd === null
+      || (providerId === "openrouter" && parsedUsage.costCredits === undefined))) {
+    throw new ProviderModelGradeError("Provider project grade 통과에 필요한 비용 증거가 없습니다.");
+  }
 }
 
 function normalizedRecord(
@@ -371,6 +538,27 @@ function upstreamIdValue(value: unknown): string {
 function safeProviderName(value: string): boolean {
   return value.length <= 120 && value.normalize("NFKC").trim().length > 0
     && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function boundedInteger(value: unknown, minimum: number, maximum: number): number | null {
+  return Number.isSafeInteger(value) && (value as number) >= minimum && (value as number) <= maximum
+    ? value as number
+    : null;
+}
+
+function boundedNumber(value: unknown, minimum: number, maximum: number): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= minimum && value <= maximum
+    ? value
+    : null;
+}
+
+function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  return Object.keys(value).sort().join(":") === [...expected].sort().join(":");
+}
+
+function allowedKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const set = new Set(allowed);
+  return Object.keys(value).every((key) => set.has(key));
 }
 
 function grade(value: unknown): "pass" | "not_tested" | "fail" {

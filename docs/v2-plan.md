@@ -402,8 +402,11 @@ environment reviewer와 branch policy를 먼저 적용한 뒤 environment 전용
 
 Companion은 protected report의 exact requested/actual model, contract 선행 등급과 30일 freshness를
 검사한다. `projectRead:pass`일 때만 observation 도구를, `coding:pass`까지 이어질 때만 touch-approved
-change/execution 도구를 Responses 요청에 넣는다. report가 없거나 malformed·insecure·실패·만료면
-모델은 chat-only이고 report 원문은 Gateway·SSE·export에 노출하지 않는다.
+change/execution 도구를 Responses 요청에 넣는다. 권한 로더는 pass 문자열 외에도 protected project
+evaluation의 exact scope·승인·2/3회 요청 상한·read→replace 순서, 누적 token/호출 수와 최대 $0.05 비용을
+독립적으로 다시 검사하며 OpenAI는 `store:false`/`serviceTier:default`와 operator-reviewed 가격을
+재계산한다. report가 없거나 malformed·insecure·실패·만료면 모델은 chat-only이고 report 원문은
+Gateway·SSE·export에 노출하지 않는다.
 
 완료 조건: 실제 프로젝트에서 조사 → diff 제안 → 승인된 patch → test → 결과 검토가 키 노출 없이
 한 run으로 완료된다.
