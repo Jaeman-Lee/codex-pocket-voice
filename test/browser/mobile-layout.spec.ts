@@ -105,7 +105,8 @@ test("running Codex defaults to Queue and sends Steer only after explicit select
 
   await textarea.fill("이 요청은 현재 작업 다음에 실행해 주세요.");
   await page.getByRole("button", { name: "요청을 대기열에 추가" }).click();
-  await expect(page.getByLabel("예약 요청")).toContainText("이 요청은 현재 작업 다음에 실행해 주세요.");
+  const queue = page.getByLabel("예약 요청", { exact: true });
+  await expect(queue).toContainText("이 요청은 현재 작업 다음에 실행해 주세요.");
   expect(observedSteer).toBeNull();
 
   await modes.getByRole("button", { name: /지금 방향 수정/ }).click();
@@ -116,7 +117,7 @@ test("running Codex defaults to Queue and sends Steer only after explicit select
   await expect(page.locator(".message.user").filter({
     hasText: "모바일 폭 초과를 먼저 확인하는 방향으로 바꿔 주세요.",
   })).toBeVisible();
-  await expect(page.getByLabel("예약 요청")).toContainText("대기열 1");
+  await expect(queue).toContainText("대기열 1");
   await expect(modes.getByRole("button", { name: /다음에 실행/ })).toHaveAttribute("aria-pressed", "true");
   await expectShellContained(page);
 });
