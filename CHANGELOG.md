@@ -10,6 +10,21 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- RollbackManager-bound field evidence fix는 Android의 일반 package installer가 `2.0.0`/20000에서
+  `1.8.1`/10801로의 downgrade를 허용하지 않는데도 기존 기능 observation이 rollback artifact 보존과
+  시나리오 pass만으로 복구 메커니즘·data snapshot을 구조적으로 증명하지 못하던 release gate 공백을
+  고치는 internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/
+  Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 pre-handoff functional
+  observation/report schema 2와 이전 CI-only candidate를 교체한다. 실제 APK 전달·설치·rollback,
+  Provider/field 호출과 Companion 재시작은 하지 않으며 current v1 후보 1.8.2, staged v1.8.4,
+  검증된 1.8.1 rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- functional field schema 3은 rollback 출발 identity `1.8.1`/10801, 현장 전용 Android
+  `RollbackManager`, `restore` data policy와 후보 실행 전 available snapshot 확인을 exact 구조로 요구한다.
+  inert template, 일반 downgrade·uninstall·retain/wipe 대체와 이전 schema 2는 통과하지 않는다. 실제
+  field에서는 별도 Android client가 AOSP shell rollback으로 이전 APK와 install 시점 userdata를 함께
+  복원해야 하며, 일반 사용자 배포에서 문제가 생기면 낮은 versionCode 재설치 대신 더 높은 SemVer의
+  forward fix를 사용한다. `release:check`의 단위 검사 322개와 실제 app-server 통합 3개, production
+  build·schema 일치·SBOM이 통과했다.
 - OpenRouter pricing-basis-bound Provider-grade fix는 보호된 smoke/project report가 catalog에서 계산한
   `estimatedMaximumUsd`와 `actualEstimatedUsd`를 주장하면서도 그 계산에 사용한 가격 기준을 남기지 않아,
   설치·최종 evidence parser가 token/요청 수에서 두 값을 독립적으로 재현할 수 없던 validation 공백을

@@ -511,6 +511,12 @@ function passingObservations(
     linuxCompanionCount: 2,
     androidClientCount: 2,
     openRouterUpstreamFamilyCount: 2,
+    rollback: {
+      sourceVersion: "1.8.1",
+      sourceVersionCode: 10_801,
+      mechanism: "android_rollback_manager",
+      dataPolicy: "restore",
+    },
   };
   observations.providerGradeReports = {
     openaiCodingSha256: sha256(grades.openai),
@@ -523,6 +529,7 @@ function passingObservations(
     noPrivateValuesRecorded: true,
     touchApprovalsObserved: true,
     rollbackArtifactPreverified: true,
+    rollbackSnapshotAvailableBeforeCandidateRun: true,
   };
   observations.scenarios = FUNCTIONAL_FIELD_SCENARIOS.map((id) => ({
     id,

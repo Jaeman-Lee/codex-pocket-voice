@@ -11,10 +11,11 @@
 경로의 manifest가 교체되면 최종 report를 만들지 않는다.
 Git commit과 dirty 상태도 한 porcelain-v2 snapshot으로 입력 평가 전·후에 확인한다. 두 시점 모두 signed
 candidate의 exact commit이고 clean일 때만 최종 report를 만든다.
-기능 observation schema 2가 고정한 OpenAI coding grade 한 건과 OpenRouter coding grade 두 건의 SHA-256도
+기능 observation schema 3이 고정한 OpenAI coding grade 한 건과 OpenRouter coding grade 두 건의 SHA-256도
 owner-only 원문과 대조한다. protected coding scope·승인·read→replace Tool Broker 순서·pass 등급과 field
 시작 시점의 30일 유효성을 다시 평가하고, OpenRouter requested upstream tag와 실제 provider family가 각각
-서로 달라야 한다.
+서로 달라야 한다. 기능 gate는 rollback source `1.8.1`/10801, AOSP RollbackManager `restore`와 candidate
+실행 전 available snapshot attestation도 다시 계산한다.
 고정 fingerprint는 함께 받은 인증서에서 계산하면 안 되며 이전 신뢰 설치본·Release APK 또는 별도
 신뢰 경로에서 확인해야 한다. 최종 report의 `structured_aggregate_only`는 암호 검증과 운영자 관찰을
 구조화한 증거이며 실제 Provider·물리 단말 실행을 대신하지 않는다.
@@ -71,7 +72,7 @@ npm run android:release-evidence -- \
 - pinned certificate·detached signature·APK signer·APK/SBOM hash와 byte count가 모두 유효하고, APK
   hash와 signer가 같은 열린 descriptor의 bytes에 귀속되며 verifier receipt의 manifest digest와 field
   평가에 사용한 exact bytes가 일치
-- 기능 환경·여섯 attestation·20개 scenario와 30일 freshness가 모두 pass
+- 기능 환경·일곱 attestation·20개 scenario, exact v1.8.1 RollbackManager restore와 30일 freshness가 모두 pass
 - 세 grade 원문의 SHA-256이 observation과 일치하고 protected coding evaluation과 field-start freshness가
   pass이며 OpenRouter 두 report의 exact upstream·actual provider family가 서로 다름
 - 세 Android report가 정확한 transport slot에 있고 모두 `release_gate` pass

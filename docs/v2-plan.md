@@ -25,7 +25,7 @@
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only systemd encrypted credential, 암호화 durable multi-turn, server-authored output/total token·비용 hard limit과 실제/추정 비용 accounting, model-grade 기반 read/coding tool gate, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구, 격리 npm 검증, 보호된 2-call smoke와 단계별 합성 프로젝트 grade harness 구현; 실제 모델 workflow 실행·현장 프로젝트 acceptance 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가장 비싼 승인 route 기준 사전 비용검사, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker, 보호된 synthetic smoke와 단계별 합성 프로젝트 grade harness 및 exact model/upstream grade enforcement 구현; 실제 model/upstream workflow 실행·현장 acceptance 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror와 schema 2 glossary, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, bounded syntax-highlighted old/new-line diff와 최대 8개 touch-decline same-run feedback, two-touch workspace 복구, 최대 8대의 redacted read-only Multi-Companion Fleet와 명시적 PC 전환, live branch/worktree identity와 exact normalized-cwd session scope, workspace export/protected delete, 목표 이름·pin/archive, 모바일 기본 Queue·명시적 Codex Steer, Provider 전환의 기본 빈 대화와 touch-reviewed bounded Fork, durable 기록, bounded retention 및 API 비용 정책 설정, touch-only 월 비용 확인, opt-in process-death native 알림·retained run 열기와 default-network-triggered bounded SSE reconnect, API 30 token-gated notification Intent·system-tray tap 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed, run artifact 검토/download와 allowlist-only diagnostic support bundle 구현; 실기기 multi-PC/artifact/background/locked-screen/process-kill/voice acceptance 잔여 |
-| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, durable serialized pairing/revoke/key-rotation state, observed server-pin promotion, recoverable A/B client-key rotation, two-touch exact-client revocation→native key→local target removal, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer, exact candidate/transport-bound 기능·저부하 field harness와 최종 evidence gate 구현; 실제 multi-PC 해제·P2P group formation·external edge DDoS/실부하·locked-screen/reconnect/voice 실기기 release gate 잔여 |
+| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, durable serialized pairing/revoke/key-rotation state, observed server-pin promotion, recoverable A/B client-key rotation, two-touch exact-client revocation→native key→local target removal, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer, exact candidate/transport-bound 기능·저부하 field harness, AOSP RollbackManager restore-bound 1.8.1 recovery와 최종 evidence gate 구현; 실제 multi-PC 해제·P2P group formation·external edge DDoS/실부하·locked-screen/reconnect/voice/rollback 실기기 release gate 잔여 |
 
 ## 2. 제품 정의
 
@@ -609,10 +609,12 @@ bytes가 candidate와 다르면 측정을 진행하거나 report를 만들지 �
 단말 수치는 아직 없다.
 
 기능 field harness는 먼저 별도 검증한 signed update manifest의 version/commit·manifest/APK/signer digest와
-clean checkout을 묶는다. pre-handoff schema 2는 보호된 OpenAI coding grade 한 건과 서로 다른 두
+clean checkout을 묶는다. pre-handoff schema 3은 보호된 OpenAI coding grade 한 건과 서로 다른 두
 OpenRouter coding grade 원문의 SHA-256도 고정한다. 모든 항목이 `not_run`인 owner-only 템플릿만 만들고, 실제 Android API 30+,
 Linux Companion 2대, Android client 2대, 서로 다른 OpenRouter upstream 계열 2개와 20개 고정 scenario,
-여섯 privacy/approval/rollback attestation을 모두 만족해야 aggregate report를 통과시킨다. schema에는
+일곱 privacy/approval/rollback attestation을 모두 만족해야 aggregate report를 통과시킨다. functional
+schema 3은 별도 client의 rollback source `1.8.1`/10801, AOSP `android_rollback_manager`, `restore` data
+policy와 candidate 실행 전 available snapshot 확인도 요구한다. schema에는
 device/network identifier, credential, prompt/response, 오류 원문과 자유 형식 note가 없고 결과가 30일보다
 오래되거나 후보가 다르면 거부한다. 이는 operator-attested evidence이며 실제 실행을 대신하지 않는다.
 
@@ -649,7 +651,11 @@ asset API URL·크기·SHA-256을 요구한다. 조회 결과는 10분 random to
 SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native verifier가 다시 검사한다. 세 번째
 화면 터치와 Android unknown-source/package-installer 승인을 거쳐 설치하며 시작 시·주기적·background
 조회나 무인 설치는 하지 않는다. 1.8.2에는 importer가 없으므로 최초 2.0 설치와 실제 1.8.1 rollback
-현장 검증은 release gate로 남아 있다.
+현장 검증은 release gate로 남아 있다. field rollback은 별도 API 30+ client에서 v1.8.1 위에 candidate를
+AOSP `--enable-rollback` restore policy로 설치하고, candidate 실행 전 snapshot을 확인한 뒤 exact package를
+`pm rollback-app`해 이전 APK와 install 시점 userdata를 함께 복원한다. 이는 AOSP가 testing 용도로
+정의한 shell 절차이며 일반 production installer의 downgrade로 약속하지 않는다. production 장애는
+더 높은 SemVer/versionCode의 검토된 forward fix로 복구한다.
 
 완료 조건: Termux 없이 핵심 흐름이 동작하고, 연결 실패 시 비밀정보를 노출하거나 다른 Provider로
 우회하지 않으며 1.8.1로 복구할 수 있다.
@@ -765,7 +771,7 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 
 ## 16. 공식 참고 자료
 
-기준 확인일은 2026-08-24이다. 구현을 시작할 때 API 동작과 개인정보 정책을 다시 확인한다.
+기준 확인일은 2026-08-25이다. 구현을 시작할 때 API 동작과 개인정보 정책을 다시 확인한다.
 
 - [OpenAI Responses API — response 생성, 함수 도구와 streaming](https://developers.openai.com/api/reference/cli/resources/responses/methods/create)
 - [OpenAI conversation state — `store:false` 수동 context와 응답 항목 replay](https://developers.openai.com/api/docs/guides/conversation-state)
@@ -780,3 +786,4 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - [OpenRouter usage accounting](https://openrouter.ai/docs/cookbook/administration/usage-accounting)
 - [OpenRouter router metadata](https://openrouter.ai/docs/guides/features/router-metadata)
 - [OpenRouter 데이터 수집 정책](https://openrouter.ai/docs/guides/privacy/data-collection)
+- [AOSP RollbackManager — APK·userdata restore와 testing shell commands](https://android.googlesource.com/platform/frameworks/base/+/master/services/core/java/com/android/server/rollback/README.md)

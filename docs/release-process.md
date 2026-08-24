@@ -139,8 +139,13 @@ package, 정확한 manifest 서명·APK/SBOM hash와 더 높은 versionCode를 �
   - `Download/CodexPocketVoice/current/<version>/`: 설치할 candidate APK, `SHA256SUMS`, SBOM, update manifest 묶음
   - `Download/CodexPocketVoice/rollback/<version>/`: 직전 현장 검증 APK와 대응 무결성·manifest 파일 한 세트
   - `Download/CodexPocketVoice/archive/legacy/`: 정리 전 과거 시험 APK의 임시·복구 가능한 보관
-- Android: 직전 정식 Release APK로 돌아가려면 Android가 허용하는 versionCode 정책을 따른다.
-  다운그레이드가 차단되면 앱 데이터를 보존할지 먼저 결정하고 새 수정 버전을 배포한다.
+- Android field gate: 별도 API 30+ test client에서 v1.8.1 위에 candidate를
+  `adb install --enable-rollback 0`으로 설치하고, candidate 실행 전 available snapshot을 확인한 뒤
+  `pm rollback-app`으로 이전 APK와 install 시점 userdata가 함께 복원되는지 검증한다. exact 절차와
+  금지된 대체 방식은 [기능 현장 검증](functional-field-acceptance.md)을 따른다.
+- Android production: 일반 Package Installer가 낮은 versionCode를 허용하거나 AOSP testing rollback을
+  제공한다고 가정하지 않는다. 장애 시 데이터 삭제·`install -d`를 안내하지 않고, 더 높은
+  SemVer/versionCode의 검토된 forward fix를 배포한다.
 - Linux Companion: 교체 직전 디렉터리 snapshot 한 개를 유지하고, 새 버전 검증 후 제거한다.
 - Actions artifacts는 14일 보존한다. 정식 보존은 Release assets가 담당한다.
 - private path, device/network values, credentials, signing material은 커밋하거나 Release에 첨부하지 않는다.

@@ -6,6 +6,8 @@ const MAX_OBSERVATION_BYTES = 64 * 1024;
 const MAX_REPORT_BYTES = 64 * 1024;
 const MAX_FIELD_AGE_MS = 30 * 24 * 60 * 60_000;
 const MAX_CLOCK_SKEW_MS = 5 * 60_000;
+const ROLLBACK_SOURCE_VERSION = "1.8.1";
+const ROLLBACK_SOURCE_VERSION_CODE = 10_801;
 
 export const FUNCTIONAL_FIELD_SCENARIOS = [
   "candidate_update_install",
@@ -56,7 +58,7 @@ export interface FunctionalCandidateIdentity {
 }
 
 export interface FunctionalFieldObservation {
-  schemaVersion: 2;
+  schemaVersion: 3;
   kind: "codex_pocket_functional_observations";
   candidate: {
     manifestSha256: string;
@@ -73,6 +75,12 @@ export interface FunctionalFieldObservation {
     linuxCompanionCount: number;
     androidClientCount: number;
     openRouterUpstreamFamilyCount: number;
+    rollback: {
+      sourceVersion: string;
+      sourceVersionCode: number;
+      mechanism: "not_run" | "android_rollback_manager";
+      dataPolicy: "not_run" | "restore";
+    };
   };
   providerGradeReports: {
     openaiCodingSha256: string | null;
@@ -85,6 +93,7 @@ export interface FunctionalFieldObservation {
     noPrivateValuesRecorded: boolean;
     touchApprovalsObserved: boolean;
     rollbackArtifactPreverified: boolean;
+    rollbackSnapshotAvailableBeforeCandidateRun: boolean;
   };
   scenarios: Array<{
     id: FunctionalFieldScenarioId;
@@ -103,7 +112,7 @@ interface FunctionalGateCheck {
 }
 
 export interface FunctionalFieldReport {
-  schemaVersion: 2;
+  schemaVersion: 3;
   kind: "codex_pocket_functional_acceptance";
   evidenceKind: "operator_attested_structured";
   createdAt: string;
@@ -192,7 +201,7 @@ export function createFunctionalFieldObservationTemplate(
 ): FunctionalFieldObservation {
   const canonical = canonicalTimestamp(timestamp, "Template time");
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "codex_pocket_functional_observations",
     candidate: {
       manifestSha256: candidate.manifestSha256,
@@ -206,6 +215,12 @@ export function createFunctionalFieldObservationTemplate(
       linuxCompanionCount: 0,
       androidClientCount: 0,
       openRouterUpstreamFamilyCount: 0,
+      rollback: {
+        sourceVersion: ROLLBACK_SOURCE_VERSION,
+        sourceVersionCode: ROLLBACK_SOURCE_VERSION_CODE,
+        mechanism: "not_run",
+        dataPolicy: "not_run",
+      },
     },
     providerGradeReports: {
       openaiCodingSha256: null,
@@ -218,6 +233,7 @@ export function createFunctionalFieldObservationTemplate(
       noPrivateValuesRecorded: false,
       touchApprovalsObserved: false,
       rollbackArtifactPreverified: false,
+      rollbackSnapshotAvailableBeforeCandidateRun: false,
     },
     scenarios: FUNCTIONAL_FIELD_SCENARIOS.map((id) => ({
       id,
@@ -241,7 +257,7 @@ export function parseFunctionalFieldObservation(text: string): FunctionalFieldOb
     "schemaVersion", "kind", "candidate", "testWindow", "environment", "providerGradeReports",
     "attestations", "scenarios",
   ], "Functional observations");
-  if (root.schemaVersion !== 2 || root.kind !== "codex_pocket_functional_observations") {
+  if (root.schemaVersion !== 3 || root.kind !== "codex_pocket_functional_observations") {
     throw new FunctionalFieldError("Functional observation schema is unsupported");
   }
   const candidateRecord = exactRecord(
@@ -266,9 +282,20 @@ export function parseFunctionalFieldObservation(text: string): FunctionalFieldOb
   }
   const environmentRecord = exactRecord(root.environment, [
     "physicalAndroidDevice", "androidApiLevel", "linuxCompanionCount", "androidClientCount",
-    "openRouterUpstreamFamilyCount",
+    "openRouterUpstreamFamilyCount", "rollback",
   ], "Field environment");
-  const environment = {
+  const rollbackRecord = exactRecord(environmentRecord.rollback, [
+    "sourceVersion", "sourceVersionCode", "mechanism", "dataPolicy",
+  ], "Rollback environment");
+  const rollbackMechanism = rollbackRecord.mechanism;
+  if (rollbackMechanism !== "not_run" && rollbackMechanism !== "android_rollback_manager") {
+    throw new FunctionalFieldError("Rollback mechanism is invalid");
+  }
+  const rollbackDataPolicy = rollbackRecord.dataPolicy;
+  if (rollbackDataPolicy !== "not_run" && rollbackDataPolicy !== "restore") {
+    throw new FunctionalFieldError("Rollback data policy is invalid");
+  }
+  const environment: FunctionalFieldObservation["environment"] = {
     physicalAndroidDevice: strictBoolean(environmentRecord.physicalAndroidDevice, "Physical-device state"),
     androidApiLevel: strictInteger(environmentRecord.androidApiLevel, 0, 100, "Android API level"),
     linuxCompanionCount: strictInteger(environmentRecord.linuxCompanionCount, 0, 8, "Linux Companion count"),
@@ -279,6 +306,17 @@ export function parseFunctionalFieldObservation(text: string): FunctionalFieldOb
       8,
       "OpenRouter upstream family count",
     ),
+    rollback: {
+      sourceVersion: requiredString(rollbackRecord.sourceVersion, /^\d+\.\d+\.\d+$/, "Rollback source version"),
+      sourceVersionCode: strictInteger(
+        rollbackRecord.sourceVersionCode,
+        1,
+        Number.MAX_SAFE_INTEGER,
+        "Rollback source version code",
+      ),
+      mechanism: rollbackMechanism,
+      dataPolicy: rollbackDataPolicy,
+    },
   };
   const providerGradeRecord = exactRecord(root.providerGradeReports, [
     "openaiCodingSha256", "openRouterCodingSha256",
@@ -303,6 +341,7 @@ export function parseFunctionalFieldObservation(text: string): FunctionalFieldOb
   const attestationRecord = exactRecord(root.attestations, [
     "signedBundleVerified", "candidateIdentityMatched", "providerSecretsStayedOnCompanion",
     "noPrivateValuesRecorded", "touchApprovalsObserved", "rollbackArtifactPreverified",
+    "rollbackSnapshotAvailableBeforeCandidateRun",
   ], "Field attestations");
   const attestations = {
     signedBundleVerified: strictBoolean(attestationRecord.signedBundleVerified, "Signed-bundle attestation"),
@@ -316,6 +355,10 @@ export function parseFunctionalFieldObservation(text: string): FunctionalFieldOb
     rollbackArtifactPreverified: strictBoolean(
       attestationRecord.rollbackArtifactPreverified,
       "Rollback attestation",
+    ),
+    rollbackSnapshotAvailableBeforeCandidateRun: strictBoolean(
+      attestationRecord.rollbackSnapshotAvailableBeforeCandidateRun,
+      "Rollback snapshot attestation",
     ),
   };
   if (!Array.isArray(root.scenarios) || root.scenarios.length !== FUNCTIONAL_FIELD_SCENARIOS.length) {
@@ -366,7 +409,7 @@ export function parseFunctionalFieldObservation(text: string): FunctionalFieldOb
     throw new FunctionalFieldError("Functional scenario list is incomplete");
   }
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "codex_pocket_functional_observations",
     candidate,
     testWindow,
@@ -406,6 +449,18 @@ export function evaluateFunctionalFieldAcceptance(
     minimumCheck("linux_companion_count", observations.environment.linuxCompanionCount, 2),
     minimumCheck("android_client_count", observations.environment.androidClientCount, 2),
     minimumCheck("openrouter_upstream_family_count", observations.environment.openRouterUpstreamFamilyCount, 2),
+    exactCheck("rollback_source_version", observations.environment.rollback.sourceVersion, ROLLBACK_SOURCE_VERSION),
+    exactCheck(
+      "rollback_source_version_code",
+      observations.environment.rollback.sourceVersionCode,
+      ROLLBACK_SOURCE_VERSION_CODE,
+    ),
+    exactCheck(
+      "rollback_mechanism",
+      observations.environment.rollback.mechanism,
+      "android_rollback_manager",
+    ),
+    exactCheck("rollback_data_policy", observations.environment.rollback.dataPolicy, "restore"),
     booleanCheck("openai_coding_grade_bound", observations.providerGradeReports.openaiCodingSha256 !== null),
     minimumCheck(
       "openrouter_coding_grade_count",
@@ -424,7 +479,7 @@ export function evaluateFunctionalFieldAcceptance(
   ];
   const passed = checks.every((check) => check.outcome === "pass");
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "codex_pocket_functional_acceptance",
     evidenceKind: "operator_attested_structured",
     createdAt: new Date(now).toISOString(),
@@ -593,6 +648,10 @@ function booleanCheck(metric: string, observed: boolean): FunctionalGateCheck {
 
 function minimumCheck(metric: string, observed: number, requirement: number): FunctionalGateCheck {
   return { metric, outcome: observed >= requirement ? "pass" : "fail", observed, requirement };
+}
+
+function exactCheck(metric: string, observed: number | string, requirement: number | string): FunctionalGateCheck {
+  return { metric, outcome: observed === requirement ? "pass" : "fail", observed, requirement };
 }
 
 function boundedText(value: string, maximum: number, label: string): void {

@@ -55,7 +55,7 @@ test("functional field gate binds every passing scenario to one signed candidate
   );
 
   assert.equal(report.gate.passed, true);
-  assert.equal(report.schemaVersion, 2);
+  assert.equal(report.schemaVersion, 3);
   assert.equal(report.gate.outcome, "passed");
   assert.equal(report.gate.requiredScenarioCount, FUNCTIONAL_FIELD_SCENARIOS.length);
   assert.equal(report.gate.passedScenarioCount, FUNCTIONAL_FIELD_SCENARIOS.length);
@@ -81,6 +81,12 @@ test("functional field template is inert and every missing or failed scenario fa
     openaiCodingSha256: null,
     openRouterCodingSha256: [null, null],
   });
+  assert.deepEqual(template.environment.rollback, {
+    sourceVersion: "1.8.1",
+    sourceVersionCode: 10_801,
+    mechanism: "not_run",
+    dataPolicy: "not_run",
+  });
 
   const templateReport = evaluateFunctionalFieldAcceptance(
     manifest,
@@ -95,6 +101,9 @@ test("functional field template is inert and every missing or failed scenario fa
   )));
   assert.ok(templateReport.gate.checks.some((check) => (
     check.metric === "openai_coding_grade_bound" && check.outcome === "fail"
+  )));
+  assert.ok(templateReport.gate.checks.some((check) => (
+    check.metric === "rollback_mechanism" && check.outcome === "fail"
   )));
 
   const observations = passingObservations();
@@ -111,6 +120,55 @@ test("functional field template is inert and every missing or failed scenario fa
   );
   assert.equal(failed.gate.passed, false);
   assert.deepEqual(failed.gate.failedScenarioIds, [FUNCTIONAL_FIELD_SCENARIOS[3]]);
+
+  const unsafeRollback = passingObservations();
+  unsafeRollback.environment.rollback.mechanism = "not_run";
+  unsafeRollback.environment.rollback.dataPolicy = "not_run";
+  const unsafeRollbackReport = evaluateFunctionalFieldAcceptance(
+    manifest,
+    canonicalJson(unsafeRollback),
+    source,
+    Date.parse("2026-08-25T02:00:00.000Z"),
+  );
+  assert.equal(unsafeRollbackReport.gate.passed, false);
+  assert.ok(unsafeRollbackReport.gate.checks.some((check) => (
+    check.metric === "rollback_mechanism" && check.outcome === "fail"
+  )));
+
+  const wrongRollbackSource = passingObservations();
+  wrongRollbackSource.environment.rollback.sourceVersionCode = 10_802;
+  const wrongRollbackSourceReport = evaluateFunctionalFieldAcceptance(
+    manifest,
+    canonicalJson(wrongRollbackSource),
+    source,
+    Date.parse("2026-08-25T02:00:00.000Z"),
+  );
+  assert.equal(wrongRollbackSourceReport.gate.passed, false);
+  assert.ok(wrongRollbackSourceReport.gate.checks.some((check) => (
+    check.metric === "rollback_source_version_code" && check.outcome === "fail"
+  )));
+
+  const missingRollbackSnapshot = passingObservations();
+  missingRollbackSnapshot.attestations.rollbackSnapshotAvailableBeforeCandidateRun = false;
+  const missingRollbackSnapshotReport = evaluateFunctionalFieldAcceptance(
+    manifest,
+    canonicalJson(missingRollbackSnapshot),
+    source,
+    Date.parse("2026-08-25T02:00:00.000Z"),
+  );
+  assert.equal(missingRollbackSnapshotReport.gate.passed, false);
+  assert.ok(missingRollbackSnapshotReport.gate.checks.some((check) => (
+    check.metric === "attestation:rollbackSnapshotAvailableBeforeCandidateRun" && check.outcome === "fail"
+  )));
+
+  const uninstallRollback = passingObservations() as unknown as {
+    environment: { rollback: { mechanism: string } };
+  };
+  uninstallRollback.environment.rollback.mechanism = "uninstall_keep_data";
+  assert.throws(
+    () => parseFunctionalFieldObservation(canonicalJson(uninstallRollback)),
+    /Rollback mechanism is invalid/,
+  );
 });
 
 test("functional observations reject candidate drift, freeform fields, duplicates, and invalid time evidence", () => {
@@ -149,7 +207,7 @@ test("functional observations reject candidate drift, freeform fields, duplicate
   );
 
   const legacy = passingObservations() as unknown as { schemaVersion: number };
-  legacy.schemaVersion = 1;
+  legacy.schemaVersion = 2;
   assert.throws(
     () => parseFunctionalFieldObservation(canonicalJson(legacy)),
     /schema is unsupported/,
@@ -218,6 +276,12 @@ function passingObservations(): FunctionalFieldObservation {
     linuxCompanionCount: 2,
     androidClientCount: 2,
     openRouterUpstreamFamilyCount: 2,
+    rollback: {
+      sourceVersion: "1.8.1",
+      sourceVersionCode: 10_801,
+      mechanism: "android_rollback_manager",
+      dataPolicy: "restore",
+    },
   };
   observations.providerGradeReports = {
     openaiCodingSha256: "e".repeat(64),
@@ -230,6 +294,7 @@ function passingObservations(): FunctionalFieldObservation {
     noPrivateValuesRecorded: true,
     touchApprovalsObserved: true,
     rollbackArtifactPreverified: true,
+    rollbackSnapshotAvailableBeforeCandidateRun: true,
   };
   observations.scenarios = FUNCTIONAL_FIELD_SCENARIOS.map((id) => ({
     id,
