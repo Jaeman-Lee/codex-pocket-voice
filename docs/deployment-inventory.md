@@ -52,14 +52,29 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
 
+Protected Provider execution gate checkpoint decision: 보호 environment가 실제로 구성되기 전에 저장소 수준
+API key만으로 명시적 smoke dispatch가 실행될 수 있던 release validation 경계를 고치므로 internal
+compatibility `patch`로 분류한다. 아직 전달하지 않은 incompatible v2 범위 안에서 SemVer `2.0.0`/Android
+`versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
+environment reviewer와 branch policy를 먼저 설정한 뒤 environment 전용
+`PROVIDER_SMOKE_ENVIRONMENT_READY=PROTECTED_PROVIDER_SMOKE_V1` variable과 dispatch의 exact
+`RUN_BOUNDED_PROVIDER_SMOKE` 확인문이 모두 있어야 하며, 하나라도 없으면 checkout과 inference 전에
+실패한다. 일반 push/PR과 `provider=none` dispatch는 Provider 호출을 실행하지 않고 reusable Provider
+job을 `skipped`로 기록한다. 현재 GitHub에는 이 environment·준비 표식·Provider API key·model allowlist가
+없어 실제 유료 요청은 보내지 않았다. APK 전달·설치와 Companion 재시작 없이 current v1 후보 1.8.2,
+staged v1.8.4, 검증된 rollback 1.8.1과 배포 중인 v1.8.3 Companion을 그대로 보존한다.
+`release:check`의 단위 검사 306개와 실제 app-server 통합 3개, production build·schema 일치·SBOM이
+통과했다.
+
 Pre-merge Provider smoke dispatch checkpoint decision: v2 feature branch에만 있는 standalone manual workflow는
 GitHub의 default-branch 등록 조건 때문에 PR field acceptance 전에 dispatch할 수 없던 release validation
 deadlock을 고치는 internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 SemVer
 `2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
 대체한다. default branch에 이미 등록된 Linux checks workflow에 명시적 `none`/`openai`/`openrouter`
 dispatcher를 추가하고, 기본 `none`, 기존 Node 검사 성공, exact provider 조건 뒤에만 reusable smoke를
-호출한다. 일반 push/PR은 Provider job을 만들지 않으며 OpenAI/OpenRouter 유료 smoke concurrency는 각각
-한 건으로 제한한다. 현재 GitHub에는 Provider API key·model allowlist variable과 `provider-smoke`
+호출한다. 일반 push/PR과 `none` dispatch는 Provider 호출을 실행하지 않고 reusable job을 `skipped`로
+기록하며 OpenAI/OpenRouter 유료 smoke concurrency는 각각 한 건으로 제한한다. 현재 GitHub에는 Provider
+API key·model allowlist variable과 `provider-smoke`
 environment 보호 규칙이 없으므로 실제 dispatch·유료 요청은 하지 않았다. APK 전달·설치와 Companion
 재시작 없이 current v1 후보 1.8.2, staged v1.8.4, 검증된 rollback 1.8.1과 배포 중인 v1.8.3 Companion을
 그대로 보존한다. `release:check`의 단위 검사 306개와 실제 app-server 통합 3개, production build·schema

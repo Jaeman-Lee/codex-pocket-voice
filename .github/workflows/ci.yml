@@ -44,6 +44,10 @@ on:
         description: For coding only, enter APPROVE_SYNTHETIC_CODING_EVAL
         required: false
         type: string
+      execution_confirmation:
+        description: For a Provider smoke, enter RUN_BOUNDED_PROVIDER_SMOKE
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -87,6 +91,7 @@ jobs:
       output_usd_per_mtok: ${{ inputs.output_usd_per_mtok }}
       project_scope: ${{ inputs.project_scope }}
       coding_confirmation: ${{ inputs.coding_confirmation }}
+      execution_confirmation: ${{ inputs.execution_confirmation }}
     secrets: inherit
 
   openrouter-smoke:
@@ -99,4 +104,5 @@ jobs:
       upstream: ${{ inputs.upstream }}
       project_scope: ${{ inputs.project_scope }}
       coding_confirmation: ${{ inputs.coding_confirmation }}
+      execution_confirmation: ${{ inputs.execution_confirmation }}
     secrets: inherit

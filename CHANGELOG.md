@@ -10,6 +10,18 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Protected Provider execution gate fix는 `provider-smoke` environment가 실제로 보호되기 전에 저장소
+  수준 API key만으로 명시적 dispatch가 실행될 수 있던 release validation 경계를 고치는 internal
+  compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
+  `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. 실제
+  Provider 호출·APK 전달·설치·Companion 재시작은 하지 않으며 current v1 후보 1.8.2, staged v1.8.4,
+  검증된 1.8.1 rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- 보호된 실행은 environment reviewer와 branch policy를 먼저 설정한 뒤 environment 전용
+  `PROVIDER_SMOKE_ENVIRONMENT_READY=PROTECTED_PROVIDER_SMOKE_V1` variable과 dispatch의 exact
+  `RUN_BOUNDED_PROVIDER_SMOKE` 확인문을 모두 요구한다. 하나라도 없으면 checkout·dependency 설치·
+  inference 전에 실패한다. 일반 push/PR과 `provider=none` dispatch는 Provider 호출을 실행하지 않고
+  reusable Provider job을 `skipped`로 기록한다. `release:check`의 단위 검사 306개와 실제 app-server
+  통합 3개, production build·schema 일치·SBOM이 통과했다.
 - Pre-merge Provider smoke dispatch bridge는 v2 브랜치에만 있는 standalone `workflow_dispatch`가 GitHub
   default-branch 등록 규칙 때문에 field acceptance 전에 실행될 수 없던 release validation deadlock을
   고치는 internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/
@@ -18,8 +30,9 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   v1.8.4, 검증된 1.8.1 rollback과 배포 중인 v1.8.3 Companion을 보존한다.
 - default branch에 이미 등록된 Linux checks workflow가 `provider=none`을 기본값으로 유지하고, 명시적
   `openai`/`openrouter` dispatch와 기존 Node 검사 성공 뒤에만 reusable protected smoke를 호출한다.
-  일반 push/PR과 `none` dispatch는 API key를 참조하거나 Provider job을 만들지 않는다. 두 Provider job은
-  동시 유료 실행을 직렬화하고 기존 `provider-smoke` environment·exact allowlist·비용 상한을 유지한다.
+  일반 push/PR과 `none` dispatch는 API key를 참조하거나 Provider 호출을 실행하지 않고 reusable job을
+  `skipped`로 기록한다. 두 Provider job은 동시 유료 실행을 직렬화하고 기존 `provider-smoke`
+  environment·exact allowlist·비용 상한을 유지한다.
   `release:check`의 단위 검사 306개와 실제 app-server 통합 3개, production build·schema 일치·SBOM이
   통과했다.
 - Exact-head Android candidate fix는 PR artifact가 feature head 대신 GitHub 임시 merge commit을 build하고

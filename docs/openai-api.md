@@ -75,7 +75,8 @@ default branch에 없을 때는 이미 등록된 `Linux checks` workflow를 `fea
 standalone workflow도 직접 실행할 수 있다. GitHub `provider-smoke` environment에 승인자를 지정하고,
 그 environment에 `OPENAI_API_KEY` secret과
 쉼표로 구분한 exact `OPENAI_SMOKE_MODELS` variable을 설정한 뒤에만 실행한다. environment의 배포
-브랜치 제한도 `main`과 검토된 기능 브랜치로 좁힌다.
+브랜치 제한도 `main`과 검토된 기능 브랜치로 좁힌다. 승인자와 브랜치 제한을 먼저 저장한 다음에만
+같은 environment에 `PROVIDER_SMOKE_ENVIRONMENT_READY=PROTECTED_PROVIDER_SMOKE_V1` variable을 추가한다.
 
 ```sh
 gh workflow run ci.yml --ref feature/v2-control-plane \
@@ -83,11 +84,13 @@ gh workflow run ci.yml --ref feature/v2-control-plane \
   -f model=EXACT_ALLOWLISTED_MODEL \
   -f input_usd_per_mtok=OPERATOR_REVIEWED_PRICE \
   -f output_usd_per_mtok=OPERATOR_REVIEWED_PRICE \
-  -f project_scope=none
+  -f project_scope=none \
+  -f execution_confirmation=RUN_BOUNDED_PROVIDER_SMOKE
 ```
 
-dispatcher 기본값 `provider=none`과 일반 push/PR은 Provider job을 만들지 않는다. key·allowlist·가격 입력이
-없거나 잘못되면 inference 전에 실패한다.
+dispatcher 기본값 `provider=none`과 일반 push/PR은 Provider 호출을 실행하지 않고 reusable Provider job을
+`skipped`로 기록한다. 보호 environment 준비 표식·exact 실행 확인문·key·allowlist·가격 입력이 없거나
+잘못되면 checkout 또는 inference 전에 실패한다.
 
 실행자는 모델 ID와 실행 시점의 공식 가격표에서 직접 확인한 input/output USD per million token을
 입력한다. 하네스는 모델을 exact allowlist 및 Models API로 먼저 확인하고 다음 두 Responses 호출만

@@ -16,6 +16,9 @@ on:
         required: false
         default: ""
         type: string
+      execution_confirmation:
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       model:
@@ -39,6 +42,10 @@ on:
         description: For coding only, enter APPROVE_SYNTHETIC_CODING_EVAL
         required: false
         type: string
+      execution_confirmation:
+        description: Enter RUN_BOUNDED_PROVIDER_SMOKE
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -58,7 +65,15 @@ jobs:
       OPENROUTER_SMOKE_MODEL: ${{ inputs.model }}
       OPENROUTER_SMOKE_UPSTREAM: ${{ inputs.upstream }}
       OPENROUTER_SMOKE_MAX_USD: "0.02"
+      PROVIDER_SMOKE_ENVIRONMENT_READY: ${{ vars.PROVIDER_SMOKE_ENVIRONMENT_READY }}
     steps:
+      - name: Verify protected execution gate
+        env:
+          PROVIDER_SMOKE_EXECUTION_CONFIRMATION: ${{ inputs.execution_confirmation }}
+        run: |
+          test "$PROVIDER_SMOKE_ENVIRONMENT_READY" = "PROTECTED_PROVIDER_SMOKE_V1"
+          test "$PROVIDER_SMOKE_EXECUTION_CONFIRMATION" = "RUN_BOUNDED_PROVIDER_SMOKE"
+
       - name: Check out source
         uses: actions/checkout@v7
 

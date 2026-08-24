@@ -19,6 +19,10 @@ test("registered Linux workflow dispatches no Provider unless one is explicitly 
   assert.match(workflow, /needs: test\n    if:/g);
   assert.equal(workflow.match(/secrets: inherit/g)?.length, 2);
   assert.equal(workflow.match(/uses: \.\/\.github\/workflows\/(?:openai|openrouter)-smoke\.yml/g)?.length, 2);
+  assert.equal(
+    workflow.match(/execution_confirmation: \$\{\{ inputs\.execution_confirmation \}\}/g)?.length,
+    2,
+  );
   assert.doesNotMatch(workflow, /OPENAI_API_KEY|OPENROUTER_API_KEY/);
 });
 
@@ -34,6 +38,14 @@ test("Provider smoke workflows are reusable, serialized, and retain protected en
     assert.match(workflow, /environment: provider-smoke/);
     assert.match(workflow, new RegExp(`group: ${provider}-protected-smoke`));
     assert.match(workflow, /cancel-in-progress: false/);
+    assert.match(workflow, /PROVIDER_SMOKE_ENVIRONMENT_READY: \$\{\{ vars\.PROVIDER_SMOKE_ENVIRONMENT_READY \}\}/);
+    assert.match(workflow, /PROVIDER_SMOKE_EXECUTION_CONFIRMATION: \$\{\{ inputs\.execution_confirmation \}\}/);
+    assert.match(workflow, /test "\$PROVIDER_SMOKE_ENVIRONMENT_READY" = "PROTECTED_PROVIDER_SMOKE_V1"/);
+    assert.match(workflow, /test "\$PROVIDER_SMOKE_EXECUTION_CONFIRMATION" = "RUN_BOUNDED_PROVIDER_SMOKE"/);
+    assert.ok(
+      workflow.indexOf("Verify protected execution gate") < workflow.indexOf("Check out source"),
+      `${provider} must fail before checkout or inference when the protected environment is not ready`,
+    );
   }
   assert.match(openai, /OPENAI_API_KEY: \$\{\{ secrets\.OPENAI_API_KEY \}\}/);
   assert.match(openrouter, /OPENROUTER_API_KEY: \$\{\{ secrets\.OPENROUTER_API_KEY \}\}/);
