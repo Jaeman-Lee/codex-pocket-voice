@@ -158,6 +158,10 @@ export interface RunCoordinatorOptions {
   assertWorkspace?: (cwd: string) => void;
   stateStore?: RunStateStore;
   policyGuard?: CostAndPolicyGuard;
+  finalizeResult?: (
+    operation: Readonly<RunOperation>,
+    result: Record<string, unknown>,
+  ) => Promise<Record<string, unknown>>;
 }
 
 interface IdempotencyEntry {
@@ -195,6 +199,7 @@ export class RunCoordinator {
   private readonly assertWorkspace: (cwd: string) => void;
   private readonly stateStore?: RunStateStore;
   private readonly policyGuard?: CostAndPolicyGuard;
+  private readonly finalizeResult?: RunCoordinatorOptions["finalizeResult"];
   private readonly unsubscribeProvider: () => void;
   private closed = false;
 
@@ -209,6 +214,7 @@ export class RunCoordinator {
     this.assertWorkspace = options.assertWorkspace ?? (() => undefined);
     this.stateStore = options.stateStore;
     this.policyGuard = options.policyGuard;
+    this.finalizeResult = options.finalizeResult;
     const restored = this.stateStore?.load();
     for (const operation of restored?.operations ?? []) {
       this.assertWorkspace(operation.cwd);
@@ -660,11 +666,22 @@ export class RunCoordinator {
     try {
       const completed = await begun.completion;
       if (this.closed) return;
-      operation.status = completed.status;
-      operation.completedAt = new Date(this.now()).toISOString();
-      operation.result = operation.runPolicy && this.policyGuard
+      const completedAt = new Date(this.now()).toISOString();
+      const accountedResult = operation.runPolicy && this.policyGuard
         ? this.policyGuard.accountResult(operation.runPolicy, completed.result)
         : completed.result;
+      const finalizingOperation = cloneOperation({
+        ...operation,
+        status: completed.status,
+        completedAt,
+      });
+      const finalizedResult = this.finalizeResult
+        ? await this.finalizeResult(finalizingOperation, accountedResult)
+        : accountedResult;
+      if (this.closed) return;
+      operation.status = completed.status;
+      operation.completedAt = completedAt;
+      operation.result = finalizedResult;
       if (completed.status === "failed") operation.error = providerFailureMessage(completed.result);
       else delete operation.error;
       if (completed.status === "completed" && completed.resumeState) {

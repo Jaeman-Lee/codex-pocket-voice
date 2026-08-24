@@ -26,6 +26,19 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   공통 지시하며, 거절된 도구는 실행하지 않는다. resolution은 기존 암호화 Companion journal에 남고
   native 알림에는 피드백·경로·code를 내리지 않는다. diff header 주입을 막기 위해 workspace 변경 경로의
   제어문자도 승인 생성 전에 거절한다.
+- Run artifact review는 완료 작업에서 test/log/image/APK를 검토·다운로드하는 새 user-visible
+  workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서
+  `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
+  대체한다. APK 전달·설치, 실제 Provider 호출과 실행 중 Companion 재시작은 하지 않으며 current v1
+  후보 1.8.2, staged v1.8.4와 검증된 v1.8.1 rollback을 그대로 보존한다.
+- OpenAI/OpenRouter의 격리된 `project_verify` stdout/stderr와 Codex command output은 비밀값을 다시
+  마스킹한 immutable log snapshot으로 분리한다. run이 변경으로 보고한 프로젝트 내부 regular file 중
+  bounded test report, raster image와 APK만 최대 8개·총 256 MiB까지 owner-private 저장소로 복사한다.
+  상대 경로 이탈, symlink, 민감 경로, 허용되지 않은 확장자와 변경 중인 파일은 제외한다.
+- operation에는 opaque ID, 이름, kind, MIME, 크기, SHA-256과 bounded text preview만 암호화해 남긴다.
+  다운로드는 인증된 exact operation/artifact route만 허용하고 원래 workspace 경로나 임의 파일 탐색 API를
+  제공하지 않는다. 프로젝트 기록을 명시적으로 삭제하면 연결된 snapshot도 함께 삭제한다. 모바일 카드는
+  320px에서 test/log preview와 image/APK 메타데이터·checksum·다운로드를 내부 wrap/scroll로 표시한다.
 - Spoken settings touch review는 프로젝트·AI 연결·모델을 음성으로 선택하는 새 user-visible workflow이므로
   `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
   `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.

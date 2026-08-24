@@ -16,6 +16,71 @@ test("the paired shell stays inside 320, 360, and 412px portrait viewports", asy
   }
 });
 
+test("run test logs and APK artifacts stay reviewable and downloadable at 320px", async ({ page }) => {
+  const createdAt = new Date().toISOString();
+  await page.route("**/api/runs", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", json: {
+      operations: [{
+        id: "browser-artifact-operation",
+        providerId: "openai",
+        conversationId: "browser-artifact-conversation",
+        runId: "browser-artifact-run",
+        cwd: "/workspace/mobile-fixture",
+        prompt: "모바일 산출물 검토",
+        model: "browser-model",
+        status: "completed",
+        startedAt: createdAt,
+        completedAt: createdAt,
+        result: {
+          finalResponse: "검증 완료",
+          artifacts: [{
+            id: "00000000-0000-4000-8000-000000000001",
+            name: "npm-test-passed.log",
+            kind: "test",
+            mimeType: "text/plain; charset=utf-8",
+            size: 24,
+            sha256: "a".repeat(64),
+            createdAt,
+            preview: "42 checks passed\n0 failed",
+          }, {
+            id: "00000000-0000-4000-8000-000000000002",
+            name: "app-release.apk",
+            kind: "apk",
+            mimeType: "application/vnd.android.package-archive",
+            size: 12_582_912,
+            sha256: "b".repeat(64),
+            createdAt,
+          }],
+        },
+      }],
+    } });
+  });
+  await page.route("**/api/runs/browser-artifact-operation/artifacts/*", (route) => route.fulfill({
+    status: 200,
+    contentType: "text/plain",
+    body: "42 checks passed\n0 failed",
+  }));
+  await bootPairedApp(page, { width: 320, height: 740 });
+  await page.getByRole("button", { name: "프로젝트 작업 대시보드 열기" }).click();
+  const dashboard = page.getByRole("dialog", { name: "작업 대시보드" });
+  const artifacts = dashboard.getByLabel("작업 테스트 로그와 산출물");
+  await expect(artifacts).toContainText("npm-test-passed.log");
+  await expect(artifacts).toContainText("app-release.apk");
+  await artifacts.getByText("테스트 결과 보기").click();
+  await expect(artifacts).toContainText("42 checks passed");
+  await expectElementContained(page, artifacts);
+  const testDownload = artifacts.getByRole("button", { name: "다운로드" }).first();
+  await expectElementContained(page, testDownload);
+  const downloadEvent = page.waitForEvent("download");
+  await testDownload.click();
+  expect((await downloadEvent).suggestedFilename()).toBe("npm-test-passed.log");
+  await expectShellContained(page);
+});
+
 test("project speech terms stay encrypted, persist across reload, and fit a 320px composer", async ({ page }) => {
   await bootPairedApp(page, { width: 320, height: 740 });
 

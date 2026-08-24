@@ -164,6 +164,7 @@ import type {
   ProviderResponse,
   QueuedPrompt,
   RunResult,
+  RunArtifact,
   RunPolicyConfig,
   RunPolicyConfigLimits,
   RunForkPreview,
@@ -4113,6 +4114,27 @@ export function App() {
     }
   }
 
+  async function downloadRunArtifact(operation: Operation, artifact: RunArtifact) {
+    let objectUrl = "";
+    try {
+      const blob = await apiBlob(
+        `/api/runs/${encodeURIComponent(operation.id)}/artifacts/${encodeURIComponent(artifact.id)}`,
+      );
+      objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = safeFilename(artifact.name);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      showToast(`${artifact.name} 산출물을 내려받았습니다.`);
+    } catch (error) {
+      showToast(errorMessage(error));
+    } finally {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    }
+  }
+
   async function updateCompanionJournalPolicy(policy: JournalPolicy) {
     if (updatingJournalPolicy) return false;
     const requestedDevice = deviceRef.current;
@@ -4466,6 +4488,7 @@ export function App() {
           onDecision={(approval, decision, feedback) => void decideApproval(approval, decision, feedback)}
           onExportWorkspace={exportCompanionJournal}
           onDeleteWorkspaceHistory={deleteCompanionJournal}
+          onDownloadArtifact={downloadRunArtifact}
         />
       )}
 

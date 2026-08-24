@@ -773,11 +773,26 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.doesNotMatch(liveNotificationInitial, /"type":"work_notification"/);
 
   fake.unsubscribeFailures = 1;
-  fake.finish("interrupted");
+  fake.finish("interrupted", true);
   await waitFor(async () => {
     const operation = await jsonFetch(`${base}/api/runs/${operationId}`, { headers: authorized() });
     return operation.operation.status === "interrupted";
   });
+  const artifactOperation = await jsonFetch(`${base}/api/runs/${operationId}`, { headers: authorized() });
+  assert.equal(artifactOperation.operation.result.artifacts.length, 1);
+  assert.equal(artifactOperation.operation.result.artifacts[0].kind, "log");
+  assert.match(artifactOperation.operation.result.artifacts[0].preview, /synthetic command output/);
+  assert.equal(artifactOperation.operation.result.commands[0].output, undefined);
+  const artifactId = artifactOperation.operation.result.artifacts[0].id;
+  const unauthenticatedArtifact = await fetch(`${base}/api/runs/${operationId}/artifacts/${artifactId}`);
+  assert.equal(unauthenticatedArtifact.status, 401);
+  const downloadedArtifact = await fetch(`${base}/api/runs/${operationId}/artifacts/${artifactId}`, {
+    headers: authorized(),
+  });
+  assert.equal(downloadedArtifact.status, 200);
+  assert.match(downloadedArtifact.headers.get("content-disposition") ?? "", /attachment/);
+  assert.equal(downloadedArtifact.headers.get("x-artifact-sha256"), artifactOperation.operation.result.artifacts[0].sha256);
+  assert.match(await downloadedArtifact.text(), /synthetic command output/);
   await waitFor(async () => fake.unsubscribed.length === 1);
   assert.deepEqual(fake.unsubscribed, ["thread-web"]);
   assert.deepEqual(fake.unsubscribeAttempts, ["thread-web", "thread-web"]);
@@ -1171,8 +1186,24 @@ class FakeWebClient implements WebCodexClient {
     return () => this.listeners.delete(listener);
   }
 
-  finish(status: Turn["status"]) {
-    this.resolveTurn?.(turn(status));
+  finish(status: Turn["status"], includeCommand = false) {
+    const completed = turn(status);
+    if (includeCommand) completed.items.push({
+      type: "commandExecution",
+      id: "command-web",
+      pluginId: null,
+      scriptPath: null,
+      command: "npm test",
+      cwd,
+      processId: null,
+      source: "agent",
+      status: "completed",
+      commandActions: [],
+      aggregatedOutput: "synthetic command output\n42 passed",
+      exitCode: 0,
+      durationMs: 25,
+    });
+    this.resolveTurn?.(completed);
   }
 }
 

@@ -459,6 +459,14 @@ unified diff는 파일·hunk·이전/새 줄 번호와 추가·삭제 색을 구
 schema를 다시 검사해 touch decline에만 묶고, 거절된 Tool Broker 결과로 같은 OpenAI Responses/
 OpenRouter run에 돌려보내 수정안과 새 승인을 요청한다. resolution은 암호화 journal에는 남지만 native
 notification 축약 경계에는 포함하지 않는다.
+완료 operation은 Provider `project_verify` 결과와 Codex command output을 redaction 뒤 별도 immutable
+test/log snapshot으로 보존한다. run의 file change가 가리킨 프로젝트 내부 regular file 중 allowlisted
+test report, raster image와 APK만 최대 8개·총 256 MiB까지 private artifact directory로 복사하고,
+operation에는 opaque ID·kind·MIME·크기·SHA-256과 bounded text preview만 남긴다. 모바일 작업 카드는
+이를 320px 내부에서 검토·다운로드하며 인증된 exact run route 외 임의 workspace 파일은 제공하지 않는다.
+symlink·민감 경로·경로 이탈·변경 중 파일은 fail closed이고 journal workspace 삭제는 snapshot도 함께
+삭제한다. `project_verify`의 disposable overlay에서 생긴 build file은 폐기되므로 log만 남으며 APK는
+실제 run이 workspace change로 보고한 경우에만 snapshot 대상이다.
 현재 workspace catalog는 hook·prompt·optional lock 없이 branch, 12자리 HEAD, dirty 수, upstream
 ahead/behind와 linked worktree를 수집한다. 대시보드와 세션 반납 검토 화면은 전체 경로와 이 identity를
 표시하고 run 시작 시점 snapshot은 암호화 event journal에 함께 보존한다. Gateway는 run/release/claim의

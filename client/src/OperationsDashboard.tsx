@@ -25,6 +25,7 @@ import type {
   ProviderModelVerification,
   RunPolicyConfig,
   RunPolicyConfigLimits,
+  RunArtifact,
   Workspace,
   WorkspaceChangeRecoveryStatus,
   WorkspaceIdentity,
@@ -62,6 +63,7 @@ interface OperationsDashboardProps {
   onDecision(approval: ApprovalItem, decision: "approved" | "declined", feedback?: ApprovalFeedback): void;
   onExportWorkspace(workspace: string): Promise<void>;
   onDeleteWorkspaceHistory(workspace: string): Promise<void>;
+  onDownloadArtifact(operation: Operation, artifact: RunArtifact): Promise<void>;
 }
 
 export function OperationsDashboard(props: OperationsDashboardProps) {
@@ -227,6 +229,7 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
               onConfirmDelete={(confirming) => setConfirmingWorkspace(confirming ? group.cwd : null)}
               onExportWorkspace={props.onExportWorkspace}
               onDeleteWorkspaceHistory={props.onDeleteWorkspaceHistory}
+              onDownloadArtifact={props.onDownloadArtifact}
             />
           ))}
         </section>
@@ -652,6 +655,7 @@ function WorkspaceOperationGroup({
   onConfirmDelete,
   onExportWorkspace,
   onDeleteWorkspaceHistory,
+  onDownloadArtifact,
 }: {
   group: OperationGroup;
   workspaces: Workspace[];
@@ -667,6 +671,7 @@ function WorkspaceOperationGroup({
   onConfirmDelete(confirming: boolean): void;
   onExportWorkspace(workspace: string): Promise<void>;
   onDeleteWorkspaceHistory(workspace: string): Promise<void>;
+  onDownloadArtifact(operation: Operation, artifact: RunArtifact): Promise<void>;
 }) {
   const protectedHistory = deletionProtected(group);
   const busy = exportingWorkspace !== null || deletingWorkspace !== null;
@@ -690,6 +695,7 @@ function WorkspaceOperationGroup({
             busy={updatingOperationId === operation.id}
             onOpen={onOpenOperation}
             onUpdate={onUpdateOperation}
+            onDownloadArtifact={onDownloadArtifact}
           />
         ))}
       </div>
@@ -917,6 +923,7 @@ function OperationCard({
   busy,
   onOpen,
   onUpdate,
+  onDownloadArtifact,
 }: {
   operation: Operation;
   identity: WorkspaceIdentity | undefined;
@@ -925,9 +932,11 @@ function OperationCard({
   busy: boolean;
   onOpen(operation: Operation): void;
   onUpdate(operation: Operation, patch: OperationMetadataPatch): Promise<boolean>;
+  onDownloadArtifact(operation: Operation, artifact: RunArtifact): Promise<void>;
 }) {
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(operation.goalName ?? "");
+  const [downloadingArtifactId, setDownloadingArtifactId] = useState<string | null>(null);
   useEffect(() => {
     if (!editingName) setNameDraft(operation.goalName ?? "");
   }, [editingName, operation.goalName]);
@@ -943,6 +952,15 @@ function OperationCard({
     || (operation.status === "unknown" && !operation.acknowledgedAt);
   const saveName = async () => {
     if (await onUpdate(operation, { goalName: nameDraft.trim() || null })) setEditingName(false);
+  };
+  const downloadArtifact = async (artifact: RunArtifact) => {
+    if (downloadingArtifactId) return;
+    setDownloadingArtifactId(artifact.id);
+    try {
+      await onDownloadArtifact(operation, artifact);
+    } finally {
+      setDownloadingArtifactId(null);
+    }
   };
   return (
     <article className={`operation-card status-${status}${operation.archivedAt ? " archived" : ""}`}>
@@ -983,6 +1001,13 @@ function OperationCard({
         )}
         {policyUsage?.status === "unknown" && <span>실제 비용 확인 필요</span>}
       </div>
+      {(operation.result?.artifacts?.length ?? 0) > 0 && (
+        <ArtifactReview
+          artifacts={operation.result!.artifacts!}
+          downloadingArtifactId={downloadingArtifactId}
+          onDownload={(artifact) => void downloadArtifact(artifact)}
+        />
+      )}
       {editingName && (
         <form className="operation-name-editor" onSubmit={(event) => { event.preventDefault(); void saveName(); }}>
           <label htmlFor={`goal-name-${operation.id}`}>목표 이름</label>
@@ -1018,6 +1043,59 @@ function OperationCard({
       </div>
     </article>
   );
+}
+
+function ArtifactReview({
+  artifacts,
+  downloadingArtifactId,
+  onDownload,
+}: {
+  artifacts: RunArtifact[];
+  downloadingArtifactId: string | null;
+  onDownload(artifact: RunArtifact): void;
+}) {
+  return (
+    <section className="run-artifacts" aria-label="작업 테스트 로그와 산출물">
+      <header>
+        <strong>검토 산출물</strong>
+        <span>{artifacts.length}개 · run snapshot</span>
+      </header>
+      <ul>
+        {artifacts.map((artifact) => (
+          <li key={artifact.id} className={`artifact-${artifact.kind}`}>
+            <div>
+              <strong>{artifactKindLabel(artifact.kind)} · {artifact.name}</strong>
+              <small>{formatArtifactBytes(artifact.size)} · SHA-256 {artifact.sha256.slice(0, 12)}</small>
+            </div>
+            <button
+              type="button"
+              disabled={downloadingArtifactId !== null}
+              onClick={() => onDownload(artifact)}
+            >{downloadingArtifactId === artifact.id ? "받는 중…" : "다운로드"}</button>
+            {artifact.preview && (
+              <details>
+                <summary>{artifact.kind === "test" ? "테스트 결과 보기" : "로그 미리보기"}</summary>
+                <pre>{artifact.preview}</pre>
+              </details>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function artifactKindLabel(kind: RunArtifact["kind"]): string {
+  if (kind === "test") return "테스트";
+  if (kind === "log") return "로그";
+  if (kind === "image") return "이미지";
+  return "Android APK";
+}
+
+function formatArtifactBytes(bytes: number): string {
+  if (bytes < 1_024) return `${bytes} B`;
+  if (bytes < 1_024 * 1_024) return `${(bytes / 1_024).toFixed(1)} KiB`;
+  return `${(bytes / 1_024 / 1_024).toFixed(1)} MiB`;
 }
 
 function operationVerificationLabel(verification: ProviderModelVerification): string {

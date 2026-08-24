@@ -102,6 +102,9 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   const operationActions = css.match(/\.operation-card-actions \{([^}]+)\}/)?.[1] ?? "";
   const operationEditor = css.match(/\.operation-name-editor \{([^}]+)\}/)?.[1] ?? "";
   const operationNameInput = css.match(/\.operation-name-editor input \{([^}]+)\}/)?.[1] ?? "";
+  const artifactPanel = css.match(/\.run-artifacts \{([^}]+)\}/)?.[1] ?? "";
+  const artifactRow = css.match(/\.run-artifacts li \{([^}]+)\}/)?.[1] ?? "";
+  const artifactPreview = css.match(/\.run-artifacts pre \{([^}]+)\}/)?.[1] ?? "";
   const retentionFields = css.match(/\.retention-policy-fields \{([^}]+)\}/)?.[1] ?? "";
   const retentionEditor = css.match(/\.retention-policy-editor \{([^}]+)\}/)?.[1] ?? "";
   const recoveryCard = css.match(/\.workspace-recovery \{([^}]+)\}/)?.[1] ?? "";
@@ -163,6 +166,15 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   assert.match(operationEditor, /max-width:\s*100%/);
   assert.match(operationNameInput, /max-width:\s*100%/);
   assert.match(operationNameInput, /min-width:\s*0/);
+  assert.match(artifactPanel, /max-width:\s*100%/);
+  assert.match(artifactPanel, /overflow:\s*hidden/);
+  assert.match(artifactRow, /minmax\(0,\s*1fr\)/);
+  assert.match(artifactRow, /max-width:\s*100%/);
+  assert.match(artifactPreview, /max-width:\s*100%/);
+  assert.match(artifactPreview, /overflow:\s*auto/);
+  assert.match(artifactPreview, /white-space:\s*pre-wrap/);
+  assert.match(artifactPreview, /overflow-wrap:\s*anywhere/);
+  assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.run-artifacts li \{[^}]*minmax\(0,\s*1fr\)/);
   assert.match(retentionFields, /minmax\(0,\s*1fr\)/);
   assert.match(retentionEditor, /max-width:\s*100%/);
   assert.match(recoveryCard, /max-width:\s*100%/);

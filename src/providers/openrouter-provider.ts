@@ -3,6 +3,10 @@ import { readFile, stat } from "node:fs/promises";
 import { extname } from "node:path";
 import type { ToolBroker, ToolExecutionResult } from "../tool-broker.js";
 import {
+  verificationArtifactCandidate,
+  type RunArtifactCandidate,
+} from "../run-artifact-manager.js";
+import {
   EnvironmentOpenRouterCredentialSource,
   OpenRouterCredentialError,
   type OpenRouterCredentialSource,
@@ -497,6 +501,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     let requestCount = 0;
     let toolCallCount = 0;
     const completedTools: Array<{ name: string; status: string; paths?: string[] }> = [];
+    const artifactCandidates: RunArtifactCandidate[] = [];
     const failure = (message: string, statusCode?: number): ProviderRunCompletion => ({
       status: "failed",
       result: {
@@ -507,6 +512,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
         ...(statusCode !== undefined ? { errorStatus: statusCode } : {}),
         ...(finalResponse ? { finalResponse } : {}),
         ...(totalUsage ? { usage: totalUsage } : {}),
+        ...(artifactCandidates.length > 0 ? { artifactCandidates } : {}),
         routing: routingResult(options.routing, routedProvider, options.model.upstreams),
       },
     });
@@ -641,6 +647,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
               routing: routingResult(options.routing, routedProvider, options.model.upstreams),
               ...(totalUsage ? { usage: totalUsage } : {}),
               ...(completedTools.length > 0 ? { tools: completedTools } : {}),
+              ...(artifactCandidates.length > 0 ? { artifactCandidates } : {}),
             },
             ...(resumeState ? { resumeState } : {}),
           };
@@ -675,6 +682,8 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
             cwd: options.cwd,
             signal: options.active.controller.signal,
           });
+          const artifactCandidate = verificationArtifactCandidate(call.name, execution);
+          if (artifactCandidate) artifactCandidates.push(artifactCandidate);
           completedTools.push({ name: call.name, status: execution.status, ...(paths ? { paths } : {}) });
           emit({
             kind: "tool.completed",
@@ -702,6 +711,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
             modelVerification: options.modelVerification,
             finalResponse,
             ...(totalUsage ? { usage: totalUsage } : {}),
+            ...(artifactCandidates.length > 0 ? { artifactCandidates } : {}),
             routing: routingResult(options.routing, routedProvider, options.model.upstreams),
           },
         };

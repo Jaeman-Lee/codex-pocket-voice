@@ -40,6 +40,12 @@ import type { WorkspaceChangeEngine } from "./workspace-change-engine.js";
 import { createWorkspaceExecutionTools } from "./workspace-execution-tools.js";
 import { LocalToolBroker } from "./tool-broker.js";
 import {
+  RunArtifactError,
+  RunArtifactManager,
+  runArtifacts,
+  type OpenedRunArtifact,
+} from "./run-artifact-manager.js";
+import {
   EVENT_JOURNAL_POLICY_LIMITS,
   EventJournal,
   EventJournalExportError,
@@ -95,6 +101,7 @@ export interface WebServerOptions {
   host?: string;
   port?: number;
   media?: MediaManager;
+  artifacts?: RunArtifactManager;
   projects?: ProjectManager;
   auth?: GatewayAuth;
   handoffs?: SessionHandoffStore;
@@ -190,6 +197,12 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     { keyFile: process.env.CODEX_POCKET_EVENT_JOURNAL_KEY_FILE },
   );
   const approvals = options.approvals ?? new InMemoryApprovalBroker();
+  const journalPolicy = journal.policy();
+  const artifacts = options.artifacts ?? new RunArtifactManager(options.paths, {
+    rootDir: process.env.CODEX_POCKET_RUN_ARTIFACTS ?? join(dirname(auth.stateFile), "run-artifacts"),
+    retentionMs: journalPolicy.retentionMs,
+  });
+  await artifacts.initialize();
   const executionTools = options.providers ? [] : await createWorkspaceExecutionTools(options.paths);
   let workspaceChangeEngine: WorkspaceChangeEngine | undefined;
   const changeTools = options.providers ? [] : await createWorkspaceChangeTools(options.paths, {
@@ -211,7 +224,6 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     modelGrades: options.modelGrades,
   });
   const providerLogins = new ProviderLoginManager(providers);
-  const journalPolicy = journal.policy();
   const runPolicy = options.runPolicyGuard ?? new CostAndPolicyGuard(providers, journal);
   const runs = new RunCoordinator(providers, {
     assertWorkspace: (cwd) => options.paths.assertAllowed(cwd),
@@ -219,6 +231,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     retentionMs: journalPolicy.retentionMs,
     maxOperations: journalPolicy.maxOperations,
     policyGuard: runPolicy,
+    finalizeResult: (operation, result) => artifacts.finalizeOperation(operation, result),
   });
   const runForks = new RunForkManager();
   const threadWriterReleases = new Map<string, Promise<ThreadUnsubscribeResponse>>();
@@ -285,13 +298,13 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   });
 
   const requestListener = (request: IncomingMessage, response: ServerResponse) => {
-    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, runForks, runPolicy, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, undefined).catch(
+    void handleRequest(request, response, options, auth, handoffs, media, artifacts, projects, providers, providerLogins, runs, runForks, runPolicy, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, undefined).catch(
       (error) => sendError(response, error),
     );
   };
   const pocketLinkRequestListener = (request: IncomingMessage, response: ServerResponse) => {
     void Promise.resolve().then(() => pocketLinkClientPublicKeyPin(request)).then((tlsPublicKeyPin) => (
-      handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, runForks, runPolicy, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, tlsPublicKeyPin)
+      handleRequest(request, response, options, auth, handoffs, media, artifacts, projects, providers, providerLogins, runs, runForks, runPolicy, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, tlsPublicKeyPin)
     )).catch((error) => sendError(response, error));
   };
   const server = createServer(requestListener);
@@ -446,6 +459,7 @@ async function handleRequest(
   auth: GatewayAuth,
   handoffs: SessionHandoffStore,
   media: MediaManager,
+  artifacts: RunArtifactManager,
   projects: ProjectManager,
   providers: ProviderRegistry,
   providerLogins: ProviderLoginManager,
@@ -472,7 +486,7 @@ async function handleRequest(
       response.end();
       return;
     }
-    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, runs, runForks, runPolicy, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, tlsPublicKeyPin);
+    await handleApi(request, response, url, options, auth, handoffs, media, artifacts, projects, providers, providerLogins, runs, runForks, runPolicy, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, tlsPublicKeyPin);
     return;
   }
   await serveStatic(request, response, url.pathname, options.staticDir);
@@ -486,6 +500,7 @@ async function handleApi(
   auth: GatewayAuth,
   handoffs: SessionHandoffStore,
   media: MediaManager,
+  artifacts: RunArtifactManager,
   projects: ProjectManager,
   providers: ProviderRegistry,
   providerLogins: ProviderLoginManager,
@@ -905,6 +920,18 @@ async function handleApi(
     return;
   }
 
+  const runArtifactMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/artifacts\/([^/]+)$/);
+  if ((request.method === "GET" || request.method === "HEAD") && runArtifactMatch) {
+    const operationId = decodeURIComponent(runArtifactMatch[1]!);
+    const artifactId = decodeURIComponent(runArtifactMatch[2]!);
+    const operation = runs.get(operationId);
+    if (!operation) throw new HttpError(404, "Operation not found");
+    const artifact = runArtifacts(operation.result).find((item) => item.id === artifactId);
+    if (!artifact) throw new HttpError(404, "Run artifact not found");
+    await serveRunArtifact(request, response, await artifacts.open(operation.id, artifact));
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/api/runs") {
     const status = url.searchParams.get("status");
     const workspace = url.searchParams.get("workspace");
@@ -1104,6 +1131,7 @@ async function handleApi(
     }
     const before = journal.workspaceSummary(workspace);
     const deleted = runs.deleteWorkspaceHistory(workspace);
+    await artifacts.deleteOperations(deleted.deletedOperationIds);
     const after = journal.workspaceSummary(workspace);
     const result = {
       workspace,
@@ -1598,6 +1626,35 @@ async function serveFile(
   });
 }
 
+async function serveRunArtifact(
+  request: IncomingMessage,
+  response: ServerResponse,
+  opened: OpenedRunArtifact,
+): Promise<void> {
+  response.statusCode = 200;
+  response.setHeader("Content-Type", opened.artifact.mimeType);
+  response.setHeader("Content-Length", opened.artifact.size);
+  response.setHeader("Cache-Control", "no-store");
+  response.setHeader("Content-Disposition", artifactContentDisposition(opened.artifact.name));
+  response.setHeader("X-Artifact-SHA256", opened.artifact.sha256);
+  if (request.method === "HEAD") {
+    await opened.handle.close();
+    response.end();
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const stream = opened.handle.createReadStream({ autoClose: true });
+    stream.once("error", reject);
+    response.once("finish", resolve);
+    stream.pipe(response);
+  });
+}
+
+function artifactContentDisposition(name: string): string {
+  const ascii = name.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 160) || "artifact.bin";
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+}
+
 function setSecurityHeaders(response: ServerResponse): void {
   response.setHeader(
     "Content-Security-Policy",
@@ -1714,6 +1771,7 @@ function sendError(response: ServerResponse, error: unknown): void {
       || error instanceof EventJournalExportError
       || error instanceof RunPolicyError
       || error instanceof RunForkManagerError
+      || error instanceof RunArtifactError
       ? error.statusCode
       : 500;
   const message = error instanceof Error ? error.message : String(error);

@@ -25,7 +25,7 @@
 - Provider 전환은 기본적으로 빈 새 대화를 만들고, 명시적 Fork에서만 전송 범위·제외 항목·예상 token·비용·privacy를 터치 검토한 뒤 bounded 컨텍스트를 승계
 - 단말·프로젝트·대화별 로컬 작업 저널과 오프라인 프롬프트 대기열
 - 암호화 Companion event journal과 SSE cursor 기반 네트워크·프로세스 재연결 복구, bounded 사용자 보존 정책, 프로젝트별 JSON 내보내기·2단계 기록 삭제
-- 최대 8대 Linux Companion의 server-authored count-only 실행·승인·복구 요약을 동시에 확인하고 명시적으로 PC를 전환하는 Fleet, PC·프로젝트·Git branch/worktree별 비용·목표 이름·고정·보관 대시보드와 줄 번호 diff·same-run 수정 의견을 지원하는 만료·터치 전용 승인함
+- 최대 8대 Linux Companion의 server-authored count-only 실행·승인·복구 요약을 동시에 확인하고 명시적으로 PC를 전환하는 Fleet, PC·프로젝트·Git branch/worktree별 비용·목표 이름·고정·보관 대시보드, test/log/image/APK run 산출물 검토·다운로드와 줄 번호 diff·same-run 수정 의견을 지원하는 만료·터치 전용 승인함
 - 프롬프트·경로·응답을 네이티브 계층에 내리지 않는 opt-in Android process-death 완료·승인·오류 알림과 retained 작업 바로 열기
 - OpenAI/OpenRouter에서 SHA-256 경쟁 검사를 거친 단일·2~8개 텍스트 교체, 신규 파일 생성·이름변경과 격리된 npm check/test/build
 - Codex·Claude Code 등을 독립 어댑터로 확장할 수 있는 AI 제공자 모듈
@@ -127,6 +127,7 @@ OLLAMA_MODELS="$CODEX_VIDEO_OLLAMA_MODELS" \
 
 ```sh
 export CODEX_POCKET_MEDIA_DIR=/private/path/codex-pocket-media
+export CODEX_POCKET_RUN_ARTIFACTS=/private/path/codex-pocket-run-artifacts
 export CODEX_MEDIA_MAX_BYTES=209715200
 export CODEX_VIDEO_ENABLED=true
 ```
@@ -234,6 +235,13 @@ v2 개발판 승인함의 파일 변경은 파일·hunk·이전/새 줄 번호�
 스마트폰 폭 안에서 줄바꿈됩니다. 추가·삭제 줄을 터치해 최대 8개의 수정 의견을 작성한 뒤
 **거절하고 피드백 전송**을 누르면, 도구를 실행하지 않고 OpenAI Responses 또는 OpenRouter의 같은 run에
 의견을 돌려보내 수정안과 새 승인을 요청합니다. 줄 의견을 선택한 상태에서는 실수로 승인할 수 없습니다.
+
+완료된 v2 작업 카드의 **검토 산출물**에는 격리된 npm check/test/build 결과와 Codex 명령 로그의
+미리보기, 해당 run이 변경으로 보고한 raster image·APK가 표시됩니다. 전체 파일은 SHA-256과 크기를
+확인한 뒤 내려받을 수 있습니다. Companion은 원래 경로를 공개하거나 임의 파일을 제공하지 않고,
+프로젝트 내부 regular file만 private snapshot으로 복사합니다. symlink·민감 경로·허용되지 않은 형식은
+제외하며 한 run은 최대 8개·총 256 MiB입니다. 상세 경계는 [Run artifacts](docs/run-artifacts.md)를
+참고하세요.
 
 v1.7부터 대화와 예약 프롬프트를 AES-GCM으로 암호화해 버전된 `WorkJournal` 저장소에 기록합니다. Android 암호화 키는 Keystore가 보호하며 기존 v1 평문 기록은 읽을 때 자동으로 암호화 형식으로 이전됩니다. v2 개발판은 암호화 envelope를 앱 전용 SQLite에도 복사하고, 현장 승인 전까지 기존 저장소를 삭제하지 않고 함께 갱신해 1.8.1 rollback 호환을 유지합니다. PC가 오프라인이어도 마지막 대화를 열람하고 요청을 예약할 수 있으며, 요청은 선택한 PC가 다시 연결된 뒤 실행됩니다.
 

@@ -15,6 +15,10 @@ import type {
 } from "openai/resources/responses/responses";
 import type { ToolBroker, ToolExecutionResult } from "../tool-broker.js";
 import {
+  verificationArtifactCandidate,
+  type RunArtifactCandidate,
+} from "../run-artifact-manager.js";
+import {
   EnvironmentOpenAICredentialSource,
   OpenAICredentialError,
   type OpenAICredentialSource,
@@ -333,6 +337,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
     let requestCount = 0;
     let toolCallCount = 0;
     const completedTools: Array<{ name: string; status: string; paths?: string[] }> = [];
+    const artifactCandidates: RunArtifactCandidate[] = [];
     const failure = (message: string, statusCode?: number): ProviderRunCompletion => ({
       status: "failed",
       result: {
@@ -343,6 +348,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
         ...(statusCode !== undefined ? { errorStatus: statusCode } : {}),
         ...(finalResponse ? { finalResponse } : {}),
         ...(totalUsage ? { usage: totalUsage } : {}),
+        ...(artifactCandidates.length > 0 ? { artifactCandidates } : {}),
       },
     });
     const emit = (event: ProviderEventPayload) => {
@@ -462,6 +468,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
               ...(resumeState?.truncated ? { resumeTruncated: true } : {}),
               ...(totalUsage ? { usage: totalUsage } : {}),
               ...(completedTools.length > 0 ? { tools: completedTools } : {}),
+              ...(artifactCandidates.length > 0 ? { artifactCandidates } : {}),
             },
             ...(resumeState ? { resumeState } : {}),
           };
@@ -493,6 +500,8 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
             cwd: options.cwd,
             signal: options.active.controller.signal,
           });
+          const artifactCandidate = verificationArtifactCandidate(toolCall.name, execution);
+          if (artifactCandidate) artifactCandidates.push(artifactCandidate);
           completedTools.push({ name: toolCall.name, status: execution.status, ...(paths ? { paths } : {}) });
           emit({
             kind: "tool.completed",
@@ -518,6 +527,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
             modelVerification: options.modelVerification,
             finalResponse,
             ...(totalUsage ? { usage: totalUsage } : {}),
+            ...(artifactCandidates.length > 0 ? { artifactCandidates } : {}),
           },
         };
       }

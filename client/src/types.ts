@@ -320,6 +320,18 @@ export interface RunResult {
     actualProvider?: string;
     actualUpstream?: string;
   };
+  artifacts?: RunArtifact[];
+}
+
+export interface RunArtifact {
+  id: string;
+  name: string;
+  kind: "test" | "log" | "image" | "apk";
+  mimeType: string;
+  size: number;
+  sha256: string;
+  createdAt: string;
+  preview?: string;
 }
 
 export interface Operation {
