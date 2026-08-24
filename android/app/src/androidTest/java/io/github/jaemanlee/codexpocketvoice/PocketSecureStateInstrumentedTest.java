@@ -317,7 +317,9 @@ public final class PocketSecureStateInstrumentedTest {
         String deviceId = "synthetic-tray-device";
         String operationId = "synthetic-tray-operation";
         UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+        device.wakeUp();
         device.pressHome();
+        device.waitForIdle();
         try {
             assertTrue(PocketNotificationsPlugin.postWorkNotification(
                     context,
@@ -328,17 +330,20 @@ public final class PocketSecureStateInstrumentedTest {
             assertTrue("notification shade must open", device.openNotification());
             UiObject2 notification = device.wait(
                     Until.findObject(By.text("화면에서 검토할 작업이 있습니다.")),
-                    5_000L
+                    10_000L
             );
             assertNotNull("generic approval notification must appear in the system tray", notification);
 
-            notification.click();
+            UiObject2 tapTarget = notification;
+            while (tapTarget != null && !tapTarget.isClickable()) tapTarget = tapTarget.getParent();
+            assertNotNull("notification row must expose a clickable target", tapTarget);
+            tapTarget.click();
             assertTrue(
                     "notification tap must open the app",
-                    device.wait(Until.hasObject(By.pkg(context.getPackageName()).depth(0)), 5_000L)
+                    device.wait(Until.hasObject(By.pkg(context.getPackageName()).depth(0)), 10_000L)
             );
 
-            PocketNotificationsPlugin.PendingAction action = waitForPendingAction(5_000L);
+            PocketNotificationsPlugin.PendingAction action = waitForPendingAction(10_000L);
             assertNotNull("notification tap must deliver a pending operation", action);
             assertEquals(deviceId, action.deviceId);
             assertEquals(operationId, action.operationId);

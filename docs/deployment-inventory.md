@@ -51,12 +51,14 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 Android notification tray checkpoint decision: 기존 generic work notification의 실제 system-UI deep-link를
 검증하는 native test 강화이므로 internal compatibility `patch`로 분류한다. 아직 전달하지 않은 incompatible
 v2 안에서 SemVer `2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전
-CI-only candidate를 대체한다. API 30 ATD는 AndroidX UI Automator 2.3.0으로 합성 approval notification을
-게시하고 tray를 열어 generic 본문을 탭한 뒤 MainActivity가 app-private token에 묶인 exact
+CI-only candidate를 대체한다. SystemUI를 포함한 API 30 AOSP Managed Device는 AndroidX UI Automator
+2.3.0으로 합성 approval notification을 게시하고 tray를 열어 generic 본문을 탭한 뒤 MainActivity가
+app-private token에 묶인 exact
 device/operation을 한 번만 소비하는지 검사한다. 테스트 종료 시 알림을 지우고 홈 화면으로 돌아간다.
 실제 device/network 값, prompt·workspace·응답은 사용하지 않는다. APK 전달·설치, 실제 Provider 호출과
 Companion 재시작은 하지 않고 current v1 후보 1.8.2, staged v1.8.4와 검증된 rollback 1.8.1을 보존한다.
-물리 단말 잠금화면·process-kill·절전·네트워크 전환은 계속 field gate다.
+SystemUI를 제거한 ATD는 tray path를 증명할 수 없으므로 사용하지 않는다. 물리 단말 잠금화면·
+process-kill·절전·네트워크 전환은 계속 field gate다.
 
 Android background network-transition checkpoint decision: notification SSE의 최대 60초 retry 지연을 줄이는
 기존 v2 native transport 수정이므로 internal compatibility `patch`로 분류한다. 아직 전달하지 않은
@@ -263,7 +265,7 @@ rollback 1.8.1을 그대로 보존한다. 이 기록은 이후 Android P2P check
 Android managed-device checkpoint decision: 기존 v2 native 보안 경로의 실제 AndroidKeyStore 자동 회귀가
 비어 있던 문제를 수정하는 internal compatibility `patch`다. 아직 현장 전달하지 않은 incompatible v2
 범위 안에서 SemVer `2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전
-CI-only candidate를 대체한다. API 30 ATD에서 합성 host·pin·relay secret·device/token만 사용해 설정과
+CI-only candidate를 대체한다. API 30 managed device에서 합성 host·pin·relay secret·device/token만 사용해 설정과
 background state의 AES-GCM 비노출·변조 거부, port AAD binding과 P-256 A/B private key 비추출성을 검사한다.
 APK 전달·설치와 실행 중 Companion 재시작은 하지 않고 current v1 후보 1.8.2, 별도 staged v1.8.3과
 검증된 rollback 1.8.1을 그대로 보존한다. 실제 알림 tray tap·background reconnect·음성은 실기기 gate에

@@ -18,6 +18,7 @@ test("Android work notifications survive WebView death with encrypted bounded lo
     instrumentedTest,
     androidBuild,
     androidVersions,
+    androidWorkflow,
   ] = await Promise.all([
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketNotificationsPlugin.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketBackgroundEventService.java"),
@@ -33,6 +34,7 @@ test("Android work notifications survive WebView death with encrypted bounded lo
     source("../android/app/src/androidTest/java/io/github/jaemanlee/codexpocketvoice/PocketSecureStateInstrumentedTest.java"),
     source("../android/app/build.gradle"),
     source("../android/variables.gradle"),
+    source("../.github/workflows/android-debug.yml"),
   ]);
 
   assert.match(manifest, /android\.permission\.POST_NOTIFICATIONS/);
@@ -107,10 +109,16 @@ test("Android work notifications survive WebView death with encrypted bounded lo
 
   assert.match(androidVersions, /androidxUiAutomatorVersion = '2\.3\.0'/);
   assert.match(androidBuild, /androidx\.test\.uiautomator:uiautomator:\$androidxUiAutomatorVersion/);
+  assert.match(androidBuild, /systemImageSource = "aosp"/);
+  assert.match(androidBuild, /require64Bit = true/);
+  assert.match(androidBuild, /testedAbi = "x86_64"/);
+  assert.match(androidWorkflow, /system-images;android-30;default;x86_64/);
+  assert.doesNotMatch(`${androidBuild}\n${androidWorkflow}`, /aosp[-_]atd/);
   assert.match(instrumentedTest, /notificationTrayTapOpensAndConsumesTheExactOperationOnce/);
   assert.match(instrumentedTest, /postWorkNotification\([\s\S]*"approval"/);
   assert.match(instrumentedTest, /device\.openNotification\(\)/);
   assert.match(instrumentedTest, /By\.text\("화면에서 검토할 작업이 있습니다\."\)/);
+  assert.match(instrumentedTest, /!tapTarget\.isClickable\(\)[\s\S]*tapTarget\.getParent\(\)/);
   assert.match(instrumentedTest, /By\.pkg\(context\.getPackageName\(\)\)\.depth\(0\)/);
   assert.match(instrumentedTest, /tray action must remain one-time/);
 });

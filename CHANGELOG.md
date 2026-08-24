@@ -15,10 +15,11 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. APK
   전달·설치, 실제 Provider 호출과 실행 중 Companion 재시작은 하지 않으며 current v1 후보 1.8.2,
   staged v1.8.4와 검증된 v1.8.1 rollback을 그대로 보존한다.
-- API 30 Managed Device는 안정판 AndroidX UI Automator로 합성 generic 승인 알림을 게시하고 system tray를
-  열어 실제 notification을 탭한다. MainActivity가 app-private token에 묶인 exact device/operation을 한 번만
-  소비하는지 확인하고 테스트 알림·화면 상태를 정리한다. 물리 단말 잠금화면·process-kill·절전 검증은
-  현장 release gate로 유지한다.
+- SystemUI를 포함한 API 30 AOSP Managed Device는 안정판 AndroidX UI Automator로 합성 generic 승인 알림을
+  게시하고 system tray를 열어 실제 notification을 탭한다. MainActivity가 app-private token에 묶인 exact
+  device/operation을 한 번만 소비하는지 확인하고 테스트 알림·화면 상태를 정리한다. SystemUI를 제거한
+  ATD는 이 검사를 증명할 수 없어 사용하지 않는다. 물리 단말 잠금화면·process-kill·절전 검증은 현장
+  release gate로 유지한다.
 - Android background network-transition reconnect는 notification SSE가 끊긴 뒤 최대 60초 backoff를
   기다릴 수 있던 기존 v2 native 동작을 고치는 internal compatibility `patch`다. 아직 현장 전달하지 않은
   incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고

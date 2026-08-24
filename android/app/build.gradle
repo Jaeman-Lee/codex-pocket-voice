@@ -37,7 +37,9 @@ android {
                 pocketphoneapi30 {
                     device = "Pixel 2"
                     apiLevel = 30
-                    systemImageSource = "aosp-atd"
+                    systemImageSource = "aosp"
+                    require64Bit = true
+                    testedAbi = "x86_64"
                 }
             }
         }

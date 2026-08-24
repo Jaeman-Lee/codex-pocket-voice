@@ -113,9 +113,10 @@ connection enforcement and a fail-closed LAN→P2P→relay automatic mode. Only 
 to the next route; LAN/P2P retries use bounded cooldowns, while TLS/SPKI/mTLS failures never trigger a fallback.
 A standalone, explicit Linux group-owner controller now accepts one bounded PBC peer, requires the GO role, starts
 interface-only non-routing DHCP without a lease file, verifies the existing Companion listener, and cleans every
-resource in reverse. Public relay pre-TLS deadlines and aggregate-only load regression are implemented. API 30 now
-executes the token-gated notification Intent capture/consume boundary and an AndroidX UI Automator system-tray tap
-through MainActivity to one-time operation consumption. Physical locked-screen/process-kill taps,
+resource in reverse. Public relay pre-TLS deadlines and aggregate-only load regression are implemented. A
+SystemUI-capable API 30 AOSP managed device now executes the token-gated notification Intent capture/consume
+boundary and an AndroidX UI Automator system-tray tap through MainActivity to one-time operation consumption.
+Physical locked-screen/process-kill taps,
 P2P/battery/background measurements and external relay load remain open.
 
 ## Final definition of done
