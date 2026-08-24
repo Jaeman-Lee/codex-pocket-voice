@@ -104,6 +104,8 @@ package, 정확한 manifest 서명·APK/SBOM hash와 더 높은 versionCode를 �
 - [Android 저부하 현장 검증](android-field-acceptance.md)의 60분 release gate를 direct LAN, 실제 P2P와
   outbound relay 지원 경로별로 통과하고, 세 schema 2 report의 manifest/commit/APK digest가 기능 field
   report와 같은 exact signed candidate인지 검토한다.
+- [v2 릴리스 evidence 최종 판정](release-evidence.md)을 clean candidate checkout에서 실행해 기능 관찰과
+  세 transport report의 재계산된 gate·candidate binding·30일 freshness가 모두 pass인지 확인한다.
 
 ## Publish
 

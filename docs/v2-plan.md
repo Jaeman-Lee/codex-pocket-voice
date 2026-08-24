@@ -25,7 +25,7 @@
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only systemd encrypted credential, 암호화 durable multi-turn, server-authored output/total token·비용 hard limit과 실제/추정 비용 accounting, model-grade 기반 read/coding tool gate, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구, 격리 npm 검증, 보호된 2-call smoke와 단계별 합성 프로젝트 grade harness 구현; 실제 모델 workflow 실행·현장 프로젝트 acceptance 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가장 비싼 승인 route 기준 사전 비용검사, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker, 보호된 synthetic smoke와 단계별 합성 프로젝트 grade harness 및 exact model/upstream grade enforcement 구현; 실제 model/upstream workflow 실행·현장 acceptance 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror와 schema 2 glossary, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, bounded syntax-highlighted old/new-line diff와 최대 8개 touch-decline same-run feedback, two-touch workspace 복구, 최대 8대의 redacted read-only Multi-Companion Fleet와 명시적 PC 전환, live branch/worktree identity와 exact normalized-cwd session scope, workspace export/protected delete, 목표 이름·pin/archive, 모바일 기본 Queue·명시적 Codex Steer, Provider 전환의 기본 빈 대화와 touch-reviewed bounded Fork, durable 기록, bounded retention 및 API 비용 정책 설정, touch-only 월 비용 확인, opt-in process-death native 알림·retained run 열기와 default-network-triggered bounded SSE reconnect, API 30 token-gated notification Intent·system-tray tap 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed, run artifact 검토/download와 allowlist-only diagnostic support bundle 구현; 실기기 multi-PC/artifact/background/locked-screen/process-kill/voice acceptance 잔여 |
-| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, durable serialized pairing/revoke/key-rotation state, observed server-pin promotion, recoverable A/B client-key rotation, two-touch exact-client revocation→native key→local target removal, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer, exact candidate/transport-bound 기능·저부하 field harness 구현; 실제 multi-PC 해제·P2P group formation·external edge DDoS/실부하·locked-screen/reconnect/voice 실기기 release gate 잔여 |
+| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, durable serialized pairing/revoke/key-rotation state, observed server-pin promotion, recoverable A/B client-key rotation, two-touch exact-client revocation→native key→local target removal, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer, exact candidate/transport-bound 기능·저부하 field harness와 최종 evidence gate 구현; 실제 multi-PC 해제·P2P group formation·external edge DDoS/실부하·locked-screen/reconnect/voice 실기기 release gate 잔여 |
 
 ## 2. 제품 정의
 
@@ -591,6 +591,12 @@ Linux Companion 2대, Android client 2대, 서로 다른 OpenRouter upstream 계
 device/network identifier, credential, prompt/response, 오류 원문과 자유 형식 note가 없고 결과가 30일보다
 오래되거나 후보가 다르면 거부한다. 이는 operator-attested evidence이며 실제 실행을 대신하지 않는다.
 
+최종 release evidence gate는 원본 기능 observation을 다시 평가하고 schema 2 direct LAN/P2P/outbound relay
+저부하 report를 exact allowlist로 읽는다. 각 report의 candidate·설치 identity·transport·측정 시각과 privacy
+선언을 검증하고 aggregate에서 고정 threshold를 재계산해 편집된 pass를 거부한다. 네 결과가 같은 clean
+candidate이고 모두 30일 이내 pass일 때만 create-once 0600 aggregate를 통과시킨다. 이 gate도 별도 manifest
+서명 검증이나 실제 field 실행을 대신하지 않는다.
+
 Android CI는 APK와 SBOM의 SHA-256·크기, package, SemVer/versionCode, commit을 담은 canonical
 `update-manifest.json`을 생성한다. official signed build는 APK release key로 manifest 원문에 RSA/ECDSA
 SHA-256 분리 서명을 만들고 공개 인증서를 함께 싣는다. 오프라인 검증기는 호출자가 별도 경로로 고정한
@@ -654,6 +660,8 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
   시간·개수·attestation gate, extra/freeform field 거부와 owner-only create-once report 검사
 - Android 저부하 report의 canonical signed candidate/clean commit·APK digest, exact transport와 측정 시각 결합,
   설치 package/versionCode drift·미지정/임의 transport 거부 및 owner-only create-once schema 2 검사
+- 기능 observation과 세 transport 저부하 report의 exact candidate/slot/freshness 결합, aggregate threshold
+  재계산, verdict·extra field·wall-duration 변조 거부와 owner-only create-once 최종 evidence 검사
 - relay의 private secret/key, TLS hostname+SPKI pin, 틀린 slot/secret 비소비, connection/slot/waiter/frame/
   timeout 상한, source IP 정규화·동시 연결·fixed-window 시작/new-slot 제한, 무응답 pre-TLS burst·shutdown과
   aggregate-only stats schema 및 relay 안쪽

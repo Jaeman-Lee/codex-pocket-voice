@@ -19,6 +19,7 @@
     "android:debug": "npm run android:sync && cd android && ./gradlew assembleDebug",
     "android:field-acceptance": "node --import tsx scripts/android-field-acceptance.ts",
     "android:functional-acceptance": "node --import tsx scripts/android-functional-acceptance.ts",
+    "android:release-evidence": "node --import tsx scripts/android-release-evidence.ts",
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "check:app-server-schema": "./scripts/check-app-server-schema.sh",
     "client:dev": "vite",

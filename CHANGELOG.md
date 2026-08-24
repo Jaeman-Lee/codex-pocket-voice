@@ -10,6 +10,17 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Final release evidence gate는 기능 observation과 transport별 저부하 결과를 수동 대조하던 절차를 한
+  exact candidate 판정으로 고정하는 developer validation이므로 internal compatibility `patch`다. 아직
+  전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,
+  `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. 실제 field 실행·서명 암호
+  검증·APK 전달·설치·Provider 호출·Companion 재시작은 하지 않으며 current v1 후보 1.8.2, staged
+  v1.8.4, 검증된 1.8.1 rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- 기능 observation을 다시 평가하고 direct LAN/P2P/outbound relay schema 2 report의 candidate·slot·
+  30일 freshness와 aggregate threshold를 재계산한다. candidate drift, report 위치 교환, extra field,
+  편집된 verdict와 wall/monotonic duration 불일치는 출력 없이 거부하고, 완전하지만 실패한 evidence는
+  owner-only create-once aggregate에 fail로 남긴다. `release:check`의 단위 검사 303개와 실제 app-server
+  통합 3개, production build·schema 일치·SBOM이 통과했다.
 - Candidate-bound Android low-load evidence fix는 기존 60분 ADB report가 SemVer만 기록해 같은
   `2.0.0`의 다른 APK build와 direct LAN/P2P/outbound relay를 구분하지 못한 release evidence 결함을
   고치는 internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/

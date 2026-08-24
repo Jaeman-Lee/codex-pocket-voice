@@ -43,6 +43,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Android work notifications | opt-in connectedDevice service | maximum 8 encrypted loopback subscriptions, notification-only authenticated SSE, durable cursor/replay freshness, default-network-triggered bounded reconnect and generic retained-operation navigation implemented; API 30 token/bounds/consume/extra-scrub plus system-tray tap automated, physical locked-screen/process-kill/network-switch acceptance pending |
 | Android low-load gate | schema 2 candidate/transport-bound aggregate ADB report | read-only 60-minute CPU/PSS/battery/background-wake collector and fixed fail-closed thresholds bind the canonical signed manifest, clean commit, APK digest and exact direct LAN/P2P/relay path; no physical result recorded yet |
 | Functional field gate | schema 1 operator-attested aggregate | signed manifest/version/commit/APK-bound inert template and fixed 20-scenario fail-closed verdict implemented; no physical/provider result recorded yet |
+| Final release evidence gate | schema 1 structured aggregate only | re-evaluates functional observations and recomputes direct LAN/P2P/relay schema 2 low-load verdicts for one clean signed candidate with 30-day freshness; no field result recorded yet |
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Run artifact boundary | maximum 8 / 256 MiB per operation | redacted verifier/Codex logs plus allowlisted run-reported test/image/APK regular-file snapshots; authenticated opaque download, symlink/sensitive/path escape rejection and history-delete cleanup implemented; physical Android download acceptance pending |
 | Diagnostic support bundle | schema 1 allowlist JSON | authenticated app/protocol/tool/count aggregate download, normalized version tokens and capability-gated 320px UI implemented; no device/network/workspace/request/error content, physical share acceptance pending |
@@ -73,6 +74,18 @@ transport 누락, source/설치 identity drift는 ADB 측정 전에 실패한다
 호출·Companion 재시작은 하지 않고 current v1 후보 1.8.2, staged v1.8.4, 검증된 rollback 1.8.1과 배포
 중인 v1.8.3 Companion을 그대로 보존한다. `release:check`의 단위 검사 297개와 실제 app-server 통합
 3개, production build·schema 일치·SBOM이 통과했다.
+
+Final release evidence gate checkpoint decision: 기능 observation과 transport별 저부하 결과를 사람이
+각각 대조하던 절차를 한 exact candidate 판정으로 고정하는 developer validation이므로 internal compatibility
+`patch`로 분류한다. 아직 전달하지 않은 incompatible v2 범위 안에서 SemVer `2.0.0`/Android
+`versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
+기능 observation을 다시 평가하고 direct LAN/P2P/outbound relay schema 2 report의 candidate·slot·freshness와
+aggregate threshold를 재계산한다. candidate drift, report 위치 교환, extra field, 편집된 verdict와
+wall/monotonic duration 불일치는 출력 없이 거부하고 완전하지만 실패한 evidence는 owner-only create-once
+aggregate에 fail로 남긴다. 실제 field 실행·서명 암호 검증·APK 전달·설치·Provider 호출·Companion 재시작은
+하지 않고 current v1 후보 1.8.2, staged v1.8.4, 검증된 rollback 1.8.1과 배포 중인 v1.8.3 Companion을
+그대로 보존한다. `release:check`의 단위 검사 303개와 실제 app-server 통합 3개, production build·schema
+일치·SBOM이 통과했다.
 
 Durable Gateway authorization checkpoint decision: 동시 pairing·revoke·TLS key rotation의 atomic rename이
 역순 완료되면 재시작 뒤 해제한 token 또는 이전 key가 되살아나거나 새 client가 사라질 수 있던 기존 v2
