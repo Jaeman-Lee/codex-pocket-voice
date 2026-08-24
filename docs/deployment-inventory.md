@@ -31,7 +31,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, HMAC-authenticated bounded user retention, workspace JSON export and protected delete implemented in v2; not field deployed |
 | Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation, touch-only approvals, durable goal/pin/archive and two-touch history deletion implemented; no field APK handed off |
 | Mobile browser acceptance | Playwright Chromium on Node 22 | production build plus real pairing/Gateway/SSE/run/approval path covers 320/360/412px, 150% text, keyboard resize, rotation and long diff; synthetic only, device acceptance still pending |
-| Android work notifications | opt-in connectedDevice service | maximum 8 encrypted loopback subscriptions, notification-only authenticated SSE, durable cursor/replay freshness and generic retained-operation navigation implemented; field process-kill/deep-link acceptance pending |
+| Android work notifications | opt-in connectedDevice service | maximum 8 encrypted loopback subscriptions, notification-only authenticated SSE, durable cursor/replay freshness and generic retained-operation navigation implemented; API 30 token/bounds/consume/extra-scrub Intent path automated, field tray-tap/process-kill acceptance pending |
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Workspace/session identity | live catalog + per-run Git identity snapshot | dashboard and handoff show exact path; encrypted journal retains run branch; cross-project thread run/release/claim rejected |
 | PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, standalone Linux GO/PBC + memory-only DHCP cleanup lifecycle, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; actual P2P field validation pending |
@@ -77,8 +77,16 @@ Android managed-device checkpoint decision: 기존 v2 native 보안 경로의 �
 CI-only candidate를 대체한다. API 30 ATD에서 합성 host·pin·relay secret·device/token만 사용해 설정과
 background state의 AES-GCM 비노출·변조 거부, port AAD binding과 P-256 A/B private key 비추출성을 검사한다.
 APK 전달·설치와 실행 중 Companion 재시작은 하지 않고 current v1 후보 1.8.2, 별도 staged v1.8.3과
-검증된 rollback 1.8.1을 그대로 보존한다. 알림 deep link·background reconnect·음성은 실기기 gate에
+검증된 rollback 1.8.1을 그대로 보존한다. 실제 알림 tray tap·background reconnect·음성은 실기기 gate에
 남긴다.
+
+Android notification Intent checkpoint decision: 기존 deep-link의 token·bounded identifier 처리와 extra
+정리 경계를 API 30에서 실행하고 malformed action의 잔류 extra를 제거하는 internal compatibility
+`patch`다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 SemVer `2.0.0`/Android
+`versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
+합성 device/operation ID만 사용하며 실제 알림 게시·tray tap·process kill, APK 전달·설치와 실행 중
+Companion 재시작은 수행하지 않는다. current v1 후보 1.8.2, 별도 staged v1.8.3과 검증된 rollback
+1.8.1을 그대로 보존한다.
 
 PocketLink relay foundation checkpoint decision: 외부 relay로 나가는 Companion tunnel과 별도 broker는 새 v2
 network capability이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안이어서

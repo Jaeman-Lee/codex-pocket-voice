@@ -13,15 +13,15 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(PocketJournalPlugin.class);
         registerPlugin(PocketNotificationsPlugin.class);
         registerPlugin(PocketUpdatePlugin.class);
-        super.onCreate(savedInstanceState);
         PocketNotificationsPlugin.captureIntent(this, getIntent());
+        super.onCreate(savedInstanceState);
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
+        PocketNotificationsPlugin.captureIntent(this, intent);
         super.onNewIntent(intent);
         setIntent(intent);
-        PocketNotificationsPlugin.captureIntent(this, intent);
     }
 
     @Override

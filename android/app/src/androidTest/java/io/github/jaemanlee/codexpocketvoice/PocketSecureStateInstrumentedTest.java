@@ -8,6 +8,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.util.Base64;
 
@@ -35,6 +36,7 @@ public final class PocketSecureStateInstrumentedTest {
     private static final int BACKGROUND_PORT = 39_126;
     private static final String CONFIG_PREFERENCES = "codex_pocket_link_config";
     private static final String BACKGROUND_PREFERENCES = "codex_pocket_background_events";
+    private static final String NOTIFICATION_PREFERENCES = "pocket_notification_actions";
 
     private Context context;
     private PocketLinkConfigStore configStore;
@@ -243,6 +245,67 @@ public final class PocketSecureStateInstrumentedTest {
         assertTrue(cleared.subscriptions.isEmpty());
     }
 
+    @Test
+    public void notificationActionRequiresThePrivateTokenAndConsumesOnlyBoundedIdentifiers() {
+        Intent forged = new Intent(context, MainActivity.class)
+                .setAction(PocketNotificationsPlugin.ACTION_OPEN_OPERATION)
+                .setPackage(context.getPackageName())
+                .putExtra("actionToken", repeat('x', 43))
+                .putExtra("deviceId", "forged-device")
+                .putExtra("operationId", "forged-operation");
+        PocketNotificationsPlugin.captureIntent(context, forged);
+        assertEquals(Intent.ACTION_MAIN, forged.getAction());
+        assertFalse(forged.hasExtra("actionToken"));
+        assertFalse(forged.hasExtra("deviceId"));
+        assertFalse(forged.hasExtra("operationId"));
+        assertNull(PocketNotificationsPlugin.takePendingAction());
+
+        Exception oversizedFailure = null;
+        try {
+            PocketNotificationsPlugin.createOpenOperationIntent(
+                    context,
+                    repeat('d', 121),
+                    "synthetic-operation"
+            );
+        } catch (IllegalArgumentException error) {
+            oversizedFailure = error;
+        }
+        assertNotNull("notification device identifiers must remain bounded", oversizedFailure);
+
+        Intent malformed = PocketNotificationsPlugin.createOpenOperationIntent(
+                context,
+                "synthetic-device",
+                "synthetic-operation"
+        ).putExtra("operationId", "bad\noperation");
+        PocketNotificationsPlugin.captureIntent(context, malformed);
+        assertEquals(Intent.ACTION_MAIN, malformed.getAction());
+        assertFalse(malformed.hasExtra("actionToken"));
+        assertFalse(malformed.hasExtra("deviceId"));
+        assertFalse(malformed.hasExtra("operationId"));
+        assertNull(PocketNotificationsPlugin.takePendingAction());
+
+        Intent valid = PocketNotificationsPlugin.createOpenOperationIntent(
+                context,
+                "synthetic-device",
+                "synthetic-operation"
+        );
+        assertEquals(context.getPackageName(), valid.getPackage());
+        assertNotNull(valid.getComponent());
+        assertEquals(MainActivity.class.getName(), valid.getComponent().getClassName());
+        assertTrue(valid.getStringExtra("actionToken").length() >= 43);
+        PocketNotificationsPlugin.captureIntent(context, valid);
+        assertEquals(Intent.ACTION_MAIN, valid.getAction());
+        assertFalse(valid.hasExtra("actionToken"));
+        assertFalse(valid.hasExtra("deviceId"));
+        assertFalse(valid.hasExtra("operationId"));
+
+        PocketNotificationsPlugin.PendingAction action = PocketNotificationsPlugin.takePendingAction();
+        assertNotNull(action);
+        assertEquals("synthetic-device", action.deviceId);
+        assertEquals("synthetic-operation", action.operationId);
+        assertNull("a notification action must be consumed once", PocketNotificationsPlugin.takePendingAction());
+    }
+
     private void clearTestState() throws Exception {
         SharedPreferences configPreferences = context.getSharedPreferences(
                 CONFIG_PREFERENCES,
@@ -252,8 +315,14 @@ public final class PocketSecureStateInstrumentedTest {
                 BACKGROUND_PREFERENCES,
                 Context.MODE_PRIVATE
         );
+        SharedPreferences notificationPreferences = context.getSharedPreferences(
+                NOTIFICATION_PREFERENCES,
+                Context.MODE_PRIVATE
+        );
         assertTrue(configPreferences.edit().clear().commit());
         assertTrue(backgroundPreferences.edit().clear().commit());
+        assertTrue(notificationPreferences.edit().clear().commit());
+        PocketNotificationsPlugin.takePendingAction();
         identityStore.remove(IDENTITY_PORT);
     }
 

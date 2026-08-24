@@ -71,7 +71,7 @@ jobs:
       - name: Test native release policy
         run: cd android && ./gradlew testReleaseUnitTest
 
-      - name: Test Android Keystore and durable native state
+      - name: Test Android Keystore, notification intents, and durable native state
         run: cd android && ./gradlew pocketphoneapi30DebugAndroidTest -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect
 
       - name: Upload Android instrumentation test report on failure

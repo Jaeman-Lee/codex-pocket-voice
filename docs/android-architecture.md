@@ -98,7 +98,9 @@ boot receiver는 등록하지 않는다. 첫 opt-in은 저널의 현재 cursor�
 승인은 최신 16건의 bounded replay 알림에서 제외한다. 앱 화면이 보일 때에는 cursor만 전진해 WebView와 중복 알림을 만들지
 않는다. 잠금 화면에는 generic private notification만 표시하며 앱 전용 random action token과 bounded
 device/operation ID로 PendingIntent를 검증한다. 탭하면 등록된 Linux PC에서 retained operation을 다시
-조회해 일치하는 작업만 연다.
+조회해 일치하는 작업만 연다. API 30 Managed Device는 명시적 MainActivity Intent의 app-private token,
+식별자 상한, malformed 거부, capture 직후 extra 제거와 한 번의 pending action 소비를 실행한다. 실제
+notification tray·잠금 화면에서의 탭과 process kill 복구는 실기기 gate로 유지한다.
 자세한 설정과 보안 경계는
 [PocketLink TLS bootstrap](pocket-link.md)에 있다.
 

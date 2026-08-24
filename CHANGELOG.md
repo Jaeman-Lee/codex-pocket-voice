@@ -10,6 +10,15 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Android notification Intent 계측 강화는 기존 deep-link 경계의 자동 회귀 누락과 malformed 내부 action의
+  extra 잔류를 고치는 internal compatibility `patch`다. 아직 현장 전달하지 않은 incompatible v2 범위
+  안에서 `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
+  대체한다. APK 전달·설치와 실행 중 Companion 재시작은 하지 않으며 v1.8.2 current 후보, 별도 staged
+  v1.8.3과 검증된 v1.8.1 rollback을 그대로 보존한다.
+- API 30 Managed Device에서 명시적 MainActivity Intent, app-private 256-bit action token, bounded
+  device/operation ID, valid action의 one-time consume와 capture 직후 extra 제거를 실행한다. 틀린 token은
+  pending action을 만들지 않고, 올바른 token에 malformed ID가 있어도 action을 저장하지 않은 채 extra를
+  제거한다. 실제 notification tray tap·process kill·잠금 화면·절전은 계속 실기기 gate다.
 - Relay pre-TLS admission hardening은 공개 server의 새 timeout 설정과 운영 검증을 추가하므로
   `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
   `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.

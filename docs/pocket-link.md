@@ -175,7 +175,8 @@ PocketLink의 최종 완료판이 아니다.
   acceptance 미검증
 - 부팅 후 자동 복구, Android 계측 기반 CPU·메모리·배터리 release gate 미검증
 - opt-in notification-only SSE와 Keystore cursor를 이용한 process-death 완료·승인·오류 native 알림은
-  구현됐지만, 실기기 process-kill·절전·네트워크 전환 및 deep-link acceptance 미검증
+  구현됐다. API 30에서 token-gated Intent·bounded ID·extra 제거·one-time consume까지 계측하지만,
+  실기기 notification tray tap·process-kill·절전·네트워크 전환 acceptance는 미검증
 
 따라서 CI에서만 빌드하며 현장 Companion을 재시작하거나 v2 APK를 설치하지 않는다. 위 항목이
 완성되고 실제 LAN·네트워크 전환·절전 테스트를 통과할 때까지 Termux/SSH가 검증된 rollback이다.

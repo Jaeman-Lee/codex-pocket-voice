@@ -20,7 +20,8 @@ test("Android work notifications survive WebView death with encrypted bounded lo
   assert.match(manifest, /PocketBackgroundEventService/);
   assert.match(manifest, /android:exported="false"[\s\S]*android:foregroundServiceType="connectedDevice"/);
   assert.match(activity, /registerPlugin\(PocketNotificationsPlugin\.class\)/);
-  assert.match(activity, /onNewIntent[\s\S]*PocketNotificationsPlugin\.captureIntent/);
+  assert.match(activity, /onCreate[\s\S]*PocketNotificationsPlugin\.captureIntent[\s\S]*super\.onCreate/);
+  assert.match(activity, /onNewIntent[\s\S]*PocketNotificationsPlugin\.captureIntent[\s\S]*super\.onNewIntent[\s\S]*setIntent/);
   assert.match(activity, /onStart[\s\S]*setUiVisible\(true\)/);
   assert.match(activity, /onStop[\s\S]*setUiVisible\(false\)/);
   assert.match(plugin, /@Permission\(alias = "notifications"/);
@@ -33,6 +34,9 @@ test("Android work notifications survive WebView death with encrypted bounded lo
   assert.match(plugin, /MAX_OPERATION_ID = 200/);
   assert.match(plugin, /MessageDigest\.isEqual/);
   assert.match(plugin, /new SecureRandom\(\)\.nextBytes/);
+  assert.match(plugin, /createOpenOperationIntent\(context, deviceId, operationId\)/);
+  assert.match(plugin, /PendingAction action = takePendingAction\(\)/);
+  assert.match(plugin, /finally \{[\s\S]*removeExtra\(EXTRA_ACTION_TOKEN\)[\s\S]*setAction\(Intent\.ACTION_MAIN\)/);
   assert.match(plugin, /setPackage\(context\.getPackageName\(\)\)/);
   assert.match(plugin, /FLAG_UPDATE_CURRENT \| PendingIntent\.FLAG_IMMUTABLE/);
   assert.doesNotMatch(plugin, /getString\("(?:prompt|workspace|cwd|finalResponse|redactedSummary)"\)/);

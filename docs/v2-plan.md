@@ -24,8 +24,8 @@
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, 세 Provider 공용 contract·stream failure fixture, protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신 모듈 구현; production build·실제 pairing/Gateway/SSE/run/approval 기반 Playwright 모바일 회귀 통과, 실기기 회귀 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구와 격리 npm 검증 구현; 실모델 eval 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker와 보호된 synthetic smoke harness 구현; 실제 model eval 실행·현장 등급 잔여 |
-| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in process-death native 알림·retained run 열기, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed 구현; 실기기 background/deep-link acceptance 잔여 |
-| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; API 30 ATD에서 Keystore config/identity/background state 계측 회귀 추가, 실제 P2P group formation·external edge DDoS/실부하·deep-link/reconnect/voice 실기기 release gate 잔여 |
+| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in process-death native 알림·retained run 열기, API 30 token-gated notification Intent 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed 구현; 실기기 background/tray-tap deep-link acceptance 잔여 |
+| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; API 30 ATD에서 Keystore config/identity/background state와 notification Intent 계측 회귀 추가, 실제 P2P group formation·external edge DDoS/실부하·tray-tap/reconnect/voice 실기기 release gate 잔여 |
 
 ## 2. 제품 정의
 
@@ -416,7 +416,9 @@ operation과 새 approval을 schema/kind/operation ID/시각/승인 만료시각
 도구 세부정보를 native 계층에 보내지 않는다. bearer·target·cursor는 Android Keystore AES-GCM으로
 보호하고 sticky service가 WebView process 회수 뒤 `Last-Event-ID`로 다시 연결한다. 최초 활성화는 현재
 cursor에서 시작하며, 최신 16건 replay 중 10분 freshness와 approval 만료를 통과할 때만 generic 알림을 만든다.
-실기기 process-kill·절전·네트워크 전환과 deep-link acceptance는 다음 단계다.
+API 30 Managed Device는 명시적 MainActivity Intent와 app-private action token, bounded 식별자, capture 뒤
+extra 제거, one-time pending action 소비를 실행한다. 틀린 token과 malformed ID는 action을 만들지 않는다.
+실제 notification tray tap·process-kill·절전·네트워크 전환 acceptance는 다음 단계다.
 
 완료 조건: 여러 프로젝트 run을 동시에 추적하고 앱 종료·네트워크 전환 후 정확한 상태로 복구한다.
 
@@ -507,8 +509,9 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - API Provider replay 상태의 journal 암호화, API/SSE/export 비노출, 이미지 data URL 제거 검사
 - Playwright에서 production client와 실제 pairing·Gateway·SSE·run·approval 경로로 320/360/412px,
   150% 글자, 키보드 축소, 회전과 긴 prompt·diff·승인 상세 검증 — Chromium CI 자동 검사 구현
-- Android API 30 managed-device instrumentation에서 Keystore config/identity, background encrypted cursor와
-  변조 거부 검증 — CI 자동 검사 구현; 알림 deep link, background reconnect와 음성 확인은 실기기 gate 잔여
+- Android API 30 managed-device instrumentation에서 Keystore config/identity, background encrypted cursor·
+  변조 거부와 notification Intent token/bounds/extra scrub/one-time consume 검증 — CI 자동 검사 구현;
+  실제 tray tap, background reconnect와 음성 확인은 실기기 gate 잔여
 - update manifest 서명·APK signer binding, artifact 변조, unsigned 기본 거부와 versionCode downgrade 차단
 - Android ZIP importer의 path/duplicate/size 상한, current signer/package binding, 10분 재검토와 설치 전 rehash
 - 공식 Release의 잘못된 repo/tag/중복 asset/digest/content-type, oversized JSON/ZIP, HTTP·외부-host redirect와 조회 token 만료 차단

@@ -164,11 +164,7 @@ public class PocketNotificationsPlugin extends Plugin {
 
     @PluginMethod
     public void consumePendingAction(PluginCall call) {
-        PendingAction action;
-        synchronized (PocketNotificationsPlugin.class) {
-            action = pendingAction;
-            pendingAction = null;
-        }
+        PendingAction action = takePendingAction();
         JSObject result = new JSObject();
         result.put("pending", action != null);
         if (action != null) {
@@ -182,11 +178,11 @@ public class PocketNotificationsPlugin extends Plugin {
         if (intent == null || !ACTION_OPEN_OPERATION.equals(intent.getAction())) return;
         String presentedToken = intent.getStringExtra(EXTRA_ACTION_TOKEN);
         String expectedToken = actionToken(context);
-        if (presentedToken == null || !MessageDigest.isEqual(
-            presentedToken.getBytes(StandardCharsets.UTF_8),
-            expectedToken.getBytes(StandardCharsets.UTF_8)
-        )) return;
         try {
+            if (presentedToken == null || !MessageDigest.isEqual(
+                presentedToken.getBytes(StandardCharsets.UTF_8),
+                expectedToken.getBytes(StandardCharsets.UTF_8)
+            )) return;
             PendingAction action = new PendingAction(
                 requiredIdentifier(intent.getStringExtra(EXTRA_DEVICE_ID), MAX_DEVICE_ID, EXTRA_DEVICE_ID),
                 requiredIdentifier(intent.getStringExtra(EXTRA_OPERATION_ID), MAX_OPERATION_ID, EXTRA_OPERATION_ID)
@@ -194,13 +190,20 @@ public class PocketNotificationsPlugin extends Plugin {
             synchronized (PocketNotificationsPlugin.class) {
                 pendingAction = action;
             }
+        } catch (IllegalArgumentException ignored) {
+            // Ignore forged or corrupt notification actions without exposing identifiers.
+        } finally {
             intent.removeExtra(EXTRA_ACTION_TOKEN);
             intent.removeExtra(EXTRA_DEVICE_ID);
             intent.removeExtra(EXTRA_OPERATION_ID);
             intent.setAction(Intent.ACTION_MAIN);
-        } catch (IllegalArgumentException ignored) {
-            // Ignore forged or corrupt notification actions without exposing identifiers.
         }
+    }
+
+    static synchronized PendingAction takePendingAction() {
+        PendingAction action = pendingAction;
+        pendingAction = null;
+        return action;
     }
 
     static void setUiVisible(boolean visible) {
@@ -217,13 +220,7 @@ public class PocketNotificationsPlugin extends Plugin {
         deviceId = requiredIdentifier(deviceId, MAX_DEVICE_ID, EXTRA_DEVICE_ID);
         operationId = requiredIdentifier(operationId, MAX_OPERATION_ID, EXTRA_OPERATION_ID);
         createWorkChannel(context);
-        Intent openIntent = new Intent(context, MainActivity.class)
-            .setAction(ACTION_OPEN_OPERATION)
-            .setPackage(context.getPackageName())
-            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            .putExtra(EXTRA_ACTION_TOKEN, actionToken(context))
-            .putExtra(EXTRA_DEVICE_ID, deviceId)
-            .putExtra(EXTRA_OPERATION_ID, operationId);
+        Intent openIntent = createOpenOperationIntent(context, deviceId, operationId);
         int notificationId = Objects.hash(deviceId, operationId, kind) & 0x7fffffff;
         PendingIntent contentIntent = PendingIntent.getActivity(
             context,
@@ -245,6 +242,16 @@ public class PocketNotificationsPlugin extends Plugin {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT);
         context.getSystemService(NotificationManager.class).notify(notificationId, notification.build());
         return true;
+    }
+
+    static Intent createOpenOperationIntent(Context context, String deviceId, String operationId) {
+        return new Intent(context, MainActivity.class)
+            .setAction(ACTION_OPEN_OPERATION)
+            .setPackage(context.getPackageName())
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(EXTRA_ACTION_TOKEN, actionToken(context))
+            .putExtra(EXTRA_DEVICE_ID, requiredIdentifier(deviceId, MAX_DEVICE_ID, EXTRA_DEVICE_ID))
+            .putExtra(EXTRA_OPERATION_ID, requiredIdentifier(operationId, MAX_OPERATION_ID, EXTRA_OPERATION_ID));
     }
 
     private void resolvePermission(PluginCall call) {
@@ -305,7 +312,7 @@ public class PocketNotificationsPlugin extends Plugin {
         return created;
     }
 
-    private static final class PendingAction {
+    static final class PendingAction {
         final String deviceId;
         final String operationId;
 
