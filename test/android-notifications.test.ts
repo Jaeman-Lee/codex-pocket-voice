@@ -3,7 +3,22 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("Android work notifications survive WebView death with encrypted bounded loopback subscriptions", async () => {
-  const [plugin, service, reconnectSignal, store, parser, policy, activity, manifest, nativeApi, app, api] = await Promise.all([
+  const [
+    plugin,
+    service,
+    reconnectSignal,
+    store,
+    parser,
+    policy,
+    activity,
+    manifest,
+    nativeApi,
+    app,
+    api,
+    instrumentedTest,
+    androidBuild,
+    androidVersions,
+  ] = await Promise.all([
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketNotificationsPlugin.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketBackgroundEventService.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketReconnectSignal.java"),
@@ -15,6 +30,9 @@ test("Android work notifications survive WebView death with encrypted bounded lo
     source("../client/src/native.ts"),
     source("../client/src/App.tsx"),
     source("../client/src/api.ts"),
+    source("../android/app/src/androidTest/java/io/github/jaemanlee/codexpocketvoice/PocketSecureStateInstrumentedTest.java"),
+    source("../android/app/build.gradle"),
+    source("../android/variables.gradle"),
   ]);
 
   assert.match(manifest, /android\.permission\.POST_NOTIFICATIONS/);
@@ -86,6 +104,15 @@ test("Android work notifications survive WebView death with encrypted bounded lo
   assert.match(app, /operations\.find\(\(operation\) => operation\.id === action\.operationId\)/);
   assert.match(app, /알림의 작업이 현재 Companion 보존 범위에 없습니다/);
   assert.doesNotMatch(app, /NativeNotifications\.post\(/);
+
+  assert.match(androidVersions, /androidxUiAutomatorVersion = '2\.3\.0'/);
+  assert.match(androidBuild, /androidx\.test\.uiautomator:uiautomator:\$androidxUiAutomatorVersion/);
+  assert.match(instrumentedTest, /notificationTrayTapOpensAndConsumesTheExactOperationOnce/);
+  assert.match(instrumentedTest, /postWorkNotification\([\s\S]*"approval"/);
+  assert.match(instrumentedTest, /device\.openNotification\(\)/);
+  assert.match(instrumentedTest, /By\.text\("화면에서 검토할 작업이 있습니다\."\)/);
+  assert.match(instrumentedTest, /By\.pkg\(context\.getPackageName\(\)\)\.depth\(0\)/);
+  assert.match(instrumentedTest, /tray action must remain one-time/);
 });
 
 async function source(path: string): Promise<string> {

@@ -7,13 +7,19 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.os.SystemClock;
 import android.util.Base64;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.test.uiautomator.By;
+import androidx.test.uiautomator.UiDevice;
+import androidx.test.uiautomator.UiObject2;
+import androidx.test.uiautomator.Until;
 
 import org.junit.After;
 import org.junit.Before;
@@ -306,6 +312,43 @@ public final class PocketSecureStateInstrumentedTest {
         assertNull("a notification action must be consumed once", PocketNotificationsPlugin.takePendingAction());
     }
 
+    @Test
+    public void notificationTrayTapOpensAndConsumesTheExactOperationOnce() throws Exception {
+        String deviceId = "synthetic-tray-device";
+        String operationId = "synthetic-tray-operation";
+        UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+        device.pressHome();
+        try {
+            assertTrue(PocketNotificationsPlugin.postWorkNotification(
+                    context,
+                    "approval",
+                    deviceId,
+                    operationId
+            ));
+            assertTrue("notification shade must open", device.openNotification());
+            UiObject2 notification = device.wait(
+                    Until.findObject(By.text("화면에서 검토할 작업이 있습니다.")),
+                    5_000L
+            );
+            assertNotNull("generic approval notification must appear in the system tray", notification);
+
+            notification.click();
+            assertTrue(
+                    "notification tap must open the app",
+                    device.wait(Until.hasObject(By.pkg(context.getPackageName()).depth(0)), 5_000L)
+            );
+
+            PocketNotificationsPlugin.PendingAction action = waitForPendingAction(5_000L);
+            assertNotNull("notification tap must deliver a pending operation", action);
+            assertEquals(deviceId, action.deviceId);
+            assertEquals(operationId, action.operationId);
+            assertNull("tray action must remain one-time", PocketNotificationsPlugin.takePendingAction());
+        } finally {
+            context.getSystemService(NotificationManager.class).cancelAll();
+            device.pressHome();
+        }
+    }
+
     private void clearTestState() throws Exception {
         SharedPreferences configPreferences = context.getSharedPreferences(
                 CONFIG_PREFERENCES,
@@ -322,8 +365,19 @@ public final class PocketSecureStateInstrumentedTest {
         assertTrue(configPreferences.edit().clear().commit());
         assertTrue(backgroundPreferences.edit().clear().commit());
         assertTrue(notificationPreferences.edit().clear().commit());
+        context.getSystemService(NotificationManager.class).cancelAll();
         PocketNotificationsPlugin.takePendingAction();
         identityStore.remove(IDENTITY_PORT);
+    }
+
+    private static PocketNotificationsPlugin.PendingAction waitForPendingAction(long timeoutMs) {
+        long deadline = SystemClock.elapsedRealtime() + timeoutMs;
+        PocketNotificationsPlugin.PendingAction action;
+        while ((action = PocketNotificationsPlugin.takePendingAction()) == null
+                && SystemClock.elapsedRealtime() < deadline) {
+            SystemClock.sleep(50L);
+        }
+        return action;
     }
 
     private static X509KeyManager keyManager(PocketLinkIdentityStore.Identity identity) {

@@ -99,12 +99,14 @@ boot receiver는 등록하지 않는다. 첫 opt-in은 저널의 현재 cursor�
 않는다. 잠금 화면에는 generic private notification만 표시하며 앱 전용 random action token과 bounded
 device/operation ID로 PendingIntent를 검증한다. 탭하면 등록된 Linux PC에서 retained operation을 다시
 조회해 일치하는 작업만 연다. API 30 Managed Device는 명시적 MainActivity Intent의 app-private token,
-식별자 상한, malformed 거부, capture 직후 extra 제거와 한 번의 pending action 소비를 실행한다.
+식별자 상한, malformed 거부, capture 직후 extra 제거와 한 번의 pending action 소비를 실행한다. 같은
+Managed Device에서 AndroidX UI Automator가 합성 generic approval notification을 실제 system tray에서 눌러
+MainActivity 전달과 exact one-time action 소비까지 계측한다.
 notification service는 default network의 available/lost callback을 하나 등록해 Wi-Fi↔모바일망 전환 시
 현재 loopback SSE와 최대 60초 backoff wait를 즉시 끊고 1초부터 다시 연결한다. callback을 등록할 수 없으면
 기존 bounded retry를 유지하고 service 종료 때 callback·waiter·HTTP 연결을 함께 해제한다. callback과 로그에는
-endpoint·token·device 정보를 남기지 않는다. notification tray·잠금 화면에서의 탭, process kill과 실제
-네트워크 전환 복구는 실기기 gate로 유지한다.
+endpoint·token·device 정보를 남기지 않는다. 물리 단말 잠금 화면 탭, process kill·절전과 실제 네트워크
+전환 복구는 실기기 gate로 유지한다.
 자세한 설정과 보안 경계는
 [PocketLink TLS bootstrap](pocket-link.md)에 있다.
 
