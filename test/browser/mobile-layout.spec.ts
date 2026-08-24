@@ -16,6 +16,67 @@ test("the paired shell stays inside 320, 360, and 412px portrait viewports", asy
   }
 });
 
+test("the mobile Fleet shows bounded summaries for another Companion without exposing its work", async ({ page }) => {
+  const fleetToken = `F${"f".repeat(42)}`;
+  const fleetPaths: string[] = [];
+  await page.addInitScript((token) => {
+    localStorage.setItem("codex-pocket-secure:device-registry", JSON.stringify([
+      { id: "pc", name: "주 Linux", kind: "linux", baseUrl: "", builtIn: true, transport: "termux" },
+      { id: "linux-fleet", name: "보조 Linux", kind: "linux", baseUrl: "http://127.0.0.1:8790", transport: "termux" },
+    ]));
+    localStorage.setItem("codex-pocket-secure:gateway-token:linux-fleet", token);
+  }, fleetToken);
+  await page.route("http://127.0.0.1:8790/**", async (route) => {
+    if (route.request().method() === "OPTIONS") {
+      await route.fulfill({
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Headers": "Authorization, Content-Type",
+          "Access-Control-Allow-Methods": "GET, OPTIONS",
+        },
+      });
+      return;
+    }
+    const path = new URL(route.request().url()).pathname;
+    fleetPaths.push(path);
+    const headers = { "Access-Control-Allow-Origin": "*" };
+    if (path === "/api/fleet-summary") {
+      await route.fulfill({ status: 200, headers, contentType: "application/json", json: {
+        summary: {
+          schema: 1,
+          running: 1,
+          waitingForApproval: 1,
+          unknown: 1,
+          failed: 1,
+          retainedOperations: 4,
+          recoveryBlocked: true,
+        },
+      } });
+      return;
+    }
+    await route.fulfill({ status: 404, headers, contentType: "application/json", json: { error: "unexpected path" } });
+  });
+
+  await bootPairedApp(page, { width: 320, height: 740 });
+  await page.getByRole("button", { name: "프로젝트 작업 대시보드 열기" }).click();
+  const dashboard = page.getByRole("dialog", { name: "작업 대시보드" });
+  const fleet = dashboard.locator(".fleet-overview");
+  const secondary = fleet.locator(".fleet-device").filter({ hasText: "보조 Linux" });
+  await expect(secondary).toBeVisible();
+  await expect(secondary).toContainText("실행 1");
+  await expect(secondary).toContainText("승인 1");
+  await expect(secondary).toContainText("확인 1");
+  await expect(secondary).toContainText("실패 1");
+  await expect(secondary).toContainText("복구 필요");
+  await expect(secondary).toContainText("기록 4");
+  await expect(secondary).not.toContainText("fleet-private");
+  expect([...new Set(fleetPaths)]).toEqual(["/api/fleet-summary"]);
+  await expectElementContained(page, secondary);
+  await expectElementContained(page, secondary.getByRole("button", { name: "이 PC 작업 열기" }));
+  await expectShellContained(page);
+});
+
 test("large text contains a long live diff and approval details", async ({ page }) => {
   await bootPairedApp(page, { width: 320, height: 780 });
   const largeTextStylesheet = "/__browser-fixture__/large-text.css";

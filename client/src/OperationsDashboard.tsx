@@ -7,6 +7,7 @@ import {
   type OperationGroup,
 } from "./operations-state";
 import { workspaceIdentityFor, workspaceIdentityLabel } from "./workspace-identity";
+import type { FleetDeviceSnapshot } from "./fleet-state";
 import type {
   ApprovalItem,
   JournalPolicy,
@@ -22,7 +23,10 @@ import type {
 } from "./types";
 
 interface OperationsDashboardProps {
+  deviceId: string;
   deviceName: string;
+  fleetSnapshots: FleetDeviceSnapshot[];
+  refreshingFleet: boolean;
   operations: Operation[];
   approvals: ApprovalItem[];
   workspaces: Workspace[];
@@ -41,6 +45,7 @@ interface OperationsDashboardProps {
   updatingOperationId: string | null;
   onClose(): void;
   onRefresh(): void;
+  onOpenFleetDevice(deviceId: string): void;
   onRetryWorkspaceRecovery(): Promise<boolean>;
   onOpenOperation(operation: Operation): void;
   onUpdateOperation(operation: Operation, patch: OperationMetadataPatch): Promise<boolean>;
@@ -86,12 +91,23 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
         <header className="operations-head">
           <div>
             <strong id="operations-title">작업 대시보드</strong>
-            <small>{props.deviceName} · 프로젝트별 실행과 승인</small>
+            <small>{props.deviceName} 선택됨 · {props.fleetSnapshots.length}대 요약</small>
           </div>
-          <button type="button" onClick={props.onRefresh} aria-label="작업 새로고침">↻</button>
+          <button type="button" disabled={props.refreshingFleet} onClick={props.onRefresh} aria-label="모든 PC 작업 새로고침">↻</button>
           <button type="button" onClick={props.onClose} aria-label="작업 대시보드 닫기">×</button>
         </header>
 
+        <FleetOverview
+          snapshots={props.fleetSnapshots}
+          activeDeviceId={props.deviceId}
+          refreshing={props.refreshingFleet}
+          onOpen={props.onOpenFleetDevice}
+        />
+
+        <div className="dashboard-section-title selected-companion-title">
+          <strong>{props.deviceName}</strong>
+          <span>상세 작업·승인·정책 변경은 이 PC에만 적용됩니다.</span>
+        </div>
         <div className="operation-counts" aria-label="작업 요약">
           <Count label="실행 중" value={counts.running} tone="running" />
           <Count label="승인 필요" value={counts.waitingForApproval} tone="approval" />
@@ -209,6 +225,85 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
       </div>
     </section>
   );
+}
+
+function FleetOverview({
+  snapshots,
+  activeDeviceId,
+  refreshing,
+  onOpen,
+}: {
+  snapshots: FleetDeviceSnapshot[];
+  activeDeviceId: string;
+  refreshing: boolean;
+  onOpen(deviceId: string): void;
+}) {
+  return (
+    <section className="fleet-overview" aria-labelledby="fleet-overview-title">
+      <div className="dashboard-section-title">
+        <div>
+          <strong id="fleet-overview-title">Linux Companion Fleet</strong>
+          <span>모든 등록 PC를 읽기 전용으로 확인합니다. 승인·수정은 PC를 연 뒤 수행합니다.</span>
+        </div>
+        {refreshing && <small role="status">확인 중…</small>}
+      </div>
+      {snapshots.length === 0 ? (
+        <p className="dashboard-empty">등록 PC 요약을 불러오는 중입니다.</p>
+      ) : (
+        <div className="fleet-device-grid">
+          {snapshots.map((snapshot) => {
+            const active = snapshot.deviceId === activeDeviceId;
+            return (
+              <article
+                key={snapshot.deviceId}
+                className={`fleet-device status-${snapshot.status}${active ? " active" : ""}`}
+              >
+                <header>
+                  <div>
+                    <strong>{snapshot.name}</strong>
+                    <small>{active ? "현재 선택 · " : ""}{fleetStatusLabel(snapshot.status)}</small>
+                  </div>
+                  <span className={`fleet-status-dot ${snapshot.status}`} aria-hidden="true" />
+                </header>
+                {snapshot.status === "online" ? (
+                  <div className="fleet-device-facts">
+                    <span>실행 {snapshot.running}</span>
+                    <span>승인 {snapshot.waitingForApproval}</span>
+                    <span>확인 {snapshot.unknown}</span>
+                    <span>실패 {snapshot.failed}</span>
+                    {snapshot.recoveryBlocked && <span className="warning">복구 필요</span>}
+                    <span>기록 {snapshot.retainedOperations}</span>
+                  </div>
+                ) : (
+                  <p>{fleetStatusHelp(snapshot.status)}</p>
+                )}
+                {!active && (
+                  <button type="button" onClick={() => onOpen(snapshot.deviceId)}>
+                    이 PC 작업 열기
+                  </button>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function fleetStatusLabel(status: FleetDeviceSnapshot["status"]): string {
+  if (status === "online") return "온라인";
+  if (status === "pairing-required") return "페어링 필요";
+  if (status === "identity-review-required") return "단말 key 확인 필요";
+  if (status === "unsupported") return "Fleet API 미지원";
+  return "연결 안 됨";
+}
+
+function fleetStatusHelp(status: FleetDeviceSnapshot["status"]): string {
+  if (status === "pairing-required") return "이 PC를 열어 페어링을 완료해야 작업을 볼 수 있습니다.";
+  if (status === "identity-review-required") return "이 PC를 열어 PocketLink 단말 key 교체를 검토하세요.";
+  if (status === "unsupported") return "이 Companion은 Fleet 요약을 지원하지 않습니다. 기존 Codex 경로는 PC를 열어 사용하세요.";
+  return "다른 PC로 자동 우회하지 않습니다. 터널·Companion 상태를 확인하세요.";
 }
 
 function WorkspaceRecoveryCard({

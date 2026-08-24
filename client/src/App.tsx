@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, 
 import {
   abortActiveDeviceIdentityRotation,
   api,
+  apiForDevice,
   apiBlob,
   activeDeviceTarget,
   addLinuxDevice,
@@ -61,7 +62,13 @@ import {
   type MediaComposerAction,
 } from "./media-composer-state";
 import { OperationsDashboard } from "./OperationsDashboard";
-import { activeApprovals, applyApprovalEvent, upsertOperation } from "./operations-state";
+import { activeApprovals, applyApprovalEvent, operationCounts, upsertOperation } from "./operations-state";
+import {
+  boundedFleetTargets,
+  onlineFleetSnapshot,
+  unavailableFleetSnapshot,
+  type FleetDeviceSnapshot,
+} from "./fleet-state";
 import { operationBelongsToSession, scopedHandoff } from "./session-scope";
 import {
   latestProviderForkSource,
@@ -319,6 +326,8 @@ export function App() {
   const [operationSnapshots, setOperationSnapshots] = useState<Operation[]>([]);
   const [approvalInbox, setApprovalInbox] = useState<ApprovalItem[]>([]);
   const [showOperationsDashboard, setShowOperationsDashboard] = useState(false);
+  const [fleetSnapshots, setFleetSnapshots] = useState<FleetDeviceSnapshot[]>([]);
+  const [refreshingFleetSnapshots, setRefreshingFleetSnapshots] = useState(false);
   const [decidingApprovalId, setDecidingApprovalId] = useState<string | null>(null);
   const [updatingOperationId, setUpdatingOperationId] = useState<string | null>(null);
   const [journalPolicy, setJournalPolicy] = useState<JournalPolicy | null>(null);
@@ -387,6 +396,8 @@ export function App() {
   const notificationsEnabledRef = useRef(notificationsEnabled);
   const pendingNotificationActionRef = useRef<NativeNotificationAction | null>(null);
   const openOperationFromDashboardRef = useRef<(operation: Operation) => void>(() => undefined);
+  const fleetSnapshotGenerationRef = useRef(0);
+  const dashboardResumeDeviceRef = useRef<DeviceId | null>(null);
 
   const dispatchActiveRun = (action: ActiveRunAction) => {
     const current = activeRunRef.current;
@@ -455,6 +466,33 @@ export function App() {
   useEffect(() => {
     if (showConnectionCenter && isNativeApp()) void refreshPocketLinkStatuses(deviceTargets);
   }, [showConnectionCenter, deviceTargets]);
+  useEffect(() => {
+    if (!showOperationsDashboard || connection !== "online") return;
+    const target = deviceTargets.find((item) => item.id === device);
+    if (!target) return;
+    const approvals = activeApprovals(approvalInbox);
+    const counts = operationCounts(operationSnapshots, approvals);
+    const snapshot = onlineFleetSnapshot({
+      target,
+      response: {
+        summary: {
+          schema: 1,
+          running: counts.running,
+          waitingForApproval: counts.waitingForApproval,
+          unknown: counts.unknown,
+          failed: counts.failed,
+          retainedOperations: operationSnapshots.length,
+          recoveryBlocked: workspaceRecovery?.blocked === true,
+        },
+      },
+    });
+    setFleetSnapshots((current) => {
+      const next = current.some((item) => item.deviceId === device)
+        ? current.map((item) => item.deviceId === device ? snapshot : item)
+        : [snapshot, ...current];
+      return next.slice(0, 8);
+    });
+  }, [approvalInbox, connection, device, deviceTargets, operationSnapshots, showOperationsDashboard, workspaceRecovery]);
   useEffect(() => {
     if (!showConnectionCenter) return;
     const nextExpiration = Object.values(pocketLinkStatuses)
@@ -917,6 +955,11 @@ export function App() {
       }
       resolvePendingNotificationAction(runData.operations);
       initializedRef.current = true;
+      if (dashboardResumeDeviceRef.current === selectedDevice) {
+        dashboardResumeDeviceRef.current = null;
+        setShowOperationsDashboard(true);
+        void refreshFleetSnapshot(true);
+      }
       if (!onboardingShownRef.current && localStorage.getItem("codex-pocket-onboarding-complete") !== "true") {
         onboardingShownRef.current = true;
         setShowConnectionCenter(true);
@@ -1322,7 +1365,7 @@ export function App() {
     speechSynthesis.speak(utterance);
   }
 
-  async function refreshOperationalSnapshot(silent = false) {
+  async function refreshOperationalSnapshot(silent = false): Promise<boolean> {
     const requestedDevice = deviceRef.current;
     try {
       const [runData, approvalData, workspaceData, journalData, runPolicyData, recoveryData] = await Promise.all([
@@ -1336,7 +1379,7 @@ export function App() {
         api<WorkspaceChangeRecoveryResponse>("/api/workspace-changes/recovery")
           .catch(() => ({ supported: false, status: null })),
       ]);
-      if (deviceRef.current !== requestedDevice) return;
+      if (deviceRef.current !== requestedDevice) return false;
       setOperationSnapshots(runData.operations);
       setApprovalInbox(activeApprovals(approvalData.approvals));
       setWorkspaces(workspaceData.workspaces);
@@ -1347,9 +1390,60 @@ export function App() {
       setRunPolicyLimits(runPolicyData.limits);
       setWorkspaceRecovery(recoveryData.status);
       if (!silent) showToast("프로젝트 작업 상태를 새로 확인했습니다.");
+      return true;
     } catch (error) {
       if (!silent && deviceRef.current === requestedDevice) showToast(errorMessage(error));
+      return false;
     }
+  }
+
+  async function refreshFleetSnapshot(silent = false): Promise<boolean> {
+    const generation = fleetSnapshotGenerationRef.current + 1;
+    fleetSnapshotGenerationRef.current = generation;
+    const targets = boundedFleetTargets(listDeviceTargets(), deviceRef.current);
+    setRefreshingFleetSnapshots(true);
+    const now = Date.now();
+    const snapshots = await Promise.all(targets.map(async (target) => {
+      try {
+        const response = await apiForDevice<unknown>(target.id, "/api/fleet-summary");
+        return onlineFleetSnapshot({
+          target,
+          response,
+          now,
+        });
+      } catch (error) {
+        const status = error instanceof PocketLinkIdentityRotationRequiredError
+          ? "identity-review-required" as const
+          : error instanceof PairingRequiredError
+            ? "pairing-required" as const
+            : error instanceof ApiError && (error.status === 404 || error.status === 426)
+              ? "unsupported" as const
+            : "offline" as const;
+        return unavailableFleetSnapshot(target, status, now);
+      }
+    }));
+    if (fleetSnapshotGenerationRef.current !== generation) return false;
+    setFleetSnapshots(snapshots);
+    setRefreshingFleetSnapshots(false);
+    if (!silent) showToast("등록된 Linux PC 작업 요약을 새로 확인했습니다.");
+    return true;
+  }
+
+  function refreshOperationsDashboard(silent = false) {
+    void Promise.all([
+      refreshOperationalSnapshot(true),
+      refreshFleetSnapshot(true),
+    ]).then(([detailReady, fleetReady]) => {
+      if (!silent) showToast(detailReady && fleetReady
+        ? "선택한 PC 상세와 전체 Fleet 요약을 새로 확인했습니다."
+        : "일부 PC 상태를 확인하지 못했습니다. 연결 상태를 확인하세요.");
+    });
+  }
+
+  function openFleetDevice(nextDevice: DeviceId) {
+    if (nextDevice === deviceRef.current) return;
+    dashboardResumeDeviceRef.current = nextDevice;
+    if (!selectDevice(nextDevice)) dashboardResumeDeviceRef.current = null;
   }
 
   function scheduleOperationPoll(
@@ -2673,11 +2767,11 @@ export function App() {
     }
   }
 
-  function selectDevice(nextDevice: DeviceId) {
-    if (nextDevice === deviceRef.current) return;
+  function selectDevice(nextDevice: DeviceId): boolean {
+    if (nextDevice === deviceRef.current) return true;
     if (pendingRunForkRetryRef.current) {
       showToast("응답이 불확실한 Fork를 먼저 같은 확인으로 재시도해 주세요.");
-      return;
+      return false;
     }
     clearRunForkState();
     setApiDevice(nextDevice);
@@ -2728,6 +2822,7 @@ export function App() {
     setExportingWorkspace(null);
     setDeletingWorkspace(null);
     replayingEventsRef.current = false;
+    return true;
   }
 
   function selectModel(nextModel: string) {
@@ -3955,10 +4050,10 @@ export function App() {
             className="icon-button operations-button"
             type="button"
             aria-label="프로젝트 작업 대시보드 열기"
-            title="이 PC의 프로젝트별 작업과 승인"
+            title="등록된 PC의 작업 요약과 선택한 PC의 상세 관리"
             onClick={() => {
               setShowOperationsDashboard(true);
-              void refreshOperationalSnapshot(true);
+              refreshOperationsDashboard(true);
             }}
           >
             <span aria-hidden="true">▤</span>
@@ -4012,7 +4107,10 @@ export function App() {
 
       {showOperationsDashboard && (
         <OperationsDashboard
+          deviceId={device}
           deviceName={deviceLabel(device)}
+          fleetSnapshots={fleetSnapshots}
+          refreshingFleet={refreshingFleetSnapshots}
           operations={operationSnapshots}
           approvals={approvalInbox}
           workspaces={workspaces}
@@ -4030,7 +4128,8 @@ export function App() {
           exportingWorkspace={exportingWorkspace}
           deletingWorkspace={deletingWorkspace}
           onClose={() => setShowOperationsDashboard(false)}
-          onRefresh={() => void refreshOperationalSnapshot(false)}
+          onRefresh={() => refreshOperationsDashboard(false)}
+          onOpenFleetDevice={openFleetDevice}
           onRetryWorkspaceRecovery={retrySafeWorkspaceRecovery}
           onOpenOperation={openOperationFromDashboard}
           onUpdateOperation={updateOperationMetadata}

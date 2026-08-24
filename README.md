@@ -25,7 +25,7 @@
 - Provider 전환은 기본적으로 빈 새 대화를 만들고, 명시적 Fork에서만 전송 범위·제외 항목·예상 token·비용·privacy를 터치 검토한 뒤 bounded 컨텍스트를 승계
 - 단말·프로젝트·대화별 로컬 작업 저널과 오프라인 프롬프트 대기열
 - 암호화 Companion event journal과 SSE cursor 기반 네트워크·프로세스 재연결 복구, bounded 사용자 보존 정책, 프로젝트별 JSON 내보내기·2단계 기록 삭제
-- PC·프로젝트·Git branch/worktree별 실행 상태와 비용을 모아 보고 목표 이름·고정·보관으로 정리하는 작업 대시보드, 만료·터치 전용 승인함
+- 최대 8대 Linux Companion의 server-authored count-only 실행·승인·복구 요약을 동시에 확인하고 명시적으로 PC를 전환하는 Fleet, PC·프로젝트·Git branch/worktree별 비용·목표 이름·고정·보관 대시보드와 만료·터치 전용 승인함
 - 프롬프트·경로·응답을 네이티브 계층에 내리지 않는 opt-in Android process-death 완료·승인·오류 알림과 retained 작업 바로 열기
 - OpenAI/OpenRouter에서 SHA-256 경쟁 검사를 거친 단일·2~8개 텍스트 교체, 신규 파일 생성·이름변경과 격리된 npm check/test/build
 - Codex·Claude Code 등을 독립 어댑터로 확장할 수 있는 AI 제공자 모듈

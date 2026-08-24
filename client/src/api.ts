@@ -77,7 +77,7 @@ export function backgroundEventSubscriptions(): BackgroundEventSubscription[] {
 }
 
 export function activeDeviceTarget(): DeviceTarget {
-  return deviceTargets.find((target) => target.id === activeDevice) ?? deviceTargets[0]!;
+  return deviceTargetOrDefault(activeDevice);
 }
 
 export function deviceTargetLabel(id: DeviceId): string {
@@ -131,6 +131,10 @@ function apiBase(): string {
 
 export function apiUrl(path: string): string {
   return `${apiBase()}${path}`;
+}
+
+export function apiUrlForDevice(device: DeviceId, path: string): string {
+  return `${requiredDeviceTarget(device).baseUrl}${path}`;
 }
 
 export async function pairingStatus(): Promise<PairingStatus> {
@@ -216,6 +220,17 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
   const init: RequestInit = { method: options.method ?? "GET", headers };
   if (options.body !== undefined) init.body = JSON.stringify(options.body);
   return fetchJson<T>(path, init, true);
+}
+
+export async function apiForDevice<T>(
+  device: DeviceId,
+  path: string,
+  options: ApiOptions = {},
+): Promise<T> {
+  const headers = authorizedHeadersFor(device, options.body !== undefined);
+  const init: RequestInit = { method: options.method ?? "GET", headers };
+  if (options.body !== undefined) init.body = JSON.stringify(options.body);
+  return fetchJsonForDevice<T>(device, path, init, true);
 }
 
 export async function apiBlob(path: string): Promise<Blob> {
@@ -328,13 +343,23 @@ async function publicApi<T>(path: string, options: ApiOptions = {}): Promise<T> 
 }
 
 async function fetchJson<T>(path: string, init: RequestInit, authenticated: boolean): Promise<T> {
+  return fetchJsonForDevice(activeDevice, path, init, authenticated);
+}
+
+async function fetchJsonForDevice<T>(
+  device: DeviceId,
+  path: string,
+  init: RequestInit,
+  authenticated: boolean,
+): Promise<T> {
+  const url = apiUrlForDevice(device, path);
   let response: Response;
   try {
-    response = await fetch(apiUrl(path), init);
+    response = await fetch(url, init);
   } catch {
     throw new Error("Linux PC Companion에 연결할 수 없습니다. PC와 연결 상태를 확인하세요.");
   }
-  if (!response.ok) await throwResponseError(response, authenticated);
+  if (!response.ok) await throwResponseErrorForDevice(response, authenticated, device);
   return response.json() as Promise<T>;
 }
 
@@ -392,36 +417,62 @@ function isSafeLoopbackBase(value: string): boolean {
 }
 
 async function throwResponseError(response: Response, authenticated: boolean): Promise<never> {
+  return throwResponseErrorForDevice(response, authenticated, activeDevice);
+}
+
+async function throwResponseErrorForDevice(
+  response: Response,
+  authenticated: boolean,
+  device: DeviceId,
+): Promise<never> {
   const data = await response.json().catch(() => ({})) as ApiErrorBody;
   if (response.status === 401 && authenticated) {
-    if (data.code === "TLS_DEVICE_MISMATCH" && activeDeviceTarget().transport === "pocketlink"
-        && await storedIdentityRotation(activeDevice)) {
+    if (data.code === "TLS_DEVICE_MISMATCH" && requiredDeviceTarget(device).transport === "pocketlink"
+        && await storedIdentityRotation(device)) {
       throw new PocketLinkIdentityRotationRequiredError(
         "PocketLink 단말 key 교체 상태를 확인해야 합니다.",
         response.status,
         data.code,
       );
     }
-    await discardInvalidToken();
+    await discardInvalidTokenFor(device);
     throw new PairingRequiredError(data.error ?? "페어링이 필요합니다.", response.status, data.code);
   }
   throw new ApiError(data.error || `HTTP ${response.status}`, response.status, data.code);
 }
 
 function authorizedHeaders(json: boolean): Record<string, string> {
+  return authorizedHeadersFor(activeDevice, json);
+}
+
+function authorizedHeadersFor(device: DeviceId, json: boolean): Record<string, string> {
   const headers: Record<string, string> = { Accept: "application/json" };
-  const token = tokens.get(activeDevice);
+  const token = tokens.get(device);
   if (token) headers.Authorization = `Bearer ${token}`;
   if (json) headers["Content-Type"] = "application/json";
   return headers;
 }
 
 async function discardInvalidToken(): Promise<void> {
-  tokens.delete(activeDevice);
+  return discardInvalidTokenFor(activeDevice);
+}
+
+async function discardInvalidTokenFor(device: DeviceId): Promise<void> {
+  tokens.delete(device);
   await Promise.all([
-    secureRemove(tokenKey(activeDevice)),
-    secureRemove(identityRotationKey(activeDevice)),
+    secureRemove(tokenKey(device)),
+    secureRemove(identityRotationKey(device)),
   ]).catch(() => undefined);
+}
+
+function deviceTargetOrDefault(device: DeviceId): DeviceTarget {
+  return deviceTargets.find((target) => target.id === device) ?? deviceTargets[0]!;
+}
+
+function requiredDeviceTarget(device: DeviceId): DeviceTarget {
+  const target = deviceTargets.find((candidate) => candidate.id === device);
+  if (!target) throw new Error("등록되지 않은 Linux PC에는 요청을 보낼 수 없습니다.");
+  return target;
 }
 
 function tokenKey(device: DeviceId): string {

@@ -59,6 +59,8 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   const runForkReview = css.match(/\.run-fork-review \{([^}]+)\}/)?.[1] ?? "";
   const runForkReviewCard = css.match(/\.run-fork-review-card \{([^}]+)\}/)?.[1] ?? "";
   const runForkContext = css.match(/\.run-fork-context \{([^}]+)\}/)?.[1] ?? "";
+  const fleetOverview = css.match(/\.fleet-overview \{([^}]+)\}/)?.[1] ?? "";
+  const fleetDevice = css.match(/\.fleet-device \{([^}]+)\}/)?.[1] ?? "";
 
   assert.match(overlay, /grid-template-rows:\s*minmax\(0,\s*1fr\)/);
   assert.match(overlay, /overflow:\s*hidden/);
@@ -125,6 +127,30 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   assert.match(css, /\.run-fork-context pre[^}]*white-space:\s*pre-wrap/);
   assert.match(css, /\.run-fork-context pre[^}]*overflow-wrap:\s*anywhere/);
   assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.run-fork-review-facts, \.run-fork-review-actions \{[^}]*minmax\(0,\s*1fr\)/);
+  assert.match(fleetOverview, /max-width:\s*100%/);
+  assert.match(fleetOverview, /overflow:\s*hidden/);
+  assert.match(fleetDevice, /min-width:\s*0/);
+  assert.match(fleetDevice, /max-width:\s*100%/);
+  assert.match(fleetDevice, /overflow:\s*hidden/);
+  assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.fleet-device-grid \{[^}]*minmax\(0,\s*1fr\)/);
+});
+
+test("Fleet overview reads bounded per-device summaries and keeps mutations on the selected Companion", async () => {
+  const app = await readFile(new URL("../client/src/App.tsx", import.meta.url), "utf8");
+  const api = await readFile(new URL("../client/src/api.ts", import.meta.url), "utf8");
+  const fleet = await readFile(new URL("../client/src/fleet-state.ts", import.meta.url), "utf8");
+  const dashboard = await readFile(new URL("../client/src/OperationsDashboard.tsx", import.meta.url), "utf8");
+
+  assert.match(app, /apiForDevice<unknown>\(target\.id, "\/api\/fleet-summary"\)/);
+  assert.doesNotMatch(app, /apiForDevice<[^>]*>\(target\.id, "\/api\/(?:runs|approvals|workspace-changes\/recovery)"\)/);
+  assert.match(app, /dashboardResumeDeviceRef\.current = nextDevice/);
+  assert.match(api, /fetchJsonForDevice<T>\(device, path, init, true\)/);
+  assert.match(api, /authorizedHeadersFor\(device/);
+  assert.match(fleet, /MAX_FLEET_DEVICES = 8/);
+  assert.doesNotMatch(fleet, /prompt|redactedSummary|pendingTransactions\.map/);
+  assert.match(dashboard, /읽기 전용/);
+  assert.match(dashboard, /상세 작업·승인·정책 변경은 이 PC에만 적용/);
+  assert.match(dashboard, /이 PC 작업 열기/);
 });
 
 test("API policy confirmation is touch-only and never persists its one-time token", async () => {

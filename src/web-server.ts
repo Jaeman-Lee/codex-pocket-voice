@@ -905,6 +905,28 @@ async function handleApi(
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/fleet-summary") {
+    const operations = runs.list();
+    const waitingOperationIds = new Set(approvals.listPending().flatMap((approval) => {
+      const operation = runs.findByProviderRun(approval.providerId, approval.conversationId, approval.runId);
+      return operation ? [operation.id] : [];
+    }));
+    sendJson(response, 200, {
+      summary: {
+        schema: 1,
+        running: operations.filter((operation) => operation.status === "running"
+          && !waitingOperationIds.has(operation.id)).length,
+        waitingForApproval: waitingOperationIds.size,
+        unknown: operations.filter((operation) => operation.status === "unknown"
+          && !operation.acknowledgedAt).length,
+        failed: operations.filter((operation) => operation.status === "failed").length,
+        retainedOperations: operations.length,
+        recoveryBlocked: workspaceChangeEngine?.recoveryStatus().blocked === true,
+      },
+    });
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/api/run-policy") {
     sendJson(response, 200, {
       policy: journal.runPolicy(),

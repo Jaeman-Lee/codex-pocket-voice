@@ -496,6 +496,20 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(approvalList.approvals.length, 1);
   assert.equal(approvalList.approvals[0].operationId, started.operation.id);
   assert.equal(approvalList.approvals[0].requiresTouch, true);
+  const fleetSummary = await jsonFetch(`${base}/api/fleet-summary`, { headers: authorized() });
+  assert.deepEqual(fleetSummary, {
+    summary: {
+      schema: 1,
+      running: 0,
+      waitingForApproval: 1,
+      unknown: 0,
+      failed: 0,
+      retainedOperations: 1,
+      recoveryBlocked: false,
+    },
+  });
+  assert.doesNotMatch(JSON.stringify(fleetSummary), /change a file|thread-web|tool-call-web|workspace/);
+  assert.equal((await fetch(`${base}/api/fleet-summary`)).status, 401);
   const crossOriginApproval = await fetch(`${base}/api/approvals/approval-web/decision`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "https://evil.example" }),

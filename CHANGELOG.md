@@ -10,6 +10,19 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Multi-Companion Fleet는 등록한 여러 Linux PC의 작업 상태를 한 모바일 대시보드에 보여 주는 새
+  user-visible workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위
+  안에서 `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only
+  candidate를 대체한다. APK 전달·설치, 실제 Provider 호출과 실행 중 Companion 재시작은 하지 않으며
+  current v1 후보 1.8.2, staged v1.8.4와 검증된 v1.8.1 rollback을 그대로 보존한다.
+- Fleet 조회는 등록된 Linux Companion 최대 8대의 exact loopback target과 각 device token으로 인증된
+  server-authored `/api/fleet-summary` 한 건만 사용하며
+  활성 PC를 전환하지 않는다. 잘못된 device ID는 첫 PC로 fallback하지 않고 거절하고, 한 PC의 401은
+  그 PC token만 제거한다. PC별 카드에는 실행·승인·확인·실패·복구 필요·보존 건수만 남기고 prompt,
+  workspace 경로, 승인 상세와 복구 오류는 Fleet 응답 경계를 통과시키거나 state에 저장하지 않는다.
+- Fleet는 읽기 전용이다. 다른 PC의 승인·정책·파일 변경은 카드에서 수행하지 않으며 `이 PC 작업 열기`로
+  명시적으로 전환하고 해당 Companion 초기화가 끝난 뒤 기존 상세 대시보드에서만 실행한다. offline,
+  pairing, PocketLink identity review와 구형 Companion의 API 미지원 상태를 서로 구분하고 자동 우회하지 않는다.
 - Provider context Fork는 Provider를 바꾸면서 이전 대화 범위를 넘기는 새 user-visible workflow이므로
   `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
   `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
