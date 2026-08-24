@@ -127,12 +127,13 @@ final class PocketLinkConfigStore {
         final boolean active;
         final String identitySlot;
         final String pendingIdentitySlot;
+        final String route;
         final RelayConfig relay;
 
         Config(String label, int localPort, String host, int remotePort, String primaryPin, String backupPin, boolean active) {
             this(
                     label, localPort, host, remotePort, primaryPin, backupPin, active,
-                    PocketLinkIdentityStore.SLOT_A, "", null
+                    PocketLinkIdentityStore.SLOT_A, "", PocketLinkRoutePolicy.DIRECT, null
             );
         }
 
@@ -149,7 +150,7 @@ final class PocketLinkConfigStore {
         ) {
             this(
                     label, localPort, host, remotePort, primaryPin, backupPin, active,
-                    identitySlot, pendingIdentitySlot, null
+                    identitySlot, pendingIdentitySlot, PocketLinkRoutePolicy.DIRECT, null
             );
         }
 
@@ -165,6 +166,27 @@ final class PocketLinkConfigStore {
                 String pendingIdentitySlot,
                 RelayConfig relay
         ) {
+            this(
+                    label, localPort, host, remotePort, primaryPin, backupPin, active,
+                    identitySlot, pendingIdentitySlot,
+                    relay == null ? PocketLinkRoutePolicy.DIRECT : PocketLinkRoutePolicy.RELAY,
+                    relay
+            );
+        }
+
+        Config(
+                String label,
+                int localPort,
+                String host,
+                int remotePort,
+                String primaryPin,
+                String backupPin,
+                boolean active,
+                String identitySlot,
+                String pendingIdentitySlot,
+                String route,
+                RelayConfig relay
+        ) {
             if (!PocketLinkIdentityStore.SLOT_A.equals(identitySlot)
                     && !PocketLinkIdentityStore.SLOT_B.equals(identitySlot)) {
                 throw new IllegalArgumentException("invalid identity slot");
@@ -176,6 +198,7 @@ final class PocketLinkConfigStore {
                     || pendingIdentitySlot.equals(identitySlot))) {
                 throw new IllegalArgumentException("invalid pending identity slot");
             }
+            PocketLinkRoutePolicy.validateConfiguration(route, relay != null);
             this.label = label;
             this.localPort = localPort;
             this.host = host;
@@ -185,27 +208,28 @@ final class PocketLinkConfigStore {
             this.active = active;
             this.identitySlot = identitySlot;
             this.pendingIdentitySlot = pendingIdentitySlot;
+            this.route = route;
             this.relay = relay;
         }
 
         Config withActive(boolean nextActive) {
             return new Config(
                     label, localPort, host, remotePort, primaryPin, backupPin, nextActive,
-                    identitySlot, pendingIdentitySlot, relay
+                    identitySlot, pendingIdentitySlot, route, relay
             );
         }
 
         Config withServerPins(String nextPrimaryPin, String nextBackupPin) {
             return new Config(
                     label, localPort, host, remotePort, nextPrimaryPin, nextBackupPin, active,
-                    identitySlot, pendingIdentitySlot, relay
+                    identitySlot, pendingIdentitySlot, route, relay
             );
         }
 
         Config withPendingIdentitySlot(String nextPendingIdentitySlot) {
             return new Config(
                     label, localPort, host, remotePort, primaryPin, backupPin, active,
-                    identitySlot, nextPendingIdentitySlot, relay
+                    identitySlot, nextPendingIdentitySlot, route, relay
             );
         }
 
@@ -213,7 +237,7 @@ final class PocketLinkConfigStore {
             if (pendingIdentitySlot.isEmpty()) throw new IllegalStateException("identity rotation is not pending");
             return new Config(
                     label, localPort, host, remotePort, primaryPin, backupPin, active,
-                    pendingIdentitySlot, "", relay
+                    pendingIdentitySlot, "", route, relay
             );
         }
 
@@ -222,12 +246,12 @@ final class PocketLinkConfigStore {
         }
 
         String route() {
-            return relay == null ? "direct" : "relay";
+            return route;
         }
 
         JSONObject toJson() throws Exception {
             JSONObject value = new JSONObject();
-            value.put("version", 2);
+            value.put("version", 3);
             value.put("label", label);
             value.put("localPort", localPort);
             value.put("host", host);
@@ -237,16 +261,22 @@ final class PocketLinkConfigStore {
             value.put("active", active);
             value.put("identitySlot", identitySlot);
             value.put("pendingIdentitySlot", pendingIdentitySlot);
+            value.put("route", route);
             if (relay != null) value.put("relay", relay.toJson());
             return value;
         }
 
         static Config fromJson(JSONObject value) throws Exception {
             int version = value.getInt("version");
-            if (version != 1 && version != 2) throw new IllegalArgumentException("unsupported config version");
-            RelayConfig relay = version == 2 && value.has("relay")
+            if (version != 1 && version != 2 && version != 3) {
+                throw new IllegalArgumentException("unsupported config version");
+            }
+            RelayConfig relay = version >= 2 && value.has("relay")
                     ? RelayConfig.fromJson(value.getJSONObject("relay"))
                     : null;
+            String route = version == 3
+                    ? value.getString("route")
+                    : relay == null ? PocketLinkRoutePolicy.DIRECT : PocketLinkRoutePolicy.RELAY;
             return new Config(
                     value.getString("label"),
                     value.getInt("localPort"),
@@ -257,6 +287,7 @@ final class PocketLinkConfigStore {
                     value.optBoolean("active", false),
                     value.optString("identitySlot", PocketLinkIdentityStore.SLOT_A),
                     value.optString("pendingIdentitySlot", ""),
+                    route,
                     relay
             );
         }

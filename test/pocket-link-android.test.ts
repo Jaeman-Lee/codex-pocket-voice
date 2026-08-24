@@ -3,13 +3,14 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("Android PocketLink keeps encrypted config native and pins bounded direct or relay mTLS", async () => {
-  const [manifest, gradle, plugin, service, store, identity, relayProtocol, discovery, discoveryPolicy, nativeApi, clientApi, app] = await Promise.all([
+  const [manifest, gradle, plugin, service, store, identity, routePolicy, relayProtocol, discovery, discoveryPolicy, nativeApi, clientApi, app] = await Promise.all([
     source("../android/app/src/main/AndroidManifest.xml"),
     source("../android/app/build.gradle"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketTunnelPlugin.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketLinkService.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketLinkConfigStore.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketLinkIdentityStore.java"),
+    source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketLinkRoutePolicy.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketRelayProtocol.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketLinkNsdDiscovery.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketLinkDiscoveryPolicy.java"),
@@ -45,10 +46,16 @@ test("Android PocketLink keeps encrypted config native and pins bounded direct o
   assert.match(store, /pendingIdentitySlot/);
   assert.match(store, /effectiveIdentitySlot/);
   assert.match(store, /commitPendingIdentitySlot/);
-  assert.match(store, /value\.put\("version", 2\)/);
+  assert.match(store, /value\.put\("version", 3\)/);
   assert.match(store, /RelayConfig/);
   assert.match(store, /value\.put\("secret", secret\)/);
-  assert.match(store, /relay == null \? "direct" : "relay"/);
+  assert.match(store, /value\.put\("route", route\)/);
+  assert.match(store, /PocketLinkRoutePolicy\.validateConfiguration/);
+  assert.match(routePolicy, /AUTO = "auto"/);
+  assert.match(routePolicy, /DIRECT_RETRY_COOLDOWN_MS = 30_000L/);
+  assert.match(routePolicy, /Arrays\.asList\(DIRECT, RELAY\)/);
+  assert.match(routePolicy, /recordTransportFailure/);
+  assert.match(routePolicy, /recordVerifiedRoute/);
   assert.doesNotMatch(nativeApi, /privateKey|certificateFile/);
   assert.doesNotMatch(clientApi, /PocketLinkHost|primaryPin|backupPin/);
 
@@ -66,7 +73,11 @@ test("Android PocketLink keeps encrypted config native and pins bounded direct o
   assert.match(service, /matchedPinSlot\.set\("primary"\)/);
   assert.match(service, /matchedPinSlot\.set\("backup"\)/);
   assert.match(service, /socket\.startHandshake\(\);[\s\S]*PIN_OBSERVATIONS\.put/);
-  assert.match(service, /relayTransport\(config\.relay\)/);
+  assert.match(service, /routePolicy\.attempts\(SystemClock\.elapsedRealtime\(\)\)/);
+  assert.match(service, /PocketLinkRoutePolicy\.DIRECT\.equals\(route\)[\s\S]*directTransport[\s\S]*relayTransport/);
+  assert.match(service, /recordTransportFailure\(route, SystemClock\.elapsedRealtime\(\)\)/);
+  assert.match(service, /companionTlsSocket\(transport, config, identity\)[\s\S]*recordVerifiedRoute\(route\)/);
+  assert.match(service, /LAST_VERIFIED_ROUTES\.put\(config\.localPort, verified\.route\)/);
   assert.match(service, /platformTrustManager\(\)/);
   assert.match(service, /platform\.checkServerTrusted\(chain, authType\)/);
   assert.match(service, /RelayPinnedTrustManager/);
@@ -115,7 +126,7 @@ test("Android PocketLink keeps encrypted config native and pins bounded direct o
   assert.match(plugin, /abortPocketLinkIdentityRotation/);
   assert.match(plugin, /identityRotationPending/);
   assert.match(plugin, /identityRotationReady/);
-  assert.match(plugin, /"relay"\.equals\(route\)/);
+  assert.match(plugin, /PocketLinkRoutePolicy\.RELAY\.equals\(route\) \|\| PocketLinkRoutePolicy\.AUTO\.equals\(route\)/);
   assert.match(plugin, /relayServerPublicKeyPin/);
   assert.match(plugin, /normalizedRelaySecret/);
   assert.match(plugin, /PIN_PROMOTION_MAX_AGE_MS = 120_000L/);
@@ -124,6 +135,7 @@ test("Android PocketLink keeps encrypted config native and pins bounded direct o
   assert.match(plugin, /withServerPins\(config\.backupPin, ""\)/);
   assert.match(plugin, /retiredPreviousPin/);
   assert.match(plugin, /backupPinConfigured/);
+  assert.match(plugin, /lastVerifiedRoute/);
   assert.doesNotMatch(plugin, /result\.put\("(?:primaryPin|backupPin|relayHost|relaySlot|relaySecret)"/);
   assert.match(plugin, /transport", "termux"/);
   assert.match(plugin, /transport", "pocketlink"/);
@@ -135,7 +147,8 @@ test("Android PocketLink keeps encrypted config native and pins bounded direct o
   assert.match(nativeApi, /preparePocketLinkIdentityRotation/);
   assert.match(nativeApi, /commitPocketLinkIdentityRotation/);
   assert.match(nativeApi, /abortPocketLinkIdentityRotation/);
-  assert.match(nativeApi, /route: "direct" \| "relay"/);
+  assert.match(nativeApi, /PocketLinkRoute = "direct" \| "relay" \| "auto"/);
+  assert.match(nativeApi, /lastVerifiedRoute\?: "direct" \| "relay"/);
   assert.match(nativeApi, /relayServerPublicKeyPin/);
   assert.match(nativeApi, /relaySecret\?: string/);
   assert.match(clientApi, /PocketLinkIdentityRotationRequiredError/);
@@ -150,6 +163,8 @@ test("Android PocketLink keeps encrypted config native and pins bounded direct o
   assert.match(app, /아웃바운드 릴레이 · 이중 TLS/);
   assert.match(app, /공인 CA hostname과 SPKI pin을 모두 검증/);
   assert.match(app, /두 TLS pin 확인 후 릴레이 등록/);
+  assert.match(app, /자동 · LAN 우선, 도달 불가 시 릴레이/);
+  assert.match(app, /TLS·pin·mTLS 실패는 우회하지 않으며 SSH로 전환하지 않습니다/);
 });
 
 async function source(path: string): Promise<string> {

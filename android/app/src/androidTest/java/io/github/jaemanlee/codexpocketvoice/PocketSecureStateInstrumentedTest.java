@@ -80,6 +80,7 @@ public final class PocketSecureStateInstrumentedTest {
                 true,
                 PocketLinkIdentityStore.SLOT_A,
                 PocketLinkIdentityStore.SLOT_B,
+                PocketLinkRoutePolicy.AUTO,
                 relay
         );
 
@@ -103,7 +104,7 @@ public final class PocketSecureStateInstrumentedTest {
         assertEquals(8_444, actual.remotePort);
         assertEquals(PocketLinkIdentityStore.SLOT_A, actual.identitySlot);
         assertEquals(PocketLinkIdentityStore.SLOT_B, actual.pendingIdentitySlot);
-        assertEquals("relay", actual.route());
+        assertEquals("auto", actual.route());
         assertNotNull(actual.relay);
         assertEquals(relayHost, actual.relay.host);
         assertEquals(relayServerName, actual.relay.serverName);

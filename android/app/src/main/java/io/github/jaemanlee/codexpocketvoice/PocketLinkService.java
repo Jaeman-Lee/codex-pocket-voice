@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.SystemClock;
 import android.util.Base64;
 
 import androidx.core.app.NotificationCompat;
@@ -58,6 +59,7 @@ public class PocketLinkService extends Service {
     private static final ConcurrentHashMap<Integer, String> ERRORS = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Integer, PinObservation> PIN_OBSERVATIONS = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Integer, String> ACTIVE_IDENTITY_SLOTS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Integer, String> LAST_VERIFIED_ROUTES = new ConcurrentHashMap<>();
 
     private ExecutorService controlExecutor;
     private ExecutorService connectionExecutor;
@@ -100,6 +102,10 @@ public class PocketLinkService extends Service {
         return activeSlot != null && activeSlot.equals(expectedSlot);
     }
 
+    static String lastVerifiedRoute(int localPort) {
+        return LAST_VERIFIED_ROUTES.get(localPort);
+    }
+
     static void clearPinSlot(int localPort) {
         PIN_OBSERVATIONS.remove(localPort);
     }
@@ -140,6 +146,7 @@ public class PocketLinkService extends Service {
         RUNNING.clear();
         PIN_OBSERVATIONS.clear();
         ACTIVE_IDENTITY_SLOTS.clear();
+        LAST_VERIFIED_ROUTES.clear();
         if (controlExecutor != null) controlExecutor.shutdownNow();
         if (connectionExecutor != null) connectionExecutor.shutdownNow();
         super.onDestroy();
@@ -176,6 +183,7 @@ public class PocketLinkService extends Service {
         if (previous != null) previous.close();
         PIN_OBSERVATIONS.remove(config.localPort);
         ACTIVE_IDENTITY_SLOTS.remove(config.localPort);
+        LAST_VERIFIED_ROUTES.remove(config.localPort);
         if (RUNNING.size() >= MAX_LINKS) {
             ERRORS.put(config.localPort, "PocketLink 등록 한도를 초과했습니다.");
             updateNotification("PocketLink 등록 한도를 초과했습니다.");
@@ -206,6 +214,7 @@ public class PocketLinkService extends Service {
         ERRORS.remove(localPort);
         PIN_OBSERVATIONS.remove(localPort);
         ACTIVE_IDENTITY_SLOTS.remove(localPort);
+        LAST_VERIFIED_ROUTES.remove(localPort);
         if (disable) {
             try {
                 configStore.setActive(localPort, false);
@@ -276,6 +285,7 @@ public class PocketLinkService extends Service {
         private final PocketLinkConfigStore.Config config;
         private final PocketLinkIdentityStore.Identity identity;
         private final ExecutorService connectionExecutor;
+        private final PocketLinkRoutePolicy routePolicy;
         private final Semaphore capacity = new Semaphore(MAX_CONNECTIONS_PER_LINK);
         private final AtomicBoolean running = new AtomicBoolean(false);
         private final Set<Connection> connections = ConcurrentHashMap.newKeySet();
@@ -290,6 +300,7 @@ public class PocketLinkService extends Service {
             this.config = config;
             this.identity = identity;
             this.connectionExecutor = connectionExecutor;
+            this.routePolicy = new PocketLinkRoutePolicy(config.route(), config.relay != null);
         }
 
         void start() throws Exception {
@@ -335,7 +346,9 @@ public class PocketLinkService extends Service {
         private void connect(Socket local) {
             Socket remote = null;
             try {
-                remote = tlsSocket(config, identity);
+                RouteSocket verified = tlsSocket(config, identity, routePolicy);
+                remote = verified.socket;
+                LAST_VERIFIED_ROUTES.put(config.localPort, verified.route);
                 ERRORS.remove(config.localPort);
                 Connection connection = new Connection(local, remote, capacity, connections, connectionExecutor);
                 connections.add(connection);
@@ -349,19 +362,34 @@ public class PocketLinkService extends Service {
             capacity.release();
         }
 
-        private static Socket tlsSocket(
+        private static RouteSocket tlsSocket(
                 PocketLinkConfigStore.Config config,
-                PocketLinkIdentityStore.Identity identity
+                PocketLinkIdentityStore.Identity identity,
+                PocketLinkRoutePolicy routePolicy
         ) throws Exception {
-            Socket transport = config.relay == null
-                    ? directTransport(config.host, config.remotePort)
-                    : relayTransport(config.relay);
-            try {
-                return companionTlsSocket(transport, config, identity);
-            } catch (Exception error) {
-                closeQuietly(transport);
-                throw error;
+            Exception lastTransportFailure = null;
+            for (String route : routePolicy.attempts(SystemClock.elapsedRealtime())) {
+                Socket transport;
+                try {
+                    transport = PocketLinkRoutePolicy.DIRECT.equals(route)
+                            ? directTransport(config.host, config.remotePort)
+                            : relayTransport(config.relay);
+                } catch (Exception error) {
+                    routePolicy.recordTransportFailure(route, SystemClock.elapsedRealtime());
+                    lastTransportFailure = error;
+                    continue;
+                }
+                try {
+                    Socket verified = companionTlsSocket(transport, config, identity);
+                    routePolicy.recordVerifiedRoute(route);
+                    return new RouteSocket(route, verified);
+                } catch (Exception error) {
+                    closeQuietly(transport);
+                    throw error;
+                }
             }
+            if (lastTransportFailure != null) throw lastTransportFailure;
+            throw new IllegalStateException("PocketLink route policy produced no attempt");
         }
 
         private static Socket directTransport(String host, int port) throws Exception {
@@ -468,6 +496,16 @@ public class PocketLinkService extends Service {
             }
             if (enabled.isEmpty()) throw new IllegalStateException("TLS 1.2 or newer is unavailable");
             socket.setEnabledProtocols(enabled.toArray(new String[0]));
+        }
+    }
+
+    private static final class RouteSocket {
+        final String route;
+        final Socket socket;
+
+        RouteSocket(String route, Socket socket) {
+            this.route = route;
+            this.socket = socket;
         }
     }
 

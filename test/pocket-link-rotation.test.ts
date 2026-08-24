@@ -54,4 +54,16 @@ test("PocketLink status text distinguishes primary, fresh backup, and expired ba
     route: "relay",
     pinSlot: "primary",
   }, now), "PocketLink relay · 기본 pin 확인");
+  assert.equal(pocketLinkSecurityStatus({
+    ...backupStatus(now),
+    route: "auto",
+    lastVerifiedRoute: "direct",
+    pinSlot: "primary",
+  }, now), "PocketLink 자동→LAN · 기본 pin 확인");
+  assert.equal(pocketLinkSecurityStatus({
+    ...backupStatus(now),
+    route: "auto",
+    lastVerifiedRoute: "relay",
+    pinSlot: "primary",
+  }, now), "PocketLink 자동→relay · 기본 pin 확인");
 });

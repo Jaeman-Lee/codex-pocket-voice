@@ -38,6 +38,7 @@ import {
   type NativeOfficialReleaseStatus,
   type NativeUpdateReview,
   type PocketLinkStatus,
+  type PocketLinkRoute,
 } from "./native";
 import { mergeSpeechSegments } from "./speech-utils";
 import { initialConnectionState, reduceConnection } from "./connection-state";
@@ -246,7 +247,7 @@ export function App() {
   const [newPocketLinkPort, setNewPocketLinkPort] = useState("8789");
   const [newPocketLinkPin, setNewPocketLinkPin] = useState("");
   const [newPocketLinkBackupPin, setNewPocketLinkBackupPin] = useState("");
-  const [newPocketLinkRoute, setNewPocketLinkRoute] = useState<"direct" | "relay">("direct");
+  const [newPocketLinkRoute, setNewPocketLinkRoute] = useState<PocketLinkRoute>("direct");
   const [newPocketRelayHost, setNewPocketRelayHost] = useState("");
   const [newPocketRelayPort, setNewPocketRelayPort] = useState("9443");
   const [newPocketRelayServerName, setNewPocketRelayServerName] = useState("");
@@ -3050,12 +3051,12 @@ export function App() {
           primaryPin: newPocketLinkPin,
           backupPin: newPocketLinkBackupPin || undefined,
           route: newPocketLinkRoute,
-          relayHost: newPocketLinkRoute === "relay" ? newPocketRelayHost : undefined,
-          relayPort: newPocketLinkRoute === "relay" ? Number(newPocketRelayPort) : undefined,
-          relayServerName: newPocketLinkRoute === "relay" ? newPocketRelayServerName : undefined,
-          relayServerPublicKeyPin: newPocketLinkRoute === "relay" ? newPocketRelayPin : undefined,
-          relaySlot: newPocketLinkRoute === "relay" ? newPocketRelaySlot : undefined,
-          relaySecret: newPocketLinkRoute === "relay" ? newPocketRelaySecret : undefined,
+          relayHost: newPocketLinkRoute !== "direct" ? newPocketRelayHost : undefined,
+          relayPort: newPocketLinkRoute !== "direct" ? Number(newPocketRelayPort) : undefined,
+          relayServerName: newPocketLinkRoute !== "direct" ? newPocketRelayServerName : undefined,
+          relayServerPublicKeyPin: newPocketLinkRoute !== "direct" ? newPocketRelayPin : undefined,
+          relaySlot: newPocketLinkRoute !== "direct" ? newPocketRelaySlot : undefined,
+          relaySecret: newPocketLinkRoute !== "direct" ? newPocketRelaySecret : undefined,
         });
         configuredPocketLinkPort = localPort;
       }
@@ -3787,12 +3788,13 @@ export function App() {
                       value={newPocketLinkRoute}
                       aria-label="PocketLink 연결 경로"
                       onChange={(event) => {
-                        const route = event.target.value as "direct" | "relay";
+                        const route = event.target.value as PocketLinkRoute;
                         setNewPocketLinkRoute(route);
                         if (route === "relay") dispatchPocketLinkBootstrap({ type: "invalidate_discovery" });
                       }}
                     >
                       <option value="direct">직접 LAN · Companion으로 바로 연결</option>
+                      <option value="auto">자동 · LAN 우선, 도달 불가 시 릴레이</option>
                       <option value="relay">아웃바운드 릴레이 · 이중 TLS</option>
                     </select>
                   )}
@@ -3801,7 +3803,7 @@ export function App() {
                       <button type="button" className="pocket-link-qr-scan" disabled={scanningPocketLinkQr || discoveringPocketLinks} onClick={() => void scanPocketLinkQr()}>
                         {scanningPocketLinkQr ? "QR 카메라 여는 중…" : "PocketLink QR 스캔"}
                       </button>
-                      {newPocketLinkRoute === "direct" && (
+                      {newPocketLinkRoute !== "relay" && (
                         <button type="button" className="pocket-link-lan-discovery" disabled={scanningPocketLinkQr || discoveringPocketLinks} onClick={() => void discoverPocketLinks()}>
                           {discoveringPocketLinks ? "LAN 검색 중 · 8초…" : "같은 LAN에서 찾기"}
                         </button>
@@ -3815,7 +3817,7 @@ export function App() {
                   </div>
                   {newDeviceTransport === "pocketlink" && (
                     <div className="pocket-link-fields">
-                      {newPocketLinkRoute === "direct" && pocketLinkDiscoveryCandidates.length > 0 && !selectedPocketLinkDiscovery && (
+                      {newPocketLinkRoute !== "relay" && pocketLinkDiscoveryCandidates.length > 0 && !selectedPocketLinkDiscovery && (
                         <div className="pocket-link-discovery-list" aria-label="발견한 PocketLink Companion">
                           <strong>발견한 주소 · 아직 신뢰되지 않음</strong>
                           <small>PC를 고른 뒤에도 Companion 터미널의 SPKI pin을 직접 입력해야 합니다.</small>
@@ -3831,7 +3833,7 @@ export function App() {
                           ))}
                         </div>
                       )}
-                      {newPocketLinkRoute === "direct" && selectedPocketLinkDiscovery && (
+                      {newPocketLinkRoute !== "relay" && selectedPocketLinkDiscovery && (
                         <div className="pocket-link-discovery-review">
                           <strong>LAN 주소만 선택됨 · pin은 미확인</strong>
                           <small>{selectedPocketLinkDiscovery.host}:{selectedPocketLinkDiscovery.port} · Companion 화면과 SPKI pin을 별도 대조하세요.</small>
@@ -3847,10 +3849,12 @@ export function App() {
                       <input value={newPocketLinkPort} inputMode="numeric" maxLength={5} placeholder="8789" aria-label="PocketLink TLS 포트" onChange={(event) => { setNewPocketLinkPort(event.target.value.replace(/\D/g, "")); dispatchPocketLinkBootstrap({ type: "invalidate_discovery" }); }} />
                       <input className="pin" value={newPocketLinkPin} maxLength={51} autoCapitalize="none" spellCheck={false} placeholder="sha256/… 기본 SPKI pin" aria-label="PocketLink 기본 SPKI pin" onChange={(event) => setNewPocketLinkPin(event.target.value.trim())} />
                       <input className="pin" value={newPocketLinkBackupPin} maxLength={51} autoCapitalize="none" spellCheck={false} placeholder="sha256/… 교체용 pin · 선택" aria-label="PocketLink 교체용 SPKI pin" onChange={(event) => setNewPocketLinkBackupPin(event.target.value.trim())} />
-                      {newPocketLinkRoute === "relay" && (
+                      {newPocketLinkRoute !== "direct" && (
                         <div className="pocket-link-relay-fields">
                           <strong>바깥 릴레이 TLS · Companion mTLS와 별도 확인</strong>
-                          <small>릴레이 운영자는 접속 metadata를 볼 수 있습니다. 공인 CA hostname과 SPKI pin을 모두 검증하며 직접 LAN이나 SSH로 자동 전환하지 않습니다.</small>
+                          <small>{newPocketLinkRoute === "auto"
+                            ? "LAN TCP가 도달 불가일 때만 릴레이를 사용합니다. TLS·pin·mTLS 실패는 우회하지 않으며 SSH로 전환하지 않습니다."
+                            : "릴레이 운영자는 접속 metadata를 볼 수 있습니다. 공인 CA hostname과 SPKI pin을 모두 검증하며 직접 LAN이나 SSH로 자동 전환하지 않습니다."}</small>
                           <input value={newPocketRelayHost} maxLength={253} autoCapitalize="none" spellCheck={false} placeholder="릴레이 접속 호스트" aria-label="PocketLink 릴레이 접속 호스트" onChange={(event) => setNewPocketRelayHost(event.target.value.trim())} />
                           <input value={newPocketRelayPort} inputMode="numeric" maxLength={5} placeholder="9443" aria-label="PocketLink 릴레이 포트" onChange={(event) => setNewPocketRelayPort(event.target.value.replace(/\D/g, ""))} />
                           <input className="wide" value={newPocketRelayServerName} maxLength={253} autoCapitalize="none" spellCheck={false} placeholder="인증서 hostname · 예: relay.example.com" aria-label="PocketLink 릴레이 인증서 hostname" onChange={(event) => setNewPocketRelayServerName(event.target.value.trim())} />
@@ -3860,14 +3864,20 @@ export function App() {
                         </div>
                       )}
                       <button type="button" onClick={() => void createLinuxDevice()}>
-                        {newPocketLinkRoute === "relay" ? "두 TLS pin 확인 후 릴레이 등록" : "pin 확인 후 직접 연결 등록"}
+                        {newPocketLinkRoute === "relay"
+                          ? "두 TLS pin 확인 후 릴레이 등록"
+                          : newPocketLinkRoute === "auto"
+                            ? "LAN·릴레이 pin 확인 후 자동 연결 등록"
+                            : "pin 확인 후 직접 연결 등록"}
                       </button>
                     </div>
                   )}
                   <small>{newDeviceTransport === "pocketlink"
-                    ? newPocketLinkRoute === "relay"
-                      ? "Companion 정보는 내부 mTLS에, 릴레이 정보·slot·secret은 외부 TLS에 사용합니다. 둘은 Android Keystore 암호화 설정에만 저장되고 화면 상태·로그로 다시 내보내지 않습니다."
-                      : "QR을 스캔하거나 같은 LAN에서 주소만 찾을 수 있습니다. LAN 광고는 인증 수단이 아니므로 PC 화면의 SPKI pin을 별도로 대조합니다. 설정은 Keystore로 보호되고 SSH로 자동 우회하지 않습니다."
+                    ? newPocketLinkRoute === "direct"
+                      ? "QR을 스캔하거나 같은 LAN에서 주소만 찾을 수 있습니다. LAN 광고는 인증 수단이 아니므로 PC 화면의 SPKI pin을 별도로 대조합니다. 설정은 Keystore로 보호되고 SSH로 자동 우회하지 않습니다."
+                      : newPocketLinkRoute === "auto"
+                        ? "Companion mTLS는 LAN과 릴레이에서 동일하게 검증합니다. LAN TCP 연결 자체가 실패할 때만 이중 TLS 릴레이를 사용하고 이후 30초 동안 반복 LAN timeout을 생략하며, 인증 오류는 fallback 조건이 아닙니다."
+                        : "Companion 정보는 내부 mTLS에, 릴레이 정보·slot·secret은 외부 TLS에 사용합니다. 둘은 Android Keystore 암호화 설정에만 저장되고 화면 상태·로그로 다시 내보내지 않습니다."
                     : "현재 검증된 Termux/SSH 연결을 rollback 호환 경로로 유지합니다."}</small>
                 </div>
               )}

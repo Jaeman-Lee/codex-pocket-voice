@@ -163,9 +163,10 @@ Android에서 mDNS 수신을 위해 `CHANGE_WIFI_MULTICAST_STATE`와 검색 시�
 PocketLink의 최종 완료판이 아니다.
 
 - DNS-SD 주소 discovery와 protocol 1 TLS relay broker·Linux Companion/Android connector는 구현됐다.
-  Android는 direct/relay를 명시 선택하고 relay 설정을 Keystore encryption으로 보관하며, public
-  CA+hostname+relay SPKI outer TLS 안에서 기존 Companion mTLS를 다시 수행한다. P2P 경로와
-  direct/P2P/relay 전체 우선순위 정책은 미구현
+  Android는 direct/relay 고정 경로 또는 LAN 우선 `auto`를 선택하고 relay 설정을 Keystore encryption으로
+  보관하며, public CA+hostname+relay SPKI outer TLS 안에서 기존 Companion mTLS를 다시 수행한다. `auto`는
+  LAN TCP 도달 실패만 relay 전환 조건으로 인정하고 인증 실패를 우회하지 않으며 30초 cooldown으로
+  반복 실패를 제한한다. Wi-Fi Direct P2P 경로와 이를 사이에 넣는 전체 우선순위는 미구현
 - 서버 인증서 staged pin 교체와 Android client identity A/B 교체는 구현됐지만 실기기·실제 LAN 전환
   acceptance 미검증
 - 부팅 후 자동 복구, Android 계측 기반 CPU·메모리·배터리 release gate 미검증

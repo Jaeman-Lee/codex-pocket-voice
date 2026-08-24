@@ -19,7 +19,15 @@ export function pocketLinkSecurityStatus(
   now = Date.now(),
 ): string {
   if (!status) return "PocketLink TLS · 상태 확인 중";
-  const label = status.route === "relay" ? "PocketLink relay" : "PocketLink TLS";
+  const label = status.route === "relay"
+    ? "PocketLink relay"
+    : status.route === "auto"
+      ? status.lastVerifiedRoute === "relay"
+        ? "PocketLink 자동→relay"
+        : status.lastVerifiedRoute === "direct"
+          ? "PocketLink 자동→LAN"
+          : "PocketLink 자동"
+      : "PocketLink TLS";
   if (status.error) return `${label} · ${status.error}`;
   if (isRecentBackupPinObservation(status, now)) return `${label} · 새 인증서 확인됨`;
   if (status.pinSlot === "backup") return `${label} · 새 인증서 확인 만료`;

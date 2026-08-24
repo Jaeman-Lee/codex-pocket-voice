@@ -10,6 +10,18 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- PocketLink LAN 우선·relay fallback은 새 user-visible v2 transport workflow이므로 `feature`로 분류한다.
+  아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,
+  `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. APK 전달·설치와 실행 중
+  Companion 재시작은 하지 않으며 v1.8.2 current 후보, 별도 staged v1.8.3과 검증된 v1.8.1 rollback을
+  그대로 보존한다.
+- Android 연결 센터에 fixed direct/relay와 별도 `auto`를 제공한다. auto는 LAN TCP connect 자체가
+  실패한 경우에만 동일한 end-to-end Companion mTLS를 relay 위에서 다시 열며, LAN TLS hostname·SPKI·
+  client-certificate 실패는 relay로 우회하지 않는다. 반복 LAN 불통은 30초 monotonic cooldown으로
+  제한하고 마지막 verified direct/relay만 credential 없는 status로 표시한다.
+- Keystore-encrypted PocketLink config schema 3은 schema 1 direct와 schema 2 direct/relay를 원래 고정
+  경로로 migration한다. auto 설정에만 완전한 relay credential을 요구하며 P2P는 LAN과 relay 사이에
+  삽입할 다음 Phase E 단계로 남긴다.
 - Android managed-device 검증 강화는 기존 v2 native 보안 경로의 자동 회귀 누락을 고치는 internal
   compatibility `patch`다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
   `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. APK

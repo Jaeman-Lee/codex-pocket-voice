@@ -108,7 +108,10 @@ candidates and separate manual SPKI-pin review. A bounded TLS relay broker and L
 now carry an inner end-to-end PocketLink mTLS stream without exposing Gateway plaintext. Android relay enrollment
 stores the endpoint, slot and secret in Keystore-encrypted config and the native connector verifies public CA,
 hostname and relay SPKI before starting the existing Companion mTLS inside it. Wi-Fi Direct-style P2P, public relay
-operations hardening and field battery/background measurements remain open.
+transport is still open. Android now also supports a fail-closed LAN-first automatic mode: only a failed LAN TCP
+connect can move to relay, repeated LAN failures use a bounded cooldown, and TLS/SPKI/mTLS failures never trigger a
+fallback. Inserting P2P between LAN and relay, public relay operations hardening and field battery/background
+measurements remain open.
 
 ## Final definition of done
 

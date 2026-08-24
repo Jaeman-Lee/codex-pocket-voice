@@ -167,7 +167,7 @@ public class PocketTunnelPlugin extends Plugin {
         String primaryPin = normalizedPin(call.getString("primaryPin"), false);
         String backupPin = normalizedPin(call.getString("backupPin"), true);
         String route = call.getString("route");
-        if (route == null) route = "direct";
+        if (route == null) route = PocketLinkRoutePolicy.DIRECT;
         int localPort = optionalPort(call, "localPort", -1);
         int remotePort = optionalPort(call, "remotePort", -1);
         if (label == null || host == null || primaryPin == null || backupPin == null || localPort < 0 || remotePort < 0) {
@@ -179,7 +179,7 @@ public class PocketTunnelPlugin extends Plugin {
             return;
         }
         PocketLinkConfigStore.RelayConfig relay = null;
-        if ("relay".equals(route)) {
+        if (PocketLinkRoutePolicy.RELAY.equals(route) || PocketLinkRoutePolicy.AUTO.equals(route)) {
             String relayHost = normalizedHost(call.getString("relayHost"));
             String relayServerName = normalizedHost(call.getString("relayServerName"));
             String relayPin = normalizedPin(call.getString("relayServerPublicKeyPin"), false);
@@ -194,7 +194,7 @@ public class PocketTunnelPlugin extends Plugin {
             relay = new PocketLinkConfigStore.RelayConfig(
                     relayHost, relayPort, relayServerName, relayPin, relaySlot, relaySecret
             );
-        } else if (!"direct".equals(route)) {
+        } else if (!PocketLinkRoutePolicy.DIRECT.equals(route)) {
             call.reject("PocketLink 연결 경로가 올바르지 않습니다.");
             return;
         }
@@ -210,7 +210,7 @@ public class PocketTunnelPlugin extends Plugin {
             createdIdentity = !hadIdentity;
             PocketLinkConfigStore.Config config = new PocketLinkConfigStore.Config(
                     label, localPort, host, remotePort, primaryPin, backupPin, false,
-                    PocketLinkIdentityStore.SLOT_A, "", relay
+                    PocketLinkIdentityStore.SLOT_A, "", route, relay
             );
             configStore.save(config);
             saved = true;
@@ -467,6 +467,8 @@ public class PocketTunnelPlugin extends Plugin {
             result.put("transport", configured ? "pocketlink" : "termux");
             if (configured) {
                 result.put("route", config.route());
+                String lastVerifiedRoute = PocketLinkService.lastVerifiedRoute(localPort);
+                if (lastVerifiedRoute != null) result.put("lastVerifiedRoute", lastVerifiedRoute);
                 result.put("backupPinConfigured", config.backupPin != null && !config.backupPin.isEmpty());
                 result.put("identityRotationPending", !config.pendingIdentitySlot.isEmpty());
                 result.put("identityReady", PocketLinkService.identitySlotActive(
