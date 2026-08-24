@@ -41,9 +41,9 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Spoken settings review | one exact project/provider/model command | dedicated one-shot capture, ambiguity rejection, inert current→target review, touch-only apply and stale owner/catalog revalidation implemented; Chromium CI and physical voice acceptance pending |
 | Mobile browser acceptance | Playwright Chromium on Node 22 | production build plus real pairing/Gateway/SSE/run/approval path covers 320/360/412px, 150% text, keyboard resize, rotation, long diff and touch decline line-feedback payload; synthetic only, device acceptance still pending |
 | Android work notifications | opt-in connectedDevice service | maximum 8 encrypted loopback subscriptions, notification-only authenticated SSE, durable cursor/replay freshness, default-network-triggered bounded reconnect and generic retained-operation navigation implemented; API 30 token/bounds/consume/extra-scrub plus system-tray tap automated, physical locked-screen/process-kill/network-switch acceptance pending |
-| Android low-load gate | schema 3 installed-APK/candidate/transport-bound aggregate ADB report | read-only start/end base-APK digest and package-path stability checks plus 60-minute CPU/PSS/battery/background-wake thresholds bind the installed bytes, canonical signed manifest, clean commit and exact direct LAN/P2P/relay path; no physical result recorded yet |
+| Android low-load gate | schema 3 installed-APK/candidate/transport-bound aggregate ADB report | read-only start/end base-APK digest, package-path and clean-source stability checks plus 60-minute CPU/PSS/battery/background-wake thresholds bind the installed bytes, canonical signed manifest, exact commit and direct LAN/P2P/relay path; no physical result recorded yet |
 | Functional field gate | schema 1 operator-attested aggregate | signed manifest/version/commit/APK-bound inert template and fixed 20-scenario fail-closed verdict implemented; no physical/provider result recorded yet |
-| Final release evidence gate | pinned signed bundle + schema 1 structured aggregate | atomically reads non-linked bounded inputs through no-follow descriptors, verifies detached signature, APK signer and APK/SBOM bytes, binds the verifier's manifest SHA-256 receipt to the exact bytes evaluated, then re-evaluates functional observations and installed-byte-bound direct LAN/P2P/relay schema 3 verdicts for one clean candidate with 30-day freshness; no field result recorded yet |
+| Final release evidence gate | pinned signed bundle + schema 1 structured aggregate | atomically reads non-linked bounded inputs through no-follow descriptors, verifies detached signature, APK signer and APK/SBOM bytes, binds the verifier's manifest SHA-256 receipt to the exact bytes evaluated, checks clean source before and after evaluation, then re-evaluates functional observations and installed-byte-bound direct LAN/P2P/relay schema 3 verdicts for one candidate with 30-day freshness; no field result recorded yet |
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Run artifact boundary | maximum 8 / 256 MiB per operation | redacted verifier/Codex logs plus allowlisted run-reported test/image/APK regular-file snapshots; authenticated opaque download, symlink/sensitive/path escape rejection and history-delete cleanup implemented; physical Android download acceptance pending |
 | Diagnostic support bundle | schema 1 allowlist JSON | authenticated app/protocol/tool/count aggregate download, normalized version tokens and capability-gated 320px UI implemented; no device/network/workspace/request/error content, physical share acceptance pending |
@@ -51,6 +51,17 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | pairing/revoke/key-rotation state uses durable serialized commits; reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, standalone Linux GO/PBC + memory-only DHCP cleanup lifecycle, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; actual P2P field validation pending |
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+Stable clean-source evidence checkpoint decision: Android 저부하 측정과 field evidence CLI가 시작 시점의 Git
+commit/dirty 결과만 사용해 측정·평가 중 source drift를 놓칠 수 있던 provenance 오류를 고치므로 internal
+compatibility `patch`로 분류한다. 아직 전달하지 않은 incompatible v2 범위 안에서 SemVer `2.0.0`/Android
+`versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. 공통
+reader는 한 porcelain-v2 branch snapshot에서 commit과 dirty 상태를 함께 읽고, 저부하 측정은 수집 전·후,
+기능 template/판정과 최종 evidence는 출력 직전 exact clean candidate를 다시 확인한다. 중간 dirty drift는
+출력 없이 거부한다. 실제 field·Provider 호출, APK 전달·설치와 Companion 재시작 없이 current v1 후보
+1.8.2, staged v1.8.4, 검증된 rollback 1.8.1과 배포 중인 v1.8.3 Companion을 그대로 보존한다.
+`release:check`의 단위 검사 315개와 실제 app-server 통합 3개, production build·schema 일치·SBOM이
+통과했다.
 
 Atomic bounded release-input checkpoint decision: verifier와 field CLI가 metadata 확인 뒤 같은 경로를 다시
 열거나 verifier가 symlink를 따라가, 확인한 file identity·size와 실제 평가 bytes가 달라질 수 있던 release

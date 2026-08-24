@@ -10,6 +10,17 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Stable clean-source evidence fix는 Android 저부하 측정과 field 판정이 시작 시점의 clean checkout만
+  확인해, 측정·평가 중 source가 달라져도 기존 commit으로 report를 만들 수 있던 provenance 공백을
+  고치는 internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/
+  Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
+  실제 field·Provider 호출, APK 전달·설치와 Companion 재시작은 하지 않으며 current v1 후보 1.8.2,
+  staged v1.8.4, 검증된 1.8.1 rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- 공통 source reader는 한 `git status --porcelain=v2 --branch` snapshot에서 commit과 dirty 상태를 함께
+  읽는다. Android 저부하 측정은 ADB 수집 전·후, 기능 template/판정과 최종 release evidence는 결과를
+  쓰기 전 exact candidate clean source를 다시 검사한다. 중간 dirty drift는 출력 없이 실패한다.
+  `release:check`의 단위 검사 315개와 실제 app-server 통합 3개, production build·schema 일치·SBOM이
+  통과했다.
 - Atomic bounded release-input read fix는 verifier와 field CLI의 `stat/lstat` 뒤 경로 재열기 및 verifier의
   symlink 추적이 입력 크기·link·privacy 판정과 실제 읽은 bytes를 분리할 수 있던 release trust 경계
   공백을 고치는 internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서

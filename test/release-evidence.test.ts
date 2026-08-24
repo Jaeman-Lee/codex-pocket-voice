@@ -295,8 +295,7 @@ test("final release evidence CLI cryptographically verifies the signed candidate
   const fakeGit = join(binaryDirectory, "git");
   await writeFile(fakeGit, [
     "#!/bin/sh",
-    `if [ \"$1\" = \"rev-parse\" ] && [ \"$2\" = \"HEAD\" ]; then printf '%s\\n' '${commit}'; exit 0; fi`,
-    "if [ \"$1\" = \"status\" ]; then exit 0; fi",
+    `if [ \"$1\" = \"status\" ]; then printf '%s\\n' '# branch.oid ${commit}' '# branch.head feature/v2-control-plane'; exit 0; fi`,
     "exit 1",
     "",
   ].join("\n"), { mode: 0o700 });
@@ -323,6 +322,35 @@ test("final release evidence CLI cryptographically verifies the signed candidate
   assert.equal(valid.status, 0, valid.stderr);
   assert.match(valid.stdout, /Exact-candidate release evidence gate passed/);
   assert.equal(JSON.parse(await readFile(reportPath, "utf8")).gate.passed, true);
+
+  const driftDirectory = join(root, "drift-bin");
+  const driftCounter = join(root, "drift-counter");
+  await mkdir(driftDirectory);
+  const driftingGit = join(driftDirectory, "git");
+  await writeFile(driftingGit, [
+    "#!/usr/bin/env node",
+    "import { existsSync, readFileSync, writeFileSync } from \"node:fs\";",
+    `const counter = ${JSON.stringify(driftCounter)};`,
+    "if (process.argv[2] !== \"status\") process.exit(1);",
+    "const count = existsSync(counter) ? Number(readFileSync(counter, \"utf8\")) + 1 : 1;",
+    "writeFileSync(counter, String(count));",
+    `process.stdout.write(${JSON.stringify(`# branch.oid ${commit}\n# branch.head feature/v2-control-plane\n`)});`,
+    "if (count > 1) process.stdout.write(\"? source-changed.ts\\n\");",
+    "",
+  ].join("\n"), { mode: 0o700 });
+  await chmod(driftingGit, 0o700);
+  const driftReportPath = join(fieldDirectory, "source-drift-release-evidence.json");
+  const drifted = spawnSync(process.execPath, [
+    "--import", "tsx", releaseEvidenceCli, ...cliArguments, "--report", driftReportPath,
+  ], {
+    encoding: "utf8",
+    env: { ...environment, PATH: `${driftDirectory}:${environment.PATH ?? ""}` },
+    timeout: 15_000,
+  });
+  assert.ifError(drifted.error);
+  assert.notEqual(drifted.status, 0);
+  assert.match(drifted.stderr, /Checked-out Git identity could not be verified/);
+  await assert.rejects(stat(driftReportPath), /ENOENT/);
 
   const swappedManifest = canonicalJson({
     ...JSON.parse(signedManifest) as Record<string, unknown>,

@@ -47,6 +47,9 @@ package 변경 명령은 실행하지 않는다.
 
 manifest는 symlink/hardlink가 아닌 단일 regular file이어야 한다. 도구는 `O_NOFOLLOW`로 한 번 연 file
 descriptor에서 크기와 시작·종료 metadata를 확인하므로 읽는 중 경로 교체·변경은 ADB 조회 전에 거부한다.
+Git commit과 dirty 상태는 한 porcelain-v2 snapshot으로 측정 직전과 직후에 각각 확인한다. 종료 시 source가
+manifest의 exact commit이 아니거나 worktree에 tracked/untracked 변경이 있으면 측정값이 통과해도 report를
+만들지 않는다.
 
 ```sh
 npm run android:field-acceptance -- \
@@ -80,5 +83,5 @@ report는 공개 저장소나 support bundle에 올리지 않는다. 필요한 �
 한 번의 통과는 해당 APK·단말·transport 조건만 증명한다. 출시 후보에서는 최소 direct LAN, 실제 P2P와
 outbound relay의 지원 경로별로 별도 측정하고, 세 report의 commit·manifest/APK digest가 기능 field
 report와 모두 같은지 확인한 뒤 잠금화면·process kill·절전·네트워크 전환 복구 결과와 함께 검토한다.
-시작 전 digest 불일치나 측정 중 package path·UID·APK bytes 변경은 report 없이 실패한다.
+시작 전 digest 불일치, 측정 중 package path·UID·APK bytes 변경이나 clean source drift는 report 없이 실패한다.
 이 저장소의 fixture 테스트와 CI 통과는 물리 단말의 배터리 또는 wake 결과를 대신하지 않는다.

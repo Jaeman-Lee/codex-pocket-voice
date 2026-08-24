@@ -7,14 +7,17 @@ import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { AndroidFieldTransport } from "../src/android-field-metrics.js";
 import { readBoundedRegularFile } from "../src/bounded-file.js";
-import { FunctionalFieldError } from "../src/functional-field-acceptance.js";
+import {
+  FunctionalFieldError,
+  requireFunctionalCandidateSource,
+} from "../src/functional-field-acceptance.js";
 import {
   ReleaseEvidenceError,
   evaluateReleaseEvidence,
   requireUnusedReleaseEvidenceFile,
   writeReleaseEvidenceFile,
 } from "../src/release-evidence.js";
-import { APP_VERSION } from "../src/version.js";
+import { readCleanSourceIdentity } from "../src/source-identity.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_INPUT_BYTES = 64 * 1024;
@@ -138,6 +141,7 @@ async function main(): Promise<void> {
     },
     source,
   );
+  requireFunctionalCandidateSource(report.candidate, await cleanSourceIdentity());
   await writeReleaseEvidenceFile(options.reportPath, report);
   if (report.gate.passed) {
     process.stdout.write("Exact-candidate release evidence gate passed; private aggregate report written.\n");
@@ -204,40 +208,11 @@ async function readBoundedFile(path: string, privateFile: boolean, label: string
 }
 
 async function cleanSourceIdentity(): Promise<{ version: string; versionCode: number; commit: string }> {
-  let commit: string;
-  let dirty: string;
   try {
-    const [commitResult, statusResult] = await Promise.all([
-      execFileAsync("git", ["rev-parse", "HEAD"], {
-        encoding: "utf8",
-        timeout: 10_000,
-        maxBuffer: 64 * 1024,
-      }),
-      execFileAsync("git", ["status", "--porcelain=v1", "--untracked-files=normal"], {
-        encoding: "utf8",
-        timeout: 10_000,
-        maxBuffer: 64 * 1024,
-      }),
-    ]);
-    commit = commitResult.stdout.trim();
-    dirty = statusResult.stdout;
+    return await readCleanSourceIdentity();
   } catch {
     throw new ReleaseEvidenceError("Checked-out Git identity could not be verified");
   }
-  if (!/^[a-f0-9]{40}$/.test(commit) || dirty.length !== 0) {
-    throw new ReleaseEvidenceError("Release evidence requires the exact clean candidate commit");
-  }
-  return { version: APP_VERSION, versionCode: versionCode(APP_VERSION), commit };
-}
-
-function versionCode(version: string): number {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
-  if (!match) throw new ReleaseEvidenceError("Source version is invalid");
-  const parts = match.slice(1).map(Number);
-  if (parts.some((part) => !Number.isSafeInteger(part) || part < 0 || part > 99)) {
-    throw new ReleaseEvidenceError("Source version is invalid");
-  }
-  return parts[0]! * 10_000 + parts[1]! * 100 + parts[2]!;
 }
 
 const entry = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : "";

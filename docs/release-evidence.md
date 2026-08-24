@@ -9,6 +9,8 @@
 검증기는 성공한 exact manifest bytes의 SHA-256을 strict JSON receipt로 넘기며, 최종 gate가 field 입력과
 함께 다시 읽은 manifest digest와 같을 때만 평가를 시작한다. verifier 종료와 field 평가 사이에 같은
 경로의 manifest가 교체되면 최종 report를 만들지 않는다.
+Git commit과 dirty 상태도 한 porcelain-v2 snapshot으로 입력 평가 전·후에 확인한다. 두 시점 모두 signed
+candidate의 exact commit이고 clean일 때만 최종 report를 만든다.
 고정 fingerprint는 함께 받은 인증서에서 계산하면 안 되며 이전 신뢰 설치본·Release APK 또는 별도
 신뢰 경로에서 확인해야 한다. 최종 report의 `structured_aggregate_only`는 암호 검증과 운영자 관찰을
 구조화한 증거이며 실제 Provider·물리 단말 실행을 대신하지 않는다.

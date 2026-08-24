@@ -590,7 +590,8 @@ create-once 0600 report에는 aggregate verdict만 남기고 device/network/UID/
 포함하지 않는다. pre-handoff schema 3 report는 별도 암호 검증한 canonical signed manifest의 전체
 candidate identity와 clean source commit, 실제 `direct_lan`/`p2p`/`outbound_relay` 경로 및 측정 시작·종료
 시각을 고정한다. 측정 시작·종료에는 read-only `pm path`와 toybox `sha256sum`으로 단일 설치 base APK
-digest와 package path·UID 안정성을 확인한다. manifest/transport가 없거나 설치 package/versionCode/APK
+digest와 package path·UID 안정성을 확인하고, 한 porcelain-v2 snapshot으로 exact clean source도 양쪽에서
+재검증한다. manifest/transport가 없거나 설치 package/versionCode/APK
 bytes가 candidate와 다르면 측정을 진행하거나 report를 만들지 않는다. fixture 검증은 구현했지만 물리
 단말 수치는 아직 없다.
 
@@ -607,7 +608,8 @@ device/network identifier, credential, prompt/response, 오류 원문과 자유 
 candidate이고 모두 30일 이내 pass일 때만 create-once 0600 aggregate를 통과시킨다. field 평가 전에는
 independent trust path의 pinned certificate fingerprint로 detached manifest signature, APK signer와
 APK/SBOM 실제 hash·byte count를 검증한다. verifier가 반환한 exact manifest SHA-256 receipt와 field
-평가가 읽은 bytes도 다시 대조하며, 검증 뒤 경로 교체를 포함한 실패는 출력 없이 종료한다. 실제 field
+평가가 읽은 bytes를 대조하고 평가 전·후 exact clean source를 재검증하며, 검증 뒤 경로 교체나 source
+drift를 포함한 실패는 출력 없이 종료한다. 실제 field
 입력은 `O_NOFOLLOW` 단일 descriptor에서 regular/single-link, private report의 owner-only 조건,
 시작·종료 metadata와 byte 상한을 확인해 symlink/hardlink·읽는 중 교체도 거부한다. 실제 field evidence는 아직 없고
 signed/tampered/swapped/linked bundle과 합성 field fixture로만 검증했다.

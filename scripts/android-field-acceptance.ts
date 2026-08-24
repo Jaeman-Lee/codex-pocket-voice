@@ -1,8 +1,6 @@
 #!/usr/bin/env -S node --import tsx
 
-import { execFile } from "node:child_process";
 import { resolve } from "node:path";
-import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import {
   ANDROID_FIELD_TRANSPORTS,
@@ -19,9 +17,8 @@ import {
   requireFunctionalCandidateSource,
 } from "../src/functional-field-acceptance.js";
 import { readBoundedRegularFile } from "../src/bounded-file.js";
-import { APP_VERSION } from "../src/version.js";
+import { readCleanSourceIdentity } from "../src/source-identity.js";
 
-const execFileAsync = promisify(execFile);
 const MAX_MANIFEST_BYTES = 64 * 1024;
 
 interface CliOptions {
@@ -87,16 +84,6 @@ function integerOption(raw: string | undefined, label: string): number {
   return value;
 }
 
-function versionCode(version: string): number {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
-  if (!match) throw new AndroidFieldError("Source version is invalid");
-  const parts = match.slice(1).map(Number);
-  if (parts.some((part) => !Number.isSafeInteger(part) || part < 0 || part > 99)) {
-    throw new AndroidFieldError("Source version is invalid");
-  }
-  return parts[0]! * 10_000 + parts[1]! * 100 + parts[2]!;
-}
-
 async function main(): Promise<void> {
   const options = parseArguments(process.argv.slice(2));
   if (options === "help") {
@@ -132,6 +119,7 @@ async function main(): Promise<void> {
     mode: options.releaseGate ? "release_gate" : "observation",
     ...(options.serial ? { serial: options.serial } : {}),
   }, { executor: new NodeAdbExecutor() });
+  requireFunctionalCandidateSource(candidate, await cleanSourceIdentity());
   await writeAndroidFieldReport(options.reportPath, report);
   if (report.gate.outcome === "failed") {
     process.stderr.write("Android field release gate failed; inspect the aggregate report.\n");
@@ -144,30 +132,11 @@ async function main(): Promise<void> {
 }
 
 async function cleanSourceIdentity(): Promise<{ version: string; versionCode: number; commit: string }> {
-  let commit: string;
-  let dirty: string;
   try {
-    const [commitResult, statusResult] = await Promise.all([
-      execFileAsync("git", ["rev-parse", "HEAD"], {
-        encoding: "utf8",
-        timeout: 10_000,
-        maxBuffer: 64 * 1024,
-      }),
-      execFileAsync("git", ["status", "--porcelain=v1", "--untracked-files=normal"], {
-        encoding: "utf8",
-        timeout: 10_000,
-        maxBuffer: 64 * 1024,
-      }),
-    ]);
-    commit = commitResult.stdout.trim();
-    dirty = statusResult.stdout;
+    return await readCleanSourceIdentity();
   } catch {
     throw new AndroidFieldError("Checked-out Git identity could not be verified");
   }
-  if (!/^[a-f0-9]{40}$/.test(commit) || dirty.length !== 0) {
-    throw new AndroidFieldError("Android field evidence requires the exact clean candidate commit");
-  }
-  return { version: APP_VERSION, versionCode: versionCode(APP_VERSION), commit };
 }
 
 async function readManifest(path: string): Promise<string> {

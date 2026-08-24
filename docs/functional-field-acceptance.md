@@ -31,6 +31,8 @@ npm run android:functional-acceptance -- \
 
 도구는 manifest version/commit과 현재 clean source를 대조한다. 템플릿의 모든 scenario는
 `outcome: "not_run"`, `attempts: 0`, `observedAt: null`, `reason: "not_run"`이므로 생성만으로 통과할 수 없다.
+template 또는 판정 report를 쓰기 직전에도 한 porcelain-v2 snapshot으로 exact commit과 clean 상태를 다시
+확인하며, 입력 평가 중 source가 달라지면 출력하지 않는다.
 
 현장 검증을 시작·종료한 canonical UTC 시각을 `testWindow`에 기록하고 다음 aggregate만 채운다.
 

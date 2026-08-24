@@ -78,7 +78,9 @@ manifest·signature·certificate·APK·SBOM은 symlink/hardlink가 아닌 regula
 각 파일을 `O_NOFOLLOW` file descriptor로 한 번만 열어 크기·link count와 시작/종료 metadata를 확인하고
 상한까지만 읽으므로 metadata 검사 뒤 경로 교체나 읽는 중 변경도 거부한다.
 최종 field evidence 명령은 verifier의 `--json` 결과에 포함된 exact manifest SHA-256과 평가 시점에 읽은
-bytes를 다시 대조하므로, 두 단계 사이 manifest 경로 교체도 실패-폐쇄로 차단한다.
+bytes를 다시 대조하므로, 두 단계 사이 manifest 경로 교체도 실패-폐쇄로 차단한다. 또한 한
+`git status --porcelain=v2 --branch` snapshot으로 평가 전·후 exact commit과 clean 상태를 확인해 중간
+source drift가 있으면 report를 쓰지 않는다.
 
 v2 Android 앱에서는 연결 센터의 **Android 앱 업데이트 → ZIP 선택**으로 동일한 signed artifact ZIP을
 고르거나 **공식판 조회**로 hardcoded public GitHub 저장소의 Latest 정식판을 명시적으로 확인할 수 있다.

@@ -1,8 +1,6 @@
 #!/usr/bin/env -S node --import tsx
 
-import { execFile } from "node:child_process";
 import { resolve } from "node:path";
-import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import {
   FunctionalFieldError,
@@ -14,9 +12,8 @@ import {
   writeFunctionalFieldFile,
 } from "../src/functional-field-acceptance.js";
 import { readBoundedRegularFile } from "../src/bounded-file.js";
-import { APP_VERSION } from "../src/version.js";
+import { readCleanSourceIdentity } from "../src/source-identity.js";
 
-const execFileAsync = promisify(execFile);
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_OBSERVATION_BYTES = 64 * 1024;
 
@@ -72,9 +69,11 @@ async function main(): Promise<void> {
   requireFunctionalCandidateSource(candidate, expectedSource);
   if ("createObservationsPath" in options) {
     await requireUnusedFunctionalFieldFile(options.createObservationsPath);
+    const template = createFunctionalFieldObservationTemplate(candidate);
+    requireFunctionalCandidateSource(candidate, await cleanSourceIdentity());
     await writeFunctionalFieldFile(
       options.createObservationsPath,
-      createFunctionalFieldObservationTemplate(candidate),
+      template,
     );
     process.stdout.write("Created an inert owner-only functional observation template; no field gate has passed.\n");
     return;
@@ -82,6 +81,7 @@ async function main(): Promise<void> {
   await requireUnusedFunctionalFieldFile(options.reportPath);
   const observationText = await readBoundedFile(options.observationsPath, MAX_OBSERVATION_BYTES, true);
   const report = evaluateFunctionalFieldAcceptance(manifestText, observationText, expectedSource);
+  requireFunctionalCandidateSource(candidate, await cleanSourceIdentity());
   await writeFunctionalFieldFile(options.reportPath, report);
   if (report.gate.passed) {
     process.stdout.write("Functional field release gate passed; structured aggregate report written.\n");
@@ -92,30 +92,11 @@ async function main(): Promise<void> {
 }
 
 async function cleanSourceIdentity(): Promise<{ version: string; versionCode: number; commit: string }> {
-  let commit: string;
-  let dirty: string;
   try {
-    const [commitResult, statusResult] = await Promise.all([
-      execFileAsync("git", ["rev-parse", "HEAD"], {
-        encoding: "utf8",
-        timeout: 10_000,
-        maxBuffer: 64 * 1024,
-      }),
-      execFileAsync("git", ["status", "--porcelain=v1", "--untracked-files=normal"], {
-        encoding: "utf8",
-        timeout: 10_000,
-        maxBuffer: 64 * 1024,
-      }),
-    ]);
-    commit = commitResult.stdout.trim();
-    dirty = statusResult.stdout;
+    return await readCleanSourceIdentity();
   } catch {
     throw new FunctionalFieldError("Checked-out Git identity could not be verified");
   }
-  if (!/^[a-f0-9]{40}$/.test(commit) || dirty.length !== 0) {
-    throw new FunctionalFieldError("Functional field evidence requires the exact clean candidate commit");
-  }
-  return { version: APP_VERSION, versionCode: versionCode(APP_VERSION), commit };
 }
 
 async function readBoundedFile(path: string, maximum: number, privateFile: boolean): Promise<string> {
@@ -129,16 +110,6 @@ async function readBoundedFile(path: string, maximum: number, privateFile: boole
       privateFile ? "Functional observations are not a private regular file" : "Update manifest file is invalid",
     );
   }
-}
-
-function versionCode(version: string): number {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
-  if (!match) throw new FunctionalFieldError("Source version is invalid");
-  const parts = match.slice(1).map(Number);
-  if (parts.some((part) => !Number.isSafeInteger(part) || part < 0 || part > 99)) {
-    throw new FunctionalFieldError("Source version is invalid");
-  }
-  return parts[0]! * 10_000 + parts[1]! * 100 + parts[2]!;
 }
 
 const entry = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : "";
