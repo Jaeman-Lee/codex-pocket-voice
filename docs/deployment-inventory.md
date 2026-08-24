@@ -26,6 +26,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Deployed v1 Companion | 1.8.3 at `e0f6ea1` | separate versioned runtime active; completed target writer release verified |
 | OpenAI API milestone | official SDK 6.49.0 | encrypted bounded `store:false` multi-turn replay, fake tool-loop/SSE/Models tests and protected 2-call smoke harness; no API key configured and no paid request sent |
 | OpenRouter milestone | Chat Completions + user/ZDR model, endpoint and key APIs | encrypted bounded multi-turn replay, exact upstream lock/approved backup, bounded price/performance/quota UI, fake routing/tool-loop/SSE and protected 2-call smoke harness; no API key configured and no paid request sent |
+| Provider credential boundary | systemd 256+ encrypted user credential | fixed-name runtime files, no-follow/owner/mode/size validation and recoverable ciphertext rotation/removal implemented; legacy 0600 file retained |
 | Provider runtime contract | exact run ownership + ordered single-terminal events | Codex/OpenAI/OpenRouter shared success/partial-failure/cancel/timeout suite and fake 401/403/429/5xx/malformed SSE fixtures passing |
 | Android journal milestone | app-owned SQLite schema 1 | encrypted snapshot migration and rollback mirror implemented; CI-only, no device migration performed |
 | Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, HMAC-authenticated bounded user retention, workspace JSON export and protected delete implemented in v2; not field deployed |
@@ -37,6 +38,15 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, standalone Linux GO/PBC + memory-only DHCP cleanup lifecycle, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; actual P2P field validation pending |
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+Linux Provider credential checkpoint decision: systemd encrypted credential 설정·교체·해제는 새 server credential
+workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 SemVer
+`2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
+대체한다. systemd 256+에서만 user/machine-bound `LoadCredentialEncrypted=`를 unit에 넣고, Companion은
+private runtime directory의 고정 이름을 환경변수보다 우선한다. invalid runtime file은 legacy source로
+우회하지 않고, set/rotate/remove는 평문 파일·자동 service restart 없이 recoverable ciphertext archive를
+사용한다. 현재 PC의 systemd 245에서는 source fixture만 검증했고 실제 key 설정·APK 전달·설치·Companion
+재시작은 하지 않았다. current v1 후보 1.8.2, 별도 staged v1.8.3과 검증된 rollback 1.8.1은 그대로 보존한다.
 
 OpenAI protected smoke checkpoint decision: 실제 Responses Provider contract를 실행하는 새 검증 workflow이므로
 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 SemVer `2.0.0`/Android

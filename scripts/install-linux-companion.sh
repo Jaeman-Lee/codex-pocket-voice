@@ -11,7 +11,15 @@ config_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/codex-pocket-voice
 systemd_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}/systemd/user
 environment_file=$config_dir/companion.env
 service_file=$systemd_dir/codex-pocket-companion.service
+encrypted_credential_dir=$config_dir/credentials.encrypted
+openai_credential_file=$encrypted_credential_dir/openai-api-key.cred
+openrouter_credential_file=$encrypted_credential_dir/openrouter-api-key.cred
 projects_home=${CODEX_PROJECTS_HOME:-"$HOME/workspace"}
+
+if LC_ALL=C printf '%s' "$repo_dir$config_dir$systemd_dir$projects_home" | grep -q '[[:cntrl:]]'; then
+  printf '%s\n' 'Installation paths must not contain control characters.' >&2
+  exit 1
+fi
 
 missing=
 for command in node npm git tmux ssh; do
@@ -45,6 +53,46 @@ if [ ! -f "$environment_file" ]; then
   } > "$environment_file"
 fi
 
+encrypted_credentials_present=false
+for credential_file in "$openai_credential_file" "$openrouter_credential_file"; do
+  if [ -e "$credential_file" ] || [ -L "$credential_file" ]; then
+    encrypted_credentials_present=true
+    if [ -L "$credential_file" ] || [ ! -f "$credential_file" ]; then
+      printf 'Encrypted credential must be a regular non-symlink file: %s\n' "$credential_file" >&2
+      exit 1
+    fi
+    credential_mode=$(stat -c '%a' "$credential_file")
+    credential_owner=$(stat -c '%u' "$credential_file")
+    credential_size=$(stat -c '%s' "$credential_file")
+    if [ "$credential_owner" != "$(id -u)" ] || [ $((0$credential_mode & 077)) -ne 0 ]; then
+      printf 'Encrypted credential must be owned by this user with 0600 or 0400 permissions: %s\n' "$credential_file" >&2
+      exit 1
+    fi
+    if [ "$credential_size" -le 0 ] || [ "$credential_size" -gt 1048576 ]; then
+      printf 'Encrypted credential must be between 1 byte and 1 MiB: %s\n' "$credential_file" >&2
+      exit 1
+    fi
+  fi
+done
+
+if [ "$encrypted_credentials_present" = true ]; then
+  if ! command -v systemd-creds >/dev/null 2>&1; then
+    printf '%s\n' 'Encrypted Provider credentials require systemd-creds 256 or newer.' >&2
+    exit 1
+  fi
+  systemd_major=$(systemd --version | awk 'NR == 1 { print $2; exit }')
+  case "$systemd_major" in
+    ''|*[!0-9]*)
+      printf '%s\n' 'Could not determine the installed systemd version.' >&2
+      exit 1
+      ;;
+  esac
+  if [ "$systemd_major" -lt 256 ]; then
+    printf 'Encrypted user-service credentials require systemd 256 or newer; found %s.\n' "$systemd_major" >&2
+    exit 1
+  fi
+fi
+
 npm --prefix "$repo_dir" ci
 npm --prefix "$repo_dir" run build
 
@@ -56,6 +104,12 @@ umask 077
   printf '%s\n' '' '[Service]'
   printf 'WorkingDirectory=%s\n' "$repo_dir"
   printf 'EnvironmentFile=%s\n' "$environment_file"
+  if [ -f "$openai_credential_file" ]; then
+    printf 'LoadCredentialEncrypted=openai-api-key:%s\n' "$openai_credential_file"
+  fi
+  if [ -f "$openrouter_credential_file" ]; then
+    printf 'LoadCredentialEncrypted=openrouter-api-key:%s\n' "$openrouter_credential_file"
+  fi
   printf 'ExecStart=%s/scripts/start-web-pc.sh\n' "$repo_dir"
   printf '%s\n' 'Restart=on-failure' 'RestartSec=3'
   printf '%s\n' '' '[Install]' 'WantedBy=default.target'

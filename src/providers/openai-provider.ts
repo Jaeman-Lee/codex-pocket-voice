@@ -126,14 +126,18 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
 
   async describe(): Promise<ProviderDescriptor> {
     let configured = false;
-    let detail = "Linux Companion에 OPENAI_API_KEY 또는 0600 key 파일을 설정해 주세요.";
+    let detail = "Linux Companion에 systemd credential, OPENAI_API_KEY 또는 0600 key 파일을 설정해 주세요.";
     try {
       const credential = await this.credentials.load();
       configured = credential !== null;
       if (configured) {
-        detail = credential?.source === "protected_file"
-          ? "Companion의 보호된 key 파일을 사용합니다. 요청 본문은 기본적으로 저장하지 않습니다."
-          : "Companion 환경변수의 API key를 사용합니다. 요청 본문은 기본적으로 저장하지 않습니다.";
+        if (credential?.source === "systemd_credential") {
+          detail = "systemd가 런타임에 전달한 credential을 사용합니다. 요청 본문은 기본적으로 저장하지 않습니다.";
+        } else if (credential?.source === "protected_file") {
+          detail = "Companion의 보호된 key 파일을 사용합니다. 요청 본문은 기본적으로 저장하지 않습니다.";
+        } else {
+          detail = "Companion 환경변수의 API key를 사용합니다. 요청 본문은 기본적으로 저장하지 않습니다.";
+        }
       }
     } catch (error) {
       detail = error instanceof OpenAICredentialError ? error.message : "OpenAI API key 설정을 확인할 수 없습니다.";

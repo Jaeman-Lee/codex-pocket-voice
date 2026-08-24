@@ -6,7 +6,14 @@ SSE, 로그와 Git에는 key를 넣지 않는다.
 
 ## 서버 설정
 
-권장 방식은 Companion 사용자만 읽을 수 있는 key 파일과 명시적인 모델 허용 목록이다.
+systemd 256 이상에서는 user-scoped encrypted credential과 명시적인 모델 허용 목록이 권장 방식이다.
+
+```sh
+./scripts/manage-provider-credential.sh set openrouter
+./scripts/install-linux-companion.sh
+```
+
+구형 systemd 또는 직접 실행 환경에서는 Companion 사용자만 읽을 수 있는 key 파일을 사용한다.
 
 ```sh
 chmod 600 /secure/path/openrouter-api-key
@@ -18,6 +25,8 @@ export CODEX_POCKET_OPENROUTER_DEFAULT_MODEL=vendor/model-a
 `OPENROUTER_API_KEY` 환경변수도 지원한다. 모델 이름 패턴으로 기능을 추측하지 않으며 허용 목록이
 없으면 실행을 비활성화한다. 설정 변경 뒤 Companion 재시작은 활성 Codex turn이 없고 사용자가
 확인한 시점에만 수행한다.
+암호문 교체·recoverable 해제, source 우선순위와 fail-closed 검사는
+[Linux Provider credentials](provider-credentials.md)를 따른다.
 
 ## 모델과 개인정보 경계
 

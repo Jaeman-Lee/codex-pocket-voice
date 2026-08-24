@@ -240,12 +240,14 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
 
   async describe(): Promise<ProviderDescriptor> {
     let configured = false;
-    let detail = "Linux Companion에 OPENROUTER_API_KEY 또는 0600 key 파일을 설정해 주세요.";
+    let detail = "Linux Companion에 systemd credential, OPENROUTER_API_KEY 또는 0600 key 파일을 설정해 주세요.";
     try {
       const credential = await this.credentials.load();
       configured = credential !== null;
       if (configured) {
-        detail = "ZDR·data collection 거부·모델 고정 profile로 OpenRouter를 사용합니다.";
+        detail = credential?.source === "systemd_credential"
+          ? "systemd credential과 ZDR·data collection 거부·모델 고정 profile로 OpenRouter를 사용합니다."
+          : "ZDR·data collection 거부·모델 고정 profile로 OpenRouter를 사용합니다.";
       }
     } catch (error) {
       detail = error instanceof OpenRouterCredentialError

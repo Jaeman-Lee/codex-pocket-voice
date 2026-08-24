@@ -5,7 +5,14 @@ API를 호출한다. Android/PWA bundle, Gateway 응답, 로그와 Git에는 API
 
 ## 서버 설정
 
-권장 방식은 Companion 사용자만 읽을 수 있는 key 파일이다.
+systemd 256 이상에서는 user-scoped encrypted credential이 권장 방식이다.
+
+```sh
+./scripts/manage-provider-credential.sh set openai
+./scripts/install-linux-companion.sh
+```
+
+구형 systemd 또는 직접 실행 환경에서는 Companion 사용자만 읽을 수 있는 key 파일을 사용한다.
 
 ```sh
 chmod 600 /secure/path/openai-api-key
@@ -19,6 +26,8 @@ export CODEX_POCKET_OPENAI_DEFAULT_MODEL=gpt-example-verified
 Responses·이미지·도구 capability를 추정하지 않으며, 허용 목록이 없으면 API 실행을 비활성화한다.
 
 설정을 바꾼 뒤에는 실행 중인 Codex turn이 없고 사용자가 확인한 시점에만 Companion을 재시작한다.
+암호문 교체·recoverable 해제, source 우선순위와 fail-closed 검사는
+[Linux Provider credentials](provider-credentials.md)를 따른다.
 
 ## 현재 활성 범위
 
@@ -30,15 +39,16 @@ Responses·이미지·도구 capability를 추정하지 않으며, 허용 목록
 - Models API 인증·목록 확인만 수행하는 무료 연결 테스트
 - 공급자 원본 JSON과 Authorization 값을 제거한 오류 분류
 
-현재 함수 도구는 읽기 전용이다. 프로젝트 밖 경로와 외부 symlink, `.git`, `.env`, 개인 키·keystore,
+관찰 도구는 읽기 전용으로 자동 실행되고, 파일 교체·생성·rename과 격리 npm 검증은 SHA-bound diff와
+터치 승인을 통과한 경우에만 실행된다. 프로젝트 밖 경로와 외부 symlink, `.git`, `.env`, 개인 키·keystore,
 credential 계열 파일을 거절하고 파일·검색·diff 결과에 크기와 시간 상한을 적용한다. Git 호출은 고정된
 `status`, `diff`, `rev-parse` 인자만 사용하며 외부 diff, textconv, fsmonitor와 외부 Git 환경 override를
 비활성화한다. 검색은 `rg`를 우선 사용하고 설치되지 않은 Companion에서는 같은 경로·파일 수·byte
 상한을 적용한 내장 검색으로 전환한다. 도구 원문 결과는 Gateway SSE로 보내지 않고 redacted
 summary만 전달한다.
 
-아직 대화 재개, 파일 변경, patch, 임의 명령과 network 도구는 비활성화되어 있다. 쓰기와 실행은
-durable journal 및 터치 승인함이 구현되고 별도 보안 검증을 통과한 뒤에만 활성화한다.
+대화 재개와 승인된 bounded 파일 변경·검증은 durable journal과 공통 Tool Broker로 활성화되어 있다.
+삭제·chmod·binary, 임의 명령과 network 도구는 비활성화되어 있다.
 
 `store: false` 함수 호출은 각 응답의 message·function call·reasoning 항목과
 `function_call_output`을 Companion이 다음 요청에 다시 전달한다. reasoning 모델을 위해

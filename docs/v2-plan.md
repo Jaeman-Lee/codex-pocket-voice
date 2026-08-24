@@ -22,7 +22,7 @@
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, 세 Provider 공용 contract·stream failure fixture, protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신 모듈 구현; production build·실제 pairing/Gateway/SSE/run/approval 기반 Playwright 모바일 회귀 통과, 실기기 회귀 잔여 |
-| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only key, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구, 격리 npm 검증과 보호된 2-call smoke harness 구현; 실제 모델 실행·프로젝트 등급 잔여 |
+| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only systemd encrypted credential, 암호화 durable multi-turn, 읽기 도구, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구, 격리 npm 검증과 보호된 2-call smoke harness 구현; 실제 모델 실행·프로젝트 등급 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker와 보호된 synthetic smoke harness 구현; 실제 model eval 실행·현장 등급 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in process-death native 알림·retained run 열기, API 30 token-gated notification Intent 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed 구현; 실기기 background/tray-tap deep-link acceptance 잔여 |
 | Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; API 30 ATD에서 Keystore config/identity/background state와 notification Intent 계측 회귀 추가, 실제 P2P group formation·external edge DDoS/실부하·tray-tap/reconnect/voice 실기기 release gate 잔여 |
@@ -183,8 +183,9 @@ Provider와 fallback 범위를 명시적으로 선택한 경우에만 위 개인
 - `OPENAI_API_KEY`와 `OPENROUTER_API_KEY`는 Linux Companion에만 둔다.
 - APK, PWA JavaScript, WebView storage, Android 작업 저널, Gateway 응답과 SSE 이벤트에는 키를
   절대로 전달하지 않는다.
-- 첫 단계는 Linux 환경 변수 또는 권한 `0600`의 별도 credential 파일을 지원한다.
-- 다음 단계에서 systemd encrypted credentials 또는 동등한 Linux 비밀 저장 경계를 추가한다.
+- Linux 환경 변수 또는 권한 `0600`의 별도 credential 파일 호환을 유지한다.
+- systemd 256+ user service는 `LoadCredentialEncrypted=`와 `$CREDENTIALS_DIRECTORY`를 사용하고,
+  평문 파일 없는 set·recoverable rotation/removal을 지원한다.
 - 스마트폰의 AI 연결 센터는 `설정됨/없음/검증 실패`, 계정 별명과 마지막 검증 시각만 표시한다.
 - 연결 테스트는 모델 목록과 인증 상태만 확인하고 유료 모델 요청을 보내지 않는다.
 - 로그, 오류, diagnostics와 support bundle에서 Authorization 헤더, 키 형식, 개인 경로와 요청 본문을

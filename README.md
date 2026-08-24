@@ -89,6 +89,10 @@ cd codex-pocket-voice
 ./scripts/install-linux-companion.sh
 ```
 
+OpenAI/OpenRouter key는 systemd 256 이상에서 평문 파일 대신 user-scoped encrypted credential로 둘 수
+있습니다. 설정·교체·해제와 안전한 재시작 순서는 [Linux Provider credentials](docs/provider-credentials.md)를
+참고하세요. 현재 PC가 systemd 256 미만이면 기존 0600 private key 파일 방식이 유지됩니다.
+
 systemd 사용자 서비스를 사용할 수 없는 Linux 환경에서는 스크립트 안내에 따라
 `./scripts/start-web-pc.sh`를 실행합니다. Companion 로그에 10분간 유효한 8자리
 페어링 코드가 표시되며, 앱에 한 번 입력하면 이후 토큰은 Android Keystore로 보호됩니다.
