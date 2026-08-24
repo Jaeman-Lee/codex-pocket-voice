@@ -20,6 +20,9 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
   device/operation을 한 번만 소비하는지 확인하고 테스트 알림·화면 상태를 정리한다. SystemUI를 제거한
   ATD는 이 검사를 증명할 수 없어 사용하지 않는다. 물리 단말 잠금화면·process-kill·절전 검증은 현장
   release gate로 유지한다.
+- API 30 SystemUI가 거부하던 notification small-icon vector의 잘못된 마지막 arc 좌표를 수정한다. 동일한
+  아이콘을 쓰는 work notification, background event service와 PocketLink foreground service가 실제
+  system tray에서 렌더링되는지 위 계측 경로로 검증한다.
 - Android background network-transition reconnect는 notification SSE가 끊긴 뒤 최대 60초 backoff를
   기다릴 수 있던 기존 v2 native 동작을 고치는 internal compatibility `patch`다. 아직 현장 전달하지 않은
   incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고

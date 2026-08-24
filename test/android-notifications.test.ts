@@ -19,6 +19,7 @@ test("Android work notifications survive WebView death with encrypted bounded lo
     androidBuild,
     androidVersions,
     androidWorkflow,
+    notificationIcon,
   ] = await Promise.all([
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketNotificationsPlugin.java"),
     source("../android/app/src/main/java/io/github/jaemanlee/codexpocketvoice/PocketBackgroundEventService.java"),
@@ -35,6 +36,7 @@ test("Android work notifications survive WebView death with encrypted bounded lo
     source("../android/app/build.gradle"),
     source("../android/variables.gradle"),
     source("../.github/workflows/android-debug.yml"),
+    source("../android/app/src/main/res/drawable/ic_pocket_link.xml"),
   ]);
 
   assert.match(manifest, /android\.permission\.POST_NOTIFICATIONS/);
@@ -121,6 +123,8 @@ test("Android work notifications survive WebView death with encrypted bounded lo
   assert.match(instrumentedTest, /!tapTarget\.isClickable\(\)[\s\S]*tapTarget\.getParent\(\)/);
   assert.match(instrumentedTest, /By\.pkg\(context\.getPackageName\(\)\)\.depth\(0\)/);
   assert.match(instrumentedTest, /tray action must remain one-time/);
+  assert.match(notificationIcon, /a5,5 0,0 0,0 -10z/);
+  assert.doesNotMatch(notificationIcon, /a5,5 0,0 0,0 -10,0z/);
 });
 
 async function source(path: string): Promise<string> {

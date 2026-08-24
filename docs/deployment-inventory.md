@@ -58,7 +58,9 @@ device/operation을 한 번만 소비하는지 검사한다. 테스트 종료 �
 실제 device/network 값, prompt·workspace·응답은 사용하지 않는다. APK 전달·설치, 실제 Provider 호출과
 Companion 재시작은 하지 않고 current v1 후보 1.8.2, staged v1.8.4와 검증된 rollback 1.8.1을 보존한다.
 SystemUI를 제거한 ATD는 tray path를 증명할 수 없으므로 사용하지 않는다. 물리 단말 잠금화면·
-process-kill·절전·네트워크 전환은 계속 field gate다.
+process-kill·절전·네트워크 전환은 계속 field gate다. 첫 full-SystemUI 실행은 notification small-icon
+vector의 마지막 arc에 잘못 붙은 좌표를 발견했으며, Android 11 SystemUI가 실제로 렌더링할 수 있도록
+경로를 수정하고 source 계약으로 고정한다.
 
 Android background network-transition checkpoint decision: notification SSE의 최대 60초 retry 지연을 줄이는
 기존 v2 native transport 수정이므로 internal compatibility `patch`로 분류한다. 아직 전달하지 않은
