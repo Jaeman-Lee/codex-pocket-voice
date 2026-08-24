@@ -10,6 +10,16 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Verified-manifest handoff fix는 최종 evidence 도구가 별도 프로세스에서 암호 검증한 뒤 같은 경로의
+  manifest를 다시 읽어, 그 사이 교체된 바이트를 평가할 수 있던 release trust 경계 공백을 고치는
+  internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
+  `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. 실제
+  field·Provider 호출, APK 전달·설치와 Companion 재시작은 하지 않으며 current v1 후보 1.8.2, staged
+  v1.8.4, 검증된 1.8.1 rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- update verifier는 성공한 exact manifest bytes의 SHA-256을 strict JSON receipt로 반환한다. 최종 gate는
+  field 입력과 함께 읽은 manifest bytes를 다시 hash해 receipt와 같을 때만 평가하며, signer 검사 중
+  manifest를 교체하는 결정적 회귀에서 출력 없이 실패한다. `release:check`의 단위 검사 308개와 실제
+  app-server 통합 3개, production build·schema 일치·SBOM이 통과했다.
 - Installed APK provenance field fix는 저부하 collector가 package/version만 확인하고 report에 candidate
   APK digest를 복사해, 같은 identity의 다른 설치 APK를 측정할 수 있던 release evidence 공백을 고치는
   internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { sign, X509Certificate } from "node:crypto";
+import { createHash, sign, X509Certificate } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -71,6 +71,12 @@ test("update manifests bind the APK, signing identity, and monotonic version", {
     ];
     const valid = run(verifyManifest, signedArguments);
     assert.match(valid.stdout, /Verified update manifest .* v2\.0\.0 \(20000\)/);
+    const receipt = JSON.parse(run(verifyManifest, [...signedArguments, "--json"]).stdout) as Record<string, unknown>;
+    assert.deepEqual(receipt, {
+      schemaVersion: 1,
+      kind: "verified_update_manifest",
+      manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
+    });
 
     const untrusted = run(verifyManifest, [
       ...replaceArgument(signedArguments, "--expected-certificate-sha256", "b".repeat(64)),

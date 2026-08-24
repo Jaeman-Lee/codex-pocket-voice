@@ -9,6 +9,7 @@ const options = parseArguments(process.argv.slice(2));
 const manifestPath = resolve(required(options, "manifest"));
 const artifactDirectory = resolve(options.get("artifact-dir") ?? dirname(manifestPath));
 const manifestBytes = await boundedFile(manifestPath, 65_536, "Update manifest");
+const manifestSha256 = createHash("sha256").update(manifestBytes).digest("hex");
 let manifest;
 try {
   manifest = JSON.parse(manifestBytes.toString("utf8"));
@@ -72,7 +73,15 @@ if (options.has("current-version-code")) {
   }
 }
 
-process.stdout.write(`Verified update manifest for ${manifest.applicationId} v${manifest.version} (${manifest.versionCode})\n`);
+if (options.has("json")) {
+  process.stdout.write(`${JSON.stringify({
+    schemaVersion: 1,
+    kind: "verified_update_manifest",
+    manifestSha256,
+  })}\n`);
+} else {
+  process.stdout.write(`Verified update manifest for ${manifest.applicationId} v${manifest.version} (${manifest.versionCode})\n`);
+}
 
 function validateManifest(value) {
   if (!record(value)) fail("Update manifest root is invalid");
@@ -165,7 +174,7 @@ function assertSimpleFilename(value, name) {
 }
 
 function parseArguments(values) {
-  const flags = new Set(["allow-unsigned", "allow-same-version"]);
+  const flags = new Set(["allow-unsigned", "allow-same-version", "json"]);
   const allowed = new Set([
     "manifest", "signature", "certificate", "expected-certificate-sha256", "artifact-dir", "apksigner",
     "current-version-code", ...flags,

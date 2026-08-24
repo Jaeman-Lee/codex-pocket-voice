@@ -6,6 +6,9 @@
 
 이 도구는 field evidence를 평가하기 전에 `verify-update-manifest.mjs`를 실패-폐쇄 선행 gate로 실행해
 고정 인증서 fingerprint, manifest 분리 서명, APK signer와 APK/SBOM 실제 hash·byte count를 검증한다.
+검증기는 성공한 exact manifest bytes의 SHA-256을 strict JSON receipt로 넘기며, 최종 gate가 field 입력과
+함께 다시 읽은 manifest digest와 같을 때만 평가를 시작한다. verifier 종료와 field 평가 사이에 같은
+경로의 manifest가 교체되면 최종 report를 만들지 않는다.
 고정 fingerprint는 함께 받은 인증서에서 계산하면 안 되며 이전 신뢰 설치본·Release APK 또는 별도
 신뢰 경로에서 확인해야 한다. 최종 report의 `structured_aggregate_only`는 암호 검증과 운영자 관찰을
 구조화한 증거이며 실제 Provider·물리 단말 실행을 대신하지 않는다.
@@ -47,7 +50,8 @@ npm run android:release-evidence -- \
 
 다음 조건이 전부 참일 때만 exit code 0과 `gate.passed: true`를 반환한다.
 
-- pinned certificate·detached signature·APK signer·APK/SBOM hash와 byte count가 모두 유효
+- pinned certificate·detached signature·APK signer·APK/SBOM hash와 byte count가 모두 유효하고, verifier
+  receipt의 manifest digest와 field 평가에 사용한 exact bytes가 일치
 - 기능 환경·여섯 attestation·20개 scenario와 30일 freshness가 모두 pass
 - 세 Android report가 정확한 transport slot에 있고 모두 `release_gate` pass
 - 세 report가 같은 signed candidate이고 설치 package/version/versionCode도 일치

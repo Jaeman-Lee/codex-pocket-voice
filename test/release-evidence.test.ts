@@ -324,6 +324,35 @@ test("final release evidence CLI cryptographically verifies the signed candidate
   assert.match(valid.stdout, /Exact-candidate release evidence gate passed/);
   assert.equal(JSON.parse(await readFile(reportPath, "utf8")).gate.passed, true);
 
+  const swappedManifest = canonicalJson({
+    ...JSON.parse(signedManifest) as Record<string, unknown>,
+    createdAt: "2026-08-25T00:00:01.000Z",
+  });
+  const swappingApkSigner = join(binaryDirectory, "swapping-apksigner.mjs");
+  await writeFile(
+    swappingApkSigner,
+    [
+      "#!/usr/bin/env node",
+      "import { writeFileSync } from \"node:fs\";",
+      `writeFileSync(${JSON.stringify(manifestPath)}, ${JSON.stringify(swappedManifest)}, { mode: 0o600 });`,
+      `process.stdout.write(${JSON.stringify(`Signer #1 certificate SHA-256 digest: ${fingerprint}\n`)});`,
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  await chmod(swappingApkSigner, 0o700);
+  const swappedReportPath = join(fieldDirectory, "swapped-release-evidence.json");
+  const swapped = spawnSync(process.execPath, [
+    "--import", "tsx", releaseEvidenceCli,
+    ...replaceArgument(cliArguments, "--apksigner", swappingApkSigner),
+    "--report", swappedReportPath,
+  ], { encoding: "utf8", env: environment, timeout: 15_000 });
+  assert.ifError(swapped.error);
+  assert.notEqual(swapped.status, 0);
+  assert.match(swapped.stderr, /Update manifest changed after cryptographic verification/);
+  await assert.rejects(stat(swappedReportPath), /ENOENT/);
+  await writeFile(manifestPath, signedManifest, { mode: 0o600 });
+
   await writeFile(apkPath, "tampered APK fixture\n", { mode: 0o600 });
   const rejectedReportPath = join(fieldDirectory, "rejected-release-evidence.json");
   const rejected = spawnSync(process.execPath, [
@@ -434,4 +463,12 @@ async function artifactRecord(kind: "apk" | "sbom", path: string, file: string) 
 
 function canonicalJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function replaceArgument(values: string[], name: string, replacement: string): string[] {
+  const result = [...values];
+  const index = result.indexOf(name);
+  assert.notEqual(index, -1);
+  result[index + 1] = replacement;
+  return result;
 }

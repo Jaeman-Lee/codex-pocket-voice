@@ -1,6 +1,7 @@
 #!/usr/bin/env -S node --import tsx
 
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
@@ -115,7 +116,7 @@ async function main(): Promise<void> {
     return;
   }
   await requireUnusedReleaseEvidenceFile(options.reportPath);
-  await verifySignedCandidateBundle(options);
+  const verifiedManifestSha256 = await verifySignedCandidateBundle(options);
   const [manifestText, observationsText, directText, p2pText, relayText, source] = await Promise.all([
     readBoundedFile(options.manifestPath, false, "Update manifest"),
     readBoundedFile(options.observationsPath, true, "Functional observations"),
@@ -124,6 +125,9 @@ async function main(): Promise<void> {
     readBoundedFile(options.androidReportPaths.outbound_relay, true, "Outbound relay report"),
     cleanSourceIdentity(),
   ]);
+  if (createHash("sha256").update(manifestText, "utf8").digest("hex") !== verifiedManifestSha256) {
+    throw new ReleaseEvidenceError("Update manifest changed after cryptographic verification");
+  }
   const report = evaluateReleaseEvidence(
     manifestText,
     observationsText,
@@ -143,7 +147,7 @@ async function main(): Promise<void> {
   }
 }
 
-async function verifySignedCandidateBundle(options: CliOptions): Promise<void> {
+async function verifySignedCandidateBundle(options: CliOptions): Promise<string> {
   const verifier = fileURLToPath(new URL("./verify-update-manifest.mjs", import.meta.url));
   try {
     const result = await execFileAsync(process.execPath, [
@@ -154,17 +158,38 @@ async function verifySignedCandidateBundle(options: CliOptions): Promise<void> {
       "--expected-certificate-sha256", options.expectedCertificateSha256,
       "--artifact-dir", options.artifactDirectory,
       "--apksigner", options.apkSignerPath,
+      "--json",
     ], {
       encoding: "utf8",
       timeout: 90_000,
       maxBuffer: 64 * 1024,
     });
-    if (!/^Verified update manifest for .+\n$/.test(result.stdout)) {
-      throw new Error("Unexpected verifier output");
-    }
+    return parseVerifierReceipt(result.stdout);
   } catch {
     throw new ReleaseEvidenceError("Signed update bundle verification failed before release evidence evaluation");
   }
+}
+
+function parseVerifierReceipt(text: string): string {
+  if (Buffer.byteLength(text, "utf8") > 4_096) throw new Error("Unexpected verifier output");
+  let value: unknown;
+  try {
+    value = JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("Unexpected verifier output");
+  }
+  if (text !== `${JSON.stringify(value)}\n` || typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Unexpected verifier output");
+  }
+  const receipt = value as Record<string, unknown>;
+  const keys = Object.keys(receipt).sort();
+  const expected = ["kind", "manifestSha256", "schemaVersion"];
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])
+      || receipt.schemaVersion !== 1 || receipt.kind !== "verified_update_manifest"
+      || typeof receipt.manifestSha256 !== "string" || !/^[a-f0-9]{64}$/.test(receipt.manifestSha256)) {
+    throw new Error("Unexpected verifier output");
+  }
+  return receipt.manifestSha256;
 }
 
 async function readBoundedFile(path: string, privateFile: boolean, label: string): Promise<string> {

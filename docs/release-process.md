@@ -74,6 +74,8 @@ node scripts/verify-update-manifest.mjs \
 낮은 versionCode와 기본 상태의 동일 versionCode를 거부한다. 동일 버전의 CI 재빌드를 이전 미전달
 산출물로 완전히 교체할 때만 `--allow-same-version`을 사용한다. Fork의 unsigned 산출물은 자동 업데이트
 신뢰 대상이 아니며 수동 검토자가 의도적으로 `--allow-unsigned`를 준 경우에만 검증된다.
+최종 field evidence 명령은 verifier의 `--json` 결과에 포함된 exact manifest SHA-256과 평가 시점에 읽은
+bytes를 다시 대조하므로, 두 단계 사이 manifest 경로 교체도 실패-폐쇄로 차단한다.
 
 v2 Android 앱에서는 연결 센터의 **Android 앱 업데이트 → ZIP 선택**으로 동일한 signed artifact ZIP을
 고르거나 **공식판 조회**로 hardcoded public GitHub 저장소의 Latest 정식판을 명시적으로 확인할 수 있다.
