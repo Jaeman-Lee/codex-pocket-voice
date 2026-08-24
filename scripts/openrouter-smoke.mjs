@@ -36,6 +36,7 @@ for (const required of ["tools", "tool_choice", "max_tokens"]) {
   if (!supported.has(required)) fail(`Selected ZDR endpoint does not advertise ${required}`);
 }
 const expectedProvider = safeDisplayName(endpoint.provider_name, 120, "endpoint provider name");
+const pricing = endpointPricing(endpoint.pricing);
 
 const toolRequest = requestBody([
   { role: "user", content: `Call contract_probe exactly once with token ${marker}. Do not answer in text.` },
@@ -57,7 +58,7 @@ const toolRequest = requestBody([
   tool_choice: { type: "function", function: { name: "contract_probe" } },
   parallel_tool_calls: false,
 });
-const estimatedMaximum = estimatedCost(endpoint.pricing) * MAX_CALLS;
+const estimatedMaximum = estimatedCost(pricing) * MAX_CALLS;
 if (estimatedMaximum > budgetUsd) fail("Catalog ceiling estimate exceeds the configured smoke budget");
 const remainingCredits = nullableNumber(record(keyInfo.data)?.limit_remaining);
 if (remainingCredits !== null && remainingCredits < estimatedMaximum) {
@@ -110,6 +111,11 @@ const report = {
   estimatedMaximumUsd: estimatedMaximum,
   actualCostCredits,
   creditBaseCurrency: "USD",
+  pricingBasis: {
+    currency: "USD",
+    ...pricing,
+    source: "zdr_endpoint_catalog",
+  },
   usage,
   grades: {
     conversation: "pass",
@@ -171,13 +177,23 @@ async function requestJson(path, init) {
   }
 }
 
-function estimatedCost(value) {
+function endpointPricing(value) {
   const pricing = record(value);
   if (!pricing) fail("Selected endpoint has no pricing metadata");
   const prompt = boundedNumber(pricing.prompt, 0, 1_000, "prompt price");
   const completion = boundedNumber(pricing.completion, 0, 1_000, "completion price");
   const request = pricing.request === undefined ? 0 : boundedNumber(pricing.request, 0, 1_000, "request price");
-  return prompt * ESTIMATED_INPUT_TOKENS_PER_CALL + completion * MAX_OUTPUT_TOKENS + request;
+  return {
+    inputUsdPerMillion: prompt * 1_000_000,
+    outputUsdPerMillion: completion * 1_000_000,
+    requestUsd: request,
+  };
+}
+
+function estimatedCost(pricing) {
+  return pricing.inputUsdPerMillion * ESTIMATED_INPUT_TOKENS_PER_CALL / 1_000_000
+    + pricing.outputUsdPerMillion * MAX_OUTPUT_TOKENS / 1_000_000
+    + pricing.requestUsd;
 }
 
 function safeUsage(value) {

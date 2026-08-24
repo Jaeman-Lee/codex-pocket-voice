@@ -160,6 +160,20 @@ test("project tool grades require exact protected evaluation, usage, and cost ev
     /사전 비용 계산이 일치하지 않습니다/,
   );
 
+  const mismatchedRouterPreflightCost = openRouterReport();
+  mismatchedRouterPreflightCost.pricingBasis.requestUsd = 0.001;
+  assert.throws(
+    () => parseProviderModelGradeReport(JSON.stringify(mismatchedRouterPreflightCost), currentTime),
+    /OpenRouter project grade 사전 비용 계산이 일치하지 않습니다/,
+  );
+
+  const mismatchedRouterActualCost = openRouterReport();
+  mismatchedRouterActualCost.actualEstimatedUsd = 0.000141;
+  assert.throws(
+    () => parseProviderModelGradeReport(JSON.stringify(mismatchedRouterActualCost), currentTime),
+    /OpenRouter project grade 비용 계산이 일치하지 않습니다/,
+  );
+
   const wrongServiceTier = openAIReport();
   wrongServiceTier.privacyProfile.serviceTier = "flex";
   assert.throws(
@@ -278,6 +292,13 @@ function openRouterReport() {
     actualEstimatedUsd: 0.00014,
     actualCostCredits: 0.001,
     creditBaseCurrency: "USD",
+    pricingBasis: {
+      currency: "USD",
+      inputUsdPerMillion: 1,
+      outputUsdPerMillion: 2,
+      requestUsd: 0,
+      source: "zdr_endpoint_catalog",
+    },
     evaluation: {
       scope: "coding",
       fixture: "ephemeral_synthetic_workspace",

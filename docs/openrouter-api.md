@@ -43,8 +43,11 @@ upstream별 가격, p50 latency/throughput, 30분 uptime, quantization과 tool p
 실제 run의 `usage.cost`와 별개이고, 품질 또는 코딩 등급으로 해석하지 않는다. 연결 테스트는 `/key`의
 남은 credit 한도와 만료일만 인증된 화면에 보여 주며 key label이나 원문 key는 반환하지 않는다.
 OpenRouter는 usage를 자동으로 응답에 포함하며 `usage.cost`는 credits 단위다. Credit 기준 통화와 catalog
-API 가격은 USD이지만 보호된 smoke report에서는 `actualCostCredits`와 `estimatedMaximumUsd`를 별도 필드로
-유지한다. Companion operation도 원본 호환 필드 `usage.costCredits`를 남기되, 월 정책 집계용
+API 가격은 USD다. 보호된 smoke/project report는 exact ZDR endpoint catalog의 per-token
+prompt/completion 가격을 USD/1M token으로 정규화하고 request 가격과 함께 redacted `pricingBasis`로
+남긴다. report parser는 이 기준에서 `estimatedMaximumUsd`와 `actualEstimatedUsd`를 독립적으로 다시
+계산하고 `actualCostCredits`는 Provider가 보고한 호출별 credit 합계와 별도로 대조한다. Companion
+operation도 원본 호환 필드 `usage.costCredits`를 남기되, 월 정책 집계용
 `policyUsage`에는 provider-reported USD micro 단위로 정규화해 catalog 추정값과 출처를 구분한다.
 
 모든 inference 요청은 다음 profile을 강제한다.
@@ -118,7 +121,8 @@ Harness는 synthetic token만 사용해 강제 tool call과 그 결과를 잇는
 credit도 확인하며, `order`/`only`, fallback 차단, ZDR와 data collection 거부를 유지한다. 각 응답의
 자동 usage accounting과 `X-OpenRouter-Metadata: enabled` 결과에서 exact model, 첫 attempt와 catalog
 provider가 일치해야 통과한다. 결과 artifact에는 모델·upstream, USD catalog estimate, USD 기준 credit
-비용, token과 통과/미검사 등급만 남기고 prompt, 응답 text, tool token과 API key는 남기지 않는다.
+비용, 그 계산에 사용한 redacted catalog 가격 기준, token과 통과/미검사 등급만 남기고 prompt, 응답
+text, tool token과 API key는 남기지 않는다. 소비자는 가격 기준에서 사전 최대 비용을 다시 계산한다.
 `projectRead`와 `coding`은 실제 승인형 프로젝트 현장 시나리오 전까지 `not_tested`로 유지한다.
 OpenRouter는 자동 routing에 project tool을 주지 않는다. 사용자가 고른 primary와 backup 각각의 report가
 모두 통과하고 현재 ZDR endpoint가 tools parameter를 지원할 때만 공통 최소 권한을 API 요청에 넣는다.
@@ -128,7 +132,8 @@ OpenRouter는 자동 routing에 project tool을 주지 않는다. 사용자가 �
 최대 2회, coding은 최대 3회 요청과 요청당 input 8,192/output 256 token을 허용한다. 현재 endpoint
 catalog의 최악 가격과 Provider가 보고한 USD 기준 credit 비용이 각각 $0.05를 넘으면 grade를 통과시키지
 않는다. coding은 `APPROVE_SYNTHETIC_CODING_EVAL` exact confirmation이 필요하다. report에는 routing,
-tool 상태, token/cost와 등급만 남고 prompt, marker, 파일 내용·SHA와 모델 출력은 없다.
+tool 상태, redacted 가격 기준, token/cost와 등급만 남고 prompt, marker, 파일 내용·SHA와 모델 출력은
+없다. 설치·최종 evidence parser도 같은 기준으로 사전 최대치와 실제 추정치를 재검산한다.
 
 이 checkpoint에서는 project-grade workflow를 fake adapter와 운영 Tool Broker fixture로만 실행했다.
 실제 API key·유료 inference 또는 실제 model/upstream grade 발급은 수행하지 않았다.

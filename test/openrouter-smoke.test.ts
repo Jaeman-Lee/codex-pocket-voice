@@ -84,6 +84,13 @@ test("protected OpenRouter smoke stays allowlisted, bounded, strict, and redacte
   assert.equal(report.calls, 2);
   assert.equal(report.actualCostCredits, 0.002);
   assert.equal(report.creditBaseCurrency, "USD");
+  assert.deepEqual(report.pricingBasis, {
+    currency: "USD",
+    inputUsdPerMillion: 1,
+    outputUsdPerMillion: 2,
+    requestUsd: 0,
+    source: "zdr_endpoint_catalog",
+  });
   assert.deepEqual(report.actualProviders, ["Strict Eval"]);
   assert.deepEqual(report.grades, {
     conversation: "pass",

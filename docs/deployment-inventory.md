@@ -27,7 +27,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | OpenAI API milestone | official SDK 6.49.0 | encrypted bounded `store:false` multi-turn replay, fake tool-loop/SSE/Models tests and pre-merge dispatchable protected 2-call smoke harness; no API key/allowlist configured and no paid request sent |
 | OpenRouter milestone | Chat Completions + user/ZDR model, endpoint and key APIs | encrypted bounded multi-turn replay, exact upstream lock/approved backup, bounded price/performance/quota UI, fake routing/tool-loop/SSE and pre-merge dispatchable protected 2-call smoke harness; no API key/allowlist configured and no paid request sent |
 | Provider credential boundary | systemd 256+ encrypted user credential | fixed-name runtime files, generation-bound activation, immediate new-run revoke, no-follow/owner/mode/size validation and recoverable ciphertext rotation/removal implemented; legacy 0600 file retained |
-| Provider model grade boundary | owner-only redacted report, maximum age 30 days | OpenAI exact model and OpenRouter exact model+every selected upstream gate read/coding tool exposure; protected fresh-smoke synthetic project grade workflow implemented, but no real API workflow run or grade issued |
+| Provider model grade boundary | owner-only redacted report, maximum age 30 days | OpenAI exact model and OpenRouter exact model+every selected upstream gate read/coding tool exposure; OpenRouter catalog pricing basis, preflight/actual estimate and reported credits are independently cross-checked; protected fresh-smoke synthetic project grade workflow implemented, but no real API workflow run or grade issued |
 | Provider runtime contract | exact run ownership + ordered single-terminal events | Codex/OpenAI/OpenRouter shared success/partial-failure/cancel/timeout suite and fake 401/403/429/5xx/malformed SSE fixtures passing |
 | API run policy | authenticated Companion policy + immutable per-run snapshot | emergency stop, token/cost hard limits, rolling-day warning, monthly touch confirmation and actual/estimated/unknown accounting implemented with fake Providers only; no paid request sent |
 | Provider context Fork | client/request-bound 10-minute reviewed preview | terminal source request/accepted Steers/final answer plus new request only; exact target policy/selection, new-conversation execution, idempotent ambiguous-response retry and durable redacted provenance implemented with synthetic Providers |
@@ -51,6 +51,18 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | pairing/revoke/key-rotation state uses durable serialized commits; reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, standalone Linux GO/PBC + memory-only DHCP cleanup lifecycle, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; actual P2P field validation pending |
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+OpenRouter pricing-basis Provider-grade checkpoint decision: 보호된 report가 catalog 기반 최대·실제 추정
+비용을 기록하면서 계산 가격을 남기지 않아 설치·최종 evidence parser가 숫자를 독립적으로 재현할 수 없던
+validation 공백을 고치므로 internal compatibility `patch`로 분류한다. 아직 전달하지 않은 incompatible
+v2 범위 안에서 SemVer `2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고
+이전 CI-only candidate를 교체한다. exact redacted `pricingBasis`는 exact ZDR endpoint catalog의
+prompt/completion 가격을 USD/1M token으로 정규화하고 request 가격을 별도로 남긴다. parser는 smoke/project
+요청·token ceiling에서 사전 최대 비용을, aggregate usage에서 실제 추정 비용을 다시 계산하고 reported
+USD credit 합계도 별도로 대조한다. 실제 field·Provider 호출, APK 전달·설치와 Companion 재시작 없이
+current v1 후보 1.8.2, staged v1.8.4, 검증된 rollback 1.8.1과 배포 중인 v1.8.3 Companion을 그대로
+보존한다. `release:check`의 단위 검사 322개와 실제 app-server 통합 3개, production build·schema 일치·
+SBOM이 통과했다.
 
 Exact redacted Provider-grade schema checkpoint decision: model-grade 파서와 project eval 선행 검사가 알려진
 필드만 읽고 top-level·`grades`·`usage`의 추가 필드를 거부하지 않아 prompt/model output 같은 자유 형식

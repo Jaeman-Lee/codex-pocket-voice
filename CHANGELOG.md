@@ -10,6 +10,19 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- OpenRouter pricing-basis-bound Provider-grade fix는 보호된 smoke/project report가 catalog에서 계산한
+  `estimatedMaximumUsd`와 `actualEstimatedUsd`를 주장하면서도 그 계산에 사용한 가격 기준을 남기지 않아,
+  설치·최종 evidence parser가 token/요청 수에서 두 값을 독립적으로 재현할 수 없던 validation 공백을
+  고치는 internal compatibility `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/
+  Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 교체한다.
+  실제 Provider/field 호출, APK 전달·설치와 Companion 재시작은 하지 않으며 current v1 후보 1.8.2,
+  staged v1.8.4, 검증된 1.8.1 rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- OpenRouter report의 exact redacted `pricingBasis`는 exact ZDR endpoint catalog의 prompt/completion
+  per-token 가격을 USD/1M token으로 정규화하고 request 가격을 별도로 기록한다. parser는 smoke와
+  project eval의 요청/token ceiling에서 사전 최대 비용을, project aggregate usage에서 실제 추정 비용을
+  다시 계산하고 Provider-reported USD credit 합계도 별도로 대조한다. 가격 기준·예상치·실제 추정치 중
+  하나만 바꾼 report는 fail-closed다. `release:check`의 단위 검사 322개와 실제 app-server 통합 3개,
+  production build·schema 일치·SBOM이 통과했다.
 - Exact redacted Provider-grade schema fix는 model-grade 파서와 project eval 선행 검사가 알려진 필드만
   읽고 최상위·`grades`·`usage`의 추가 필드를 거부하지 않아, prompt/model output 같은 자유 형식 원문이
   섞인 report도 설치·최종 evidence 입력으로 인정할 수 있던 privacy boundary 공백을 고치는 internal

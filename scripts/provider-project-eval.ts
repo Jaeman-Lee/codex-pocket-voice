@@ -277,6 +277,7 @@ export async function runProviderProjectEval(
       checkedAt: new Date(now).toISOString(),
       maximumRequests,
       estimatedMaximumUsd,
+      pricing,
       usage,
       cost,
       outcome: passed ? "pass" : completion ? "contract_failed" : "infrastructure_failed",
@@ -505,6 +506,7 @@ function buildReport(input: {
   checkedAt: string;
   maximumRequests: number;
   estimatedMaximumUsd: number;
+  pricing: { inputUsdPerMillion: number; outputUsdPerMillion: number; requestUsd: number };
   usage: SafeUsage | null;
   cost: { estimatedUsd: number; costCredits?: number } | null;
   outcome: "pass" | "contract_failed" | "infrastructure_failed";
@@ -538,8 +540,8 @@ function buildReport(input: {
       privacyProfile: { store: false, serviceTier: "default" },
       pricingBasis: {
         currency: "USD",
-        inputUsdPerMillion: input.config.inputUsdPerMillion,
-        outputUsdPerMillion: input.config.outputUsdPerMillion,
+        inputUsdPerMillion: input.pricing.inputUsdPerMillion,
+        outputUsdPerMillion: input.pricing.outputUsdPerMillion,
         source: "operator_reviewed",
       },
       ...common,
@@ -553,6 +555,13 @@ function buildReport(input: {
     actualProviders: [input.smoke.actualProvider],
     privacyProfile: { zdr: true, dataCollection: "deny", allowFallbacks: false },
     creditBaseCurrency: "USD",
+    pricingBasis: {
+      currency: "USD",
+      inputUsdPerMillion: input.pricing.inputUsdPerMillion,
+      outputUsdPerMillion: input.pricing.outputUsdPerMillion,
+      requestUsd: input.pricing.requestUsd,
+      source: "zdr_endpoint_catalog",
+    },
     actualCostCredits: input.cost?.costCredits ?? null,
     ...common,
   };

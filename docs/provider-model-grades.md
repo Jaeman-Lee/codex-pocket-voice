@@ -43,7 +43,8 @@ install -m 600 /reviewed/path/openai-project-grade-report.json "$grade_dir/opena
 - `projectRead` 또는 `coding` 권한을 올릴 때 Companion은 등급 문자열만 믿지 않는다. 합성 평가의 exact
   scope·승인 문구·2/3회 요청 상한·`workspace_read`→`workspace_replace_text` 증거, 누적 token/호출 수와
   실제 비용을 다시 계산한다. OpenAI는 `store: false`/`serviceTier: default`와 operator-reviewed 가격,
-  OpenRouter는 실제 USD credit 비용까지 일치해야 한다.
+  OpenRouter는 exact ZDR endpoint catalog에서 가져온 redacted USD/1M token·request 가격으로 사전 최대치와
+  실제 추정치를 재계산하고 Provider-reported USD credit 비용까지 일치해야 한다.
 - 프로젝트 평가 예산은 실행 경로와 report 재검증 모두 최대 `$0.05`다. 초과·누락·불일치 report 하나는
   해당 Provider의 전체 project tool을 fail-closed로 차단한다.
 
@@ -61,6 +62,10 @@ regular file로 다시 검증하고 exact model, OpenRouter exact ZDR upstream�
 OpenRouter 가격은 현재 exact endpoint
 catalog를 사용하며 최대 2회(read) 또는 3회(coding), 요청당 input 8,192/output 256 token과 총 $0.05
 상한을 inference 전과 usage 후 모두 검사한다.
+OpenRouter smoke/project report는 catalog의 per-token prompt/completion 가격을 USD/1M token으로 정규화한
+`pricingBasis`와 request 가격을 남긴다. 소비자는 이를 exact schema로 검증하고 호출 상한 기반
+`estimatedMaximumUsd`, aggregate usage 기반 `actualEstimatedUsd`, Provider-reported `actualCostCredits`를
+서로 독립된 증거로 재검산한다.
 
 평가 작업공간은 매번 새로 만드는 권한 `0700` 임시 디렉터리다. 실제 프로젝트, Git checkout,
 Companion journal과 Android 기록을 읽거나 바꾸지 않는다.

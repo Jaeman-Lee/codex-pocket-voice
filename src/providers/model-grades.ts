@@ -391,7 +391,8 @@ function validateProviderGradeReportShape(
       ]
     : [
         ...common, "model", "requestedUpstream", "actualProviders", "actualCostCredits",
-        "creditBaseCurrency", ...(projectGrade ? ["actualEstimatedUsd", "evaluation"] : []),
+        "creditBaseCurrency", "pricingBasis",
+        ...(projectGrade ? ["actualEstimatedUsd", "evaluation"] : []),
       ];
   const privacy = record(report.privacyProfile);
   const grades = record(report.grades);
@@ -405,7 +406,11 @@ function validateProviderGradeReportShape(
       || !grades || !exactKeys(grades, expectedGrades)) {
     throw new ProviderModelGradeError("Provider model grade report의 redacted schema가 잘못됐습니다.");
   }
-  if (providerId === "openai") openAIPriceEvidence(report);
+  if (providerId === "openai") {
+    openAIPriceEvidence(report);
+  } else {
+    openRouterPriceEvidence(report);
+  }
 }
 
 function validateSmokeGradeEnvelope(
@@ -463,6 +468,15 @@ function validateSmokeGradeEnvelope(
       throw new ProviderModelGradeError("OpenAI smoke report의 비용 계산이 일치하지 않습니다.");
     }
     return;
+  }
+  const pricing = openRouterPriceEvidence(report);
+  const expectedMaximumUsd = 2 * (
+    MAX_OPENROUTER_SMOKE_INPUT_TOKENS_PER_REQUEST * pricing.inputUsdPerMillion / 1_000_000
+    + MAX_OPENROUTER_SMOKE_OUTPUT_TOKENS_PER_REQUEST * pricing.outputUsdPerMillion / 1_000_000
+    + pricing.requestUsd
+  );
+  if (Math.abs(estimatedMaximumUsd - expectedMaximumUsd) > 1e-12) {
+    throw new ProviderModelGradeError("OpenRouter smoke report의 사전 비용 계산이 일치하지 않습니다.");
   }
   let expectedCredits = 0;
   for (const value of report.usage) {
@@ -586,6 +600,23 @@ function validateProjectGradeEnvelope(
       }
     }
   } else {
+    const pricing = openRouterPriceEvidence(report);
+    const expectedMaximumUsd = maximumRequests * (
+      MAX_PROJECT_EVAL_INPUT_TOKENS_PER_REQUEST * pricing.inputUsdPerMillion / 1_000_000
+      + MAX_PROJECT_EVAL_OUTPUT_TOKENS_PER_REQUEST * pricing.outputUsdPerMillion / 1_000_000
+      + pricing.requestUsd
+    );
+    if (Math.abs(estimatedMaximumUsd - expectedMaximumUsd) > 1e-12) {
+      throw new ProviderModelGradeError("OpenRouter project grade 사전 비용 계산이 일치하지 않습니다.");
+    }
+    if (parsedUsage && actualEstimatedUsd !== null) {
+      const expected = parsedUsage.inputTokens * pricing.inputUsdPerMillion / 1_000_000
+        + parsedUsage.outputTokens * pricing.outputUsdPerMillion / 1_000_000
+        + parsedUsage.requestCount * pricing.requestUsd;
+      if (Math.abs(expected - actualEstimatedUsd) > 1e-12) {
+        throw new ProviderModelGradeError("OpenRouter project grade 비용 계산이 일치하지 않습니다.");
+      }
+    }
     const actualCostCredits = report.actualCostCredits === null
       ? null
       : boundedNumber(report.actualCostCredits, 0, budgetUsd);
@@ -616,6 +647,24 @@ function openAIPriceEvidence(report: Record<string, unknown>): {
     throw new ProviderModelGradeError("OpenAI project grade 가격 증거가 잘못됐습니다.");
   }
   return { inputUsdPerMillion, outputUsdPerMillion };
+}
+
+function openRouterPriceEvidence(report: Record<string, unknown>): {
+  inputUsdPerMillion: number;
+  outputUsdPerMillion: number;
+  requestUsd: number;
+} {
+  const pricing = record(report.pricingBasis);
+  const inputUsdPerMillion = boundedNumber(pricing?.inputUsdPerMillion, 0, 1_000);
+  const outputUsdPerMillion = boundedNumber(pricing?.outputUsdPerMillion, 0, 1_000);
+  const requestUsd = boundedNumber(pricing?.requestUsd, 0, 10);
+  if (!pricing || !exactKeys(pricing, [
+    "currency", "inputUsdPerMillion", "outputUsdPerMillion", "requestUsd", "source",
+  ]) || pricing.currency !== "USD" || pricing.source !== "zdr_endpoint_catalog"
+      || inputUsdPerMillion === null || outputUsdPerMillion === null || requestUsd === null) {
+    throw new ProviderModelGradeError("OpenRouter project grade 가격 증거가 잘못됐습니다.");
+  }
+  return { inputUsdPerMillion, outputUsdPerMillion, requestUsd };
 }
 
 function normalizedRecord(

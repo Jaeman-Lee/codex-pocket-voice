@@ -611,7 +611,17 @@ function passingProviderGradeAccounting(provider: "openai" | "openrouter") {
         outputUsdPerMillion: 2,
         source: "operator_reviewed",
       },
-    } : { actualCostCredits: 0.001, creditBaseCurrency: "USD" }),
+    } : {
+      actualCostCredits: 0.001,
+      creditBaseCurrency: "USD",
+      pricingBasis: {
+        currency: "USD",
+        inputUsdPerMillion: 1,
+        outputUsdPerMillion: 2,
+        requestUsd: 0,
+        source: "zdr_endpoint_catalog",
+      },
+    }),
   };
 }
 

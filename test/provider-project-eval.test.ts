@@ -88,6 +88,13 @@ test("protected OpenRouter coding eval requires one reviewed production replacem
   });
   assert.deepEqual(result.report.actualProviders, ["Strict Eval"]);
   assert.equal(result.report.actualCostCredits, 0.001);
+  assert.deepEqual(result.report.pricingBasis, {
+    currency: "USD",
+    inputUsdPerMillion: 1,
+    outputUsdPerMillion: 2,
+    requestUsd: 0,
+    source: "zdr_endpoint_catalog",
+  });
   const report = await readFile(fixture.config.reportPath, "utf8");
   assert.doesNotMatch(report, /coding-marker|project-eval-marker|project-eval-state|before/);
   assert.match(report, /protected_workflow_and_exact_confirmation/);
@@ -503,6 +510,13 @@ function openRouterSmoke(): Record<string, unknown> {
     estimatedMaximumUsd: 0.004352,
     actualCostCredits: 0.002,
     creditBaseCurrency: "USD",
+    pricingBasis: {
+      currency: "USD",
+      inputUsdPerMillion: 1,
+      outputUsdPerMillion: 2,
+      requestUsd: 0,
+      source: "zdr_endpoint_catalog",
+    },
     usage: [
       { inputTokens: 20, outputTokens: 5, totalTokens: 25, costCredits: 0.001 },
       { inputTokens: 30, outputTokens: 4, totalTokens: 34, costCredits: 0.001 },

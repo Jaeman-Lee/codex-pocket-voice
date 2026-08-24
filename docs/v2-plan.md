@@ -439,7 +439,9 @@ workflow의 실제 모델 실행과 프로젝트 read/coding 현장 등급이다
 
 OpenRouter smoke report도 top-level부터 호출별 usage까지 exact redacted schema만 허용하고 직접 실행
 budget을 CI와 같은 `$0.02`로 제한한다. report parser는 Provider가 보고한 각 호출의 USD credit 합계와
-top-level 실제 비용이 일치하는지 다시 확인한다.
+top-level 실제 비용이 일치하는지 다시 확인한다. exact ZDR endpoint catalog의 per-token
+prompt/completion 가격은 USD/1M token으로 정규화하고 request 가격과 함께 `pricingBasis`로 남긴다.
+소비자는 이 기준과 고정 요청/token ceiling에서 사전 최대 비용을 독립적으로 다시 계산한다.
 
 grade report는 exact model+upstream에 귀속된다. 자동 upstream 선택에는 project tool을 주지 않고,
 사용자가 고른 primary와 backup 모두 같은 권한 등급 및 현재 endpoint의 tool parameter 지원을 통과해야
@@ -449,6 +451,8 @@ grade report는 exact model+upstream에 귀속된다. 자동 upstream 선택에�
 optional project-grade 단계는 smoke가 증명한 exact ZDR upstream, current catalog 가격과 실제 routing
 metadata를 다시 묶고 OpenAI와 같은 임시 Tool Broker 시나리오를 수행한다. catalog 최악 비용과 Provider
 reported USD-credit 비용이 각각 $0.05를 넘거나 actual upstream이 달라지면 등급을 발급하지 않는다.
+project report 소비자는 같은 `pricingBasis`와 aggregate usage에서 실제 추정 비용도 다시 계산하므로,
+가격 기준·사전 최대치·실제 추정치 중 하나만 바뀐 report는 권한을 얻지 못한다.
 실제 key workflow와 서로 다른 upstream 계열의 현장 등급은 아직 실행하지 않았다.
 
 완료 조건: 서로 다른 두 upstream 계열의 검증 모델이 같은 Tool Broker 계약을 통과하고,
