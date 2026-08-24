@@ -40,7 +40,7 @@ export function restoredMessages(messages: ChatMessage[]): ChatMessage[] {
 }
 
 export function serializableQueue(prompts: QueuedPrompt[]): QueuedPrompt[] {
-  return prompts.map((prompt) => ({
+  return prompts.map(({ policyConfirmation: _policyConfirmation, ...prompt }) => ({
     ...prompt,
     attachments: prompt.attachments.map(({ previewUrl: _previewUrl, ...attachment }) => ({ ...attachment })),
   }));

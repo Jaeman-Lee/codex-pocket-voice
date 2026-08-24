@@ -12,6 +12,7 @@ import type {
   ProviderRunCompletion,
   ProviderRunInput,
 } from "../src/providers/types.js";
+import { CostAndPolicyGuard, DEFAULT_RUN_POLICY_CONFIG } from "../src/run-policy.js";
 
 test("RunCoordinator owns lifecycle state and forwards only active provider events", async () => {
   const providers = new FakeRunProviders();
@@ -79,6 +80,65 @@ test("RunCoordinator deduplicates retried requests and rejects conflicting reuse
     (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
   );
   assert.equal(providers.starts.length, 1);
+  coordinator.close();
+});
+
+test("RunCoordinator injects server policy limits, preserves the snapshot, and accounts actual usage", async () => {
+  const providers = new FakeRunProviders();
+  const now = Date.parse("2026-08-24T02:00:00.000Z");
+  const guard = new CostAndPolicyGuard({
+    async models() {
+      return [{
+        id: "gpt-priced",
+        displayName: "Priced fixture",
+        description: "fixture",
+        isDefault: true,
+        defaultEffort: "",
+        efforts: [],
+        pricing: {
+          inputPerMillionUsd: 1,
+          outputPerMillionUsd: 2,
+          requestUsd: 0.001,
+          imageUsd: 0.002,
+        },
+      }];
+    },
+  }, { runPolicy: () => ({ ...DEFAULT_RUN_POLICY_CONFIG }) }, () => now);
+  const coordinator = new RunCoordinator(providers, {
+    createId: () => "operation-policy",
+    now: () => now,
+    policyGuard: guard,
+  });
+  const command = {
+    providerId: "openai",
+    accountId: "api-default",
+    prompt: "bounded request",
+    input: {
+      cwd: process.cwd(),
+      prompt: "bounded request",
+      model: "gpt-priced",
+      imagePaths: ["frame.png"],
+    },
+    idempotencyKey: "client:policy-run",
+  };
+  const started = await coordinator.start(command);
+  assert.deepEqual(providers.starts[0]?.input.limits, { maxOutputTokens: 4_096, maxTotalTokens: 50_000 });
+  assert.equal(started.runPolicy?.attachmentCount, 1);
+  assert.equal(started.runPolicy?.pricing.status, "known");
+  assert.equal((await coordinator.start(command)).id, started.id);
+  assert.equal(providers.starts.length, 1);
+
+  providers.complete(0, {
+    status: "completed",
+    result: { usage: { requestCount: 1, inputTokens: 100, outputTokens: 20 } },
+  });
+  await waitFor(() => coordinator.get(started.id)?.status === "completed");
+  assert.deepEqual(coordinator.get(started.id)?.result?.policyUsage, {
+    status: "catalog-estimate",
+    currency: "USD",
+    requestCount: 1,
+    costMicrosUsd: 3_140,
+  });
   coordinator.close();
 });
 

@@ -84,6 +84,29 @@ test("focused input remains reachable through keyboard resize and landscape rota
   await expectVisualViewportMatchesWindow(page);
 });
 
+test("API preflight confirmation stays contained and forwards only the one-time approval", async ({ page }) => {
+  let observedConfirmation = "";
+  await installApiPolicyFixture(page, (token) => { observedConfirmation = token; });
+  await bootPairedApp(page, { width: 320, height: 740 });
+
+  await page.getByRole("button", { name: "프로젝트와 대화 선택 열기" }).click();
+  await page.getByLabel("AI 제공자 선택").selectOption("openai");
+  await expect(page.getByLabel("AI 모델")).toHaveValue("browser-openai-model");
+  await expect(page.getByLabel("API 실행 정책 상태")).toContainText("Companion 사전검사 사용");
+  await page.getByLabel("Codex에게 보낼 요청").fill("API 비용 확인 후 실행해 주세요.");
+  await page.getByRole("button", { name: "요청 전송" }).click();
+
+  const review = page.getByRole("dialog", { name: "월간 API 비용 확인" });
+  await expect(review).toBeVisible();
+  await expect(review).toContainText("아직 Provider 요청을 보내지 않았습니다.");
+  await expect(review).toContainText("가격 확인 필요 · 추측 안 함");
+  await expectElementContained(page, review.locator(".run-policy-review-card"));
+  await review.getByRole("button", { name: "검토하고 이 1회 실행" }).click();
+  await expect.poll(() => observedConfirmation).toBe("browser-policy-confirmation");
+  await expect(review).toBeHidden();
+  await expectShellContained(page);
+});
+
 async function bootPairedApp(page: Page, viewport: { width: number; height: number }): Promise<void> {
   await page.setViewportSize(viewport);
   await page.addInitScript(() => {
@@ -156,4 +179,113 @@ async function expectVisualViewportMatchesWindow(page: Page): Promise<void> {
   }));
   expect(Math.abs(viewport.visualWidth - viewport.innerWidth), JSON.stringify(viewport)).toBeLessThanOrEqual(1);
   expect(Math.abs(viewport.visualHeight - viewport.innerHeight), JSON.stringify(viewport)).toBeLessThanOrEqual(1);
+}
+
+async function installApiPolicyFixture(page: Page, observe: (token: string) => void): Promise<void> {
+  await page.route("**/api/providers", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json() as { providers: any[] };
+    body.providers = body.providers.filter((provider) => provider.id !== "openai");
+    body.providers.push({
+      id: "openai",
+      name: "OpenAI API",
+      available: true,
+      status: "connected",
+      detail: "Browser policy fixture",
+      accounts: [{ id: "default", label: "Fixture project", connected: true }],
+      loginCommand: "",
+      installed: true,
+      canLogin: false,
+      canTest: true,
+      capabilities: {
+        run: true,
+        resume: true,
+        models: true,
+        attachments: true,
+        streaming: true,
+        toolCalling: false,
+        approvals: false,
+        workspaceRead: false,
+        workspaceWrite: false,
+        commandExecution: false,
+        usageAccounting: true,
+      },
+      installGuide: { summary: "fixture", command: "", docsUrl: "https://example.invalid" },
+    });
+    await route.fulfill({ response, json: body });
+  });
+  await page.route("**/api/models?provider=openai", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    json: {
+      models: [{
+        id: "browser-openai-model",
+        displayName: "Browser OpenAI model",
+        description: "Synthetic browser-only API model",
+        isDefault: true,
+        defaultEffort: "medium",
+        efforts: [{ id: "medium", description: "Balanced" }],
+        capabilities: { tools: false, imageInput: true },
+        verification: { scope: "model", conversation: "pass", projectRead: "not_tested", coding: "not_tested" },
+      }],
+    },
+  }));
+  await page.route("**/api/run-policy/preflight", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    json: {
+      preflight: {
+        snapshot: {
+          schema: 1,
+          providerId: "openai",
+          model: "browser-openai-model",
+          privacyProfile: "openai-store-false",
+          evaluatedAt: new Date().toISOString(),
+          configRevision: "0123456789abcdef",
+          attachmentCount: 0,
+          limits: { maxOutputTokens: 4_096, maxTotalTokens: 50_000, maxRunCostMicrosUsd: 1_000_000 },
+          pricing: { status: "unknown", source: "unavailable" },
+          usageWindow: {
+            rollingDayTokens: 205_000,
+            monthCostMicrosUsd: 10_500_000,
+            dailyWarningReached: true,
+            monthlySoftLimitReached: true,
+          },
+          warnings: ["최근 24시간 token 경고 기준을 넘었습니다.", "이번 달 API 비용 soft limit을 넘었습니다.", "가격 확인 필요 · 비용을 추측하지 않습니다."],
+          confirmationRequired: true,
+        },
+        confirmationToken: "browser-policy-confirmation",
+        confirmationExpiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+      },
+    },
+  }));
+  await page.route("**/api/runs", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+    const body = route.request().postDataJSON() as Record<string, any>;
+    observe(String(body.policyConfirmation ?? ""));
+    const now = new Date().toISOString();
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      json: {
+        operation: {
+          id: "browser-openai-operation",
+          providerId: "openai",
+          conversationId: "browser-openai-conversation",
+          runId: "browser-openai-run",
+          cwd: body.cwd,
+          prompt: body.prompt,
+          accountId: body.accountId,
+          model: body.model,
+          status: "completed",
+          startedAt: now,
+          completedAt: now,
+          result: { finalResponse: "합성 API 정책 실행 완료" },
+        },
+      },
+    });
+  });
 }

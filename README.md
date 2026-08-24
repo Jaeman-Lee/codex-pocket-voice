@@ -2,8 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-현재 정식 배포는 `v1.6.0`이며 `1.8.2`는 current v1 현장 후보, `1.8.1`은 검증된
-rollback 기준선입니다. `2.0.0` 소스는
+현재 정식 배포는 `v1.6.0`이며 `1.8.2`는 current v1 현장 후보, `1.8.4`는 별도 staged hotfix,
+`1.8.1`은 검증된 rollback 기준선입니다. `2.0.0` 소스는
 `feature/v2-control-plane`에서 개발 중이며 아직 설치용 candidate가 아닙니다. 실제 배포 상태는
 [Deployment inventory](docs/deployment-inventory.md), 변경 이력은 [Changelog](CHANGELOG.md),
 출시 절차는 [Release process](docs/release-process.md)를 참고하세요.
@@ -29,6 +29,7 @@ rollback 기준선입니다. `2.0.0` 소스는
 - OpenAI/OpenRouter에서 SHA-256 경쟁 검사를 거친 단일·2~8개 텍스트 교체, 신규 파일 생성·이름변경과 격리된 npm check/test/build
 - Codex·Claude Code 등을 독립 어댑터로 확장할 수 있는 AI 제공자 모듈
 - 설치 확인·브라우저 로그인·비용 없는 연결 테스트를 모은 AI 연결 센터
+- OpenAI/OpenRouter 요청 전 서버 강제 token·비용 hard limit, emergency stop, 월 soft-limit 화면 확인과 실제/추정/unknown 비용 기록
 - 이미지 첨부와 영상 업로드, 로컬 Qwen3-VL 4B 대표 장면 분석
 - 답변, 명령 실행, 파일 변경 상태를 SSE로 실시간 표시
 - 실행 중인 Codex 턴 중단과 최종 diff·명령 요약
@@ -42,7 +43,8 @@ rollback 기준선입니다. `2.0.0` 소스는
 - 여러 Linux Companion 등록과 앱 내 Linux 도구 진단
 
 v2 저널의 저장 범위, 암호화 키와 재연결 동작은 [Event journal](docs/event-journal.md), API Provider의
-변경·검증 경계는 [Approved API tools](docs/approved-tools.md), Termux-free TLS 연결의 현재 범위와
+변경·검증 경계는 [Approved API tools](docs/approved-tools.md), 비용·token 경계는
+[API run policy](docs/run-policy.md), Termux-free TLS 연결의 현재 범위와
 제한은 [PocketLink TLS bootstrap](docs/pocket-link.md)에 정리했습니다.
 outbound relay의 서버·Companion·Android 범위와 남은 현장 단계는
 [PocketLink outbound relay](docs/pocket-relay.md)에 정리했습니다.

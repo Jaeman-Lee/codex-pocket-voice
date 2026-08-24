@@ -17,7 +17,13 @@ export interface ProviderRunInput {
   effort?: string;
   timeoutMs?: number;
   routing?: ProviderRoutingSelection;
+  limits?: ProviderRunLimits;
   resumeState?: ProviderResumeState;
+}
+
+export interface ProviderRunLimits {
+  maxOutputTokens: number;
+  maxTotalTokens: number;
 }
 
 export interface ProviderResumeState {
@@ -51,6 +57,7 @@ interface ProviderEventBase {
 }
 
 export interface ProviderUsage {
+  requestCount?: number;
   inputTokens?: number;
   cachedInputTokens?: number;
   outputTokens?: number;

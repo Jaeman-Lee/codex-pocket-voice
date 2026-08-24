@@ -57,6 +57,64 @@ export interface JournalPolicyLimits {
   maxEvents: { minimum: number; maximum: number };
 }
 
+export interface RunPolicyConfig {
+  emergencyStop: boolean;
+  maxOutputTokens: number;
+  maxTotalTokens: number;
+  maxRunCostMicrosUsd: number;
+  dailyTokenWarning: number;
+  monthlyCostSoftLimitMicrosUsd: number;
+}
+
+export interface RunPolicyConfigLimits {
+  maxOutputTokens: { minimum: number; maximum: number };
+  maxTotalTokens: { minimum: number; maximum: number };
+  maxRunCostMicrosUsd: { minimum: number; maximum: number };
+  dailyTokenWarning: { minimum: number; maximum: number };
+  monthlyCostSoftLimitMicrosUsd: { minimum: number; maximum: number };
+}
+
+export interface RunPolicyPricingSnapshot {
+  status: "known" | "unknown";
+  source: "catalog" | "unavailable";
+  inputPerMillionUsd?: number;
+  outputPerMillionUsd?: number;
+  requestUsd?: number;
+  imageUsd?: number;
+  maximumRunCostMicrosUsd?: number;
+}
+
+export interface RunPolicySnapshot {
+  schema: 1;
+  providerId: ProviderId;
+  model?: string;
+  routing?: ProviderRoutingSelection;
+  privacyProfile: "codex-managed" | "openai-store-false" | "openrouter-strict-zdr" | "provider-defined";
+  evaluatedAt: string;
+  configRevision: string;
+  attachmentCount: number;
+  limits?: {
+    maxOutputTokens: number;
+    maxTotalTokens: number;
+    maxRunCostMicrosUsd: number;
+  };
+  pricing: RunPolicyPricingSnapshot;
+  usageWindow: {
+    rollingDayTokens: number;
+    monthCostMicrosUsd: number;
+    dailyWarningReached: boolean;
+    monthlySoftLimitReached: boolean;
+  };
+  warnings: string[];
+  confirmationRequired: boolean;
+}
+
+export interface RunPolicyPreflight {
+  snapshot: RunPolicySnapshot;
+  confirmationToken?: string;
+  confirmationExpiresAt?: string;
+}
+
 export interface WorkspaceChangeRecoveryTransaction {
   id: string;
   workspace: string;
@@ -238,12 +296,19 @@ export interface RunResult {
   commands?: Array<{ command: string; status: string; exitCode?: number | null }>;
   fileChanges?: Array<{ changes?: Array<{ kind: string; path: string }> }>;
   usage?: {
+    requestCount?: number;
     inputTokens?: number;
     cachedInputTokens?: number;
     outputTokens?: number;
     reasoningTokens?: number;
     totalTokens?: number;
     costCredits?: number;
+  };
+  policyUsage?: {
+    status: "provider-reported" | "catalog-estimate" | "unknown";
+    currency: "USD";
+    requestCount: number;
+    costMicrosUsd?: number;
   };
   routedProvider?: string;
   modelVerification?: ProviderModelVerification;
@@ -270,6 +335,7 @@ export interface Operation {
   effort?: string;
   networkAccess?: boolean;
   routing?: ProviderRoutingSelection;
+  runPolicy?: RunPolicySnapshot;
   workspaceIdentity?: WorkspaceIdentity;
   status: OperationStatus;
   startedAt?: string;
@@ -371,6 +437,7 @@ export interface QueuedPrompt {
   provider: ProviderId;
   accountId: string;
   routing?: ProviderRoutingSelection;
+  policyConfirmation?: string;
   attachments: PendingAttachment[];
   displayed?: boolean;
   createdAt?: string;
@@ -389,6 +456,7 @@ export interface CodexEvent {
   deletedOperations?: number;
   deletedEvents?: number;
   policy?: JournalPolicy;
+  runPolicy?: RunPolicyConfig;
   replayed?: number;
   handoffId?: string;
   operation?: Operation;
@@ -405,6 +473,7 @@ export interface CodexEvent {
   status?: string;
   tool?: { type?: string; id?: string; command?: string; status?: string; paths?: string[] };
   usage?: {
+    requestCount?: number;
     inputTokens?: number;
     cachedInputTokens?: number;
     outputTokens?: number;

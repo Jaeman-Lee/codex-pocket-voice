@@ -21,7 +21,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Gateway protocol | maximum 3, minimum 2 | v1 rollout compatibility retained |
 | Codex app-server schema | `codex-cli 0.149.0` | generated bindings and no-model real integration verified |
 | Current v1 APK | 1.8.2 candidate | signed APK/checksum/SBOM prepared from hotfix PR #4; install not performed |
-| Staged v1 hotfix APK | 1.8.3 candidate | writer-release PR #5 checks and signed artifact verified; kept separate and not installed |
+| Staged v1 hotfix APK | 1.8.4 candidate | external-writer clarity PR #6 checks and signed artifact verified; kept separate and not installed |
 | Existing rollback APK | 1.8.1 | user-validated rollback set preserved |
 | Deployed v1 Companion | 1.8.3 at `e0f6ea1` | separate versioned runtime active; completed target writer release verified |
 | OpenAI API milestone | official SDK 6.49.0 | encrypted bounded `store:false` multi-turn replay, fake tool-loop/SSE/Models tests and protected 2-call smoke harness; no API key configured and no paid request sent |
@@ -29,6 +29,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Provider credential boundary | systemd 256+ encrypted user credential | fixed-name runtime files, generation-bound activation, immediate new-run revoke, no-follow/owner/mode/size validation and recoverable ciphertext rotation/removal implemented; legacy 0600 file retained |
 | Provider model grade boundary | owner-only redacted report, maximum age 30 days | OpenAI exact model and OpenRouter exact model+every selected upstream gate read/coding tool exposure; invalid, stale or absent reports remain chat-only; real project grades not issued |
 | Provider runtime contract | exact run ownership + ordered single-terminal events | Codex/OpenAI/OpenRouter shared success/partial-failure/cancel/timeout suite and fake 401/403/429/5xx/malformed SSE fixtures passing |
+| API run policy | authenticated Companion policy + immutable per-run snapshot | emergency stop, token/cost hard limits, rolling-day warning, monthly touch confirmation and actual/estimated/unknown accounting implemented with fake Providers only; no paid request sent |
 | Android journal milestone | app-owned SQLite schema 1 | encrypted snapshot migration and rollback mirror implemented; CI-only, no device migration performed |
 | Companion event journal | encrypted SQLite schema 1 | restore/replay/unknown acknowledgement, HMAC-authenticated bounded user retention, workspace JSON export and protected delete implemented in v2; not field deployed |
 | Operations dashboard | protocol 3 capability | per-project run snapshot, replay reconciliation, touch-only approvals, durable goal/pin/archive and two-touch history deletion implemented; no field APK handed off |
@@ -39,6 +40,16 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, standalone Linux GO/PBC + memory-only DHCP cleanup lifecycle, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; actual P2P field validation pending |
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+API run policy checkpoint decision: OpenAI/OpenRouter 실행 전 비용·token·privacy 사전검사와 모바일 설정/확인을
+추가하는 user-visible v2 workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2
+범위 안에서 SemVer `2.0.0`/Android `versionCode 20000`, 대상 `feature/v2-control-plane`을 유지하고 이전
+CI-only candidate를 대체한다. journal key로 인증한 server policy와 1회용 confirmation은 exact
+model/routing/config/history에 묶이며, Provider 요청에 output/total token hard limit을 강제한다. operation은
+immutable policy snapshot과 provider-reported/catalog-estimate/unknown 비용 상태를 암호화해 보존한다.
+공개 검사는 fake catalog·Provider·HTTP와 합성 모바일 fixture만 사용했고 실제 API key·유료 inference·APK
+전달/설치·Companion 재시작은 수행하지 않았다. current v1 후보 1.8.2, staged v1.8.4와 검증된 rollback
+1.8.1을 그대로 보존한다.
 
 Provider model grade checkpoint decision: protected eval 결과를 실제 API tool 권한과 모바일 표시에 연결하는 새
 user-visible v2 workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서

@@ -8,6 +8,11 @@ import type {
   RunOperation,
   RunStateStore,
 } from "./run-coordinator.js";
+import {
+  DEFAULT_RUN_POLICY_CONFIG,
+  type RunPolicyConfig,
+  validateRunPolicyConfig,
+} from "./run-policy.js";
 
 const SCHEMA_VERSION = 1;
 const KEY_BYTES = 32;
@@ -122,6 +127,7 @@ export class EventJournal implements RunStateStore {
     private retentionMs: number,
     private maxOperations: number,
     private maxEvents: number,
+    private runPolicyConfig: RunPolicyConfig,
     private readonly maxExportBytes: number,
     private readonly createId: () => string,
   ) {}
@@ -159,6 +165,7 @@ export class EventJournal implements RunStateStore {
       const retentionMs = configuredRetentionMs ?? storedPolicy?.retentionMs ?? DEFAULT_RETENTION_MS;
       const maxOperations = configuredMaxOperations ?? storedPolicy?.maxOperations ?? DEFAULT_MAX_OPERATIONS;
       const maxEvents = configuredMaxEvents ?? storedPolicy?.maxEvents ?? DEFAULT_MAX_EVENTS;
+      const runPolicyConfig = loadStoredRunPolicy(database, key) ?? DEFAULT_RUN_POLICY_CONFIG;
       return new EventJournal(
         resolvedDatabaseFile,
         keyFile,
@@ -168,6 +175,7 @@ export class EventJournal implements RunStateStore {
         retentionMs,
         maxOperations,
         maxEvents,
+        runPolicyConfig,
         maxExportBytes,
         options.createId ?? randomUUID,
       );
@@ -340,6 +348,26 @@ export class EventJournal implements RunStateStore {
 
   policyLimits(): EventJournalPolicyLimits {
     return structuredClone(EVENT_JOURNAL_POLICY_LIMITS);
+  }
+
+  runPolicy(): RunPolicyConfig {
+    return structuredClone(this.runPolicyConfig);
+  }
+
+  updateRunPolicy(update: RunPolicyConfig): RunPolicyConfig {
+    const next = validateRunPolicyConfig(update);
+    const values = runPolicySettingValues(next);
+    const statement = this.database.prepare(`
+      INSERT INTO journal_settings (key, value_integer, auth_tag) VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value_integer = excluded.value_integer, auth_tag = excluded.auth_tag
+    `);
+    this.database.transaction(() => {
+      for (const [name, value] of values) {
+        statement.run(name, value, runPolicyAuthTag(this.key, name, value));
+      }
+    })();
+    this.runPolicyConfig = next;
+    return this.runPolicy();
   }
 
   updatePolicy(update: EventJournalPolicyUpdate): EventJournalPolicy {
@@ -572,8 +600,57 @@ function loadStoredPolicy(database: Database.Database, key: Buffer): EventJourna
   });
 }
 
+function loadStoredRunPolicy(database: Database.Database, key: Buffer): RunPolicyConfig | undefined {
+  const names = [
+    "run_emergency_stop",
+    "run_max_output_tokens",
+    "run_max_total_tokens",
+    "run_max_cost_micros_usd",
+    "run_daily_token_warning",
+    "run_monthly_soft_limit_micros_usd",
+  ] as const;
+  const rows = database.prepare(`
+    SELECT key, value_integer, auth_tag FROM journal_settings
+    WHERE key IN (${names.map(() => "?").join(", ")})
+  `).all(...names) as Array<{ key: string; value_integer: number; auth_tag: string }>;
+  if (rows.length === 0) return undefined;
+  if (rows.length !== names.length) throw new Error("Run policy settings are incomplete");
+  for (const row of rows) {
+    const expected = runPolicyAuthTag(key, row.key, row.value_integer);
+    if (!/^[a-f0-9]{64}$/.test(row.auth_tag) || !timingSafeEqual(Buffer.from(row.auth_tag), Buffer.from(expected))) {
+      throw new Error("Run policy settings cannot be authenticated");
+    }
+  }
+  const values = new Map(rows.map((row) => [row.key, row.value_integer]));
+  const emergencyStop = values.get("run_emergency_stop");
+  if (emergencyStop !== 0 && emergencyStop !== 1) throw new Error("Run policy emergency stop is invalid");
+  return validateRunPolicyConfig({
+    emergencyStop: emergencyStop === 1,
+    maxOutputTokens: values.get("run_max_output_tokens")!,
+    maxTotalTokens: values.get("run_max_total_tokens")!,
+    maxRunCostMicrosUsd: values.get("run_max_cost_micros_usd")!,
+    dailyTokenWarning: values.get("run_daily_token_warning")!,
+    monthlyCostSoftLimitMicrosUsd: values.get("run_monthly_soft_limit_micros_usd")!,
+  });
+}
+
 function policyAuthTag(key: Buffer, name: string, value: number): string {
   return createHmac("sha256", key).update(`retention-policy\0${name}\0${value}`).digest("hex");
+}
+
+function runPolicyAuthTag(key: Buffer, name: string, value: number): string {
+  return createHmac("sha256", key).update(`run-policy\0${name}\0${value}`).digest("hex");
+}
+
+function runPolicySettingValues(config: RunPolicyConfig): Array<[string, number]> {
+  return [
+    ["run_emergency_stop", config.emergencyStop ? 1 : 0],
+    ["run_max_output_tokens", config.maxOutputTokens],
+    ["run_max_total_tokens", config.maxTotalTokens],
+    ["run_max_cost_micros_usd", config.maxRunCostMicrosUsd],
+    ["run_daily_token_warning", config.dailyTokenWarning],
+    ["run_monthly_soft_limit_micros_usd", config.monthlyCostSoftLimitMicrosUsd],
+  ];
 }
 
 function validateUserPolicy(update: EventJournalPolicyUpdate): EventJournalPolicyUpdate {
@@ -719,6 +796,7 @@ function assertStoredOperation(value: StoredOperationPayload, expectedId: string
     || (operation.effort !== undefined && !boundedString(operation.effort, 40))
     || (operation.networkAccess !== undefined && typeof operation.networkAccess !== "boolean")
     || !validRoutingSelection(operation.routing)
+    || !validRunPolicySnapshot(operation.runPolicy, operation.providerId, operation.model, operation.routing)
     || !validWorkspaceIdentity(operation.workspaceIdentity)
     || !validStatus
     || !boundedTimestamp(operation.startedAt)
@@ -752,6 +830,85 @@ function validRoutingSelection(value: unknown): boolean {
       && /^[a-z0-9][a-z0-9._/-]*$/.test(item))) return false;
   if (new Set(upstreams).size !== upstreams.length) return false;
   return routing.allowFallbacks ? upstreams.length >= 2 : upstreams.length === 1;
+}
+
+function validRunPolicySnapshot(
+  value: unknown,
+  providerId: unknown,
+  model: unknown,
+  routing: unknown,
+): boolean {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const policy = value as Record<string, unknown>;
+  const apiProvider = providerId === "openai" || providerId === "openrouter";
+  const expectedPrivacy = providerId === "codex"
+    ? "codex-managed"
+    : providerId === "openai"
+      ? "openai-store-false"
+      : providerId === "openrouter"
+        ? "openrouter-strict-zdr"
+        : "provider-defined";
+  if (policy.schema !== 1 || policy.providerId !== providerId
+      || policy.model !== model
+      || !boundedTimestamp(policy.evaluatedAt)
+      || typeof policy.configRevision !== "string" || !/^[a-f0-9]{16}$/.test(policy.configRevision)
+      || !safeBoundedInteger(policy.attachmentCount, 0, 32)
+      || policy.privacyProfile !== expectedPrivacy
+      || typeof policy.confirmationRequired !== "boolean"
+      || !Array.isArray(policy.warnings) || policy.warnings.length > 4
+      || !policy.warnings.every((item) => boundedString(item, 200))) return false;
+  if (policy.routing !== undefined) {
+    if (!validRoutingSelection(policy.routing) || JSON.stringify(policy.routing) !== JSON.stringify(routing)) return false;
+  } else if (routing !== undefined && providerId === "openrouter") return false;
+
+  if (apiProvider !== (policy.limits !== undefined)) return false;
+  if (apiProvider) {
+    if (!policy.limits || typeof policy.limits !== "object" || Array.isArray(policy.limits)) return false;
+    const limits = policy.limits as Record<string, unknown>;
+    if (!safeBoundedInteger(limits.maxOutputTokens, 64, 32_768)
+        || !safeBoundedInteger(limits.maxTotalTokens, 256, 1_000_000)
+        || !safeBoundedInteger(limits.maxRunCostMicrosUsd, 10_000, 100_000_000)
+        || Number(limits.maxTotalTokens) < Number(limits.maxOutputTokens)) return false;
+  }
+  const pricing = policy.pricing;
+  if (!pricing || typeof pricing !== "object" || Array.isArray(pricing)) return false;
+  const price = pricing as Record<string, unknown>;
+  if ((price.status !== "known" && price.status !== "unknown")
+      || (price.source !== "catalog" && price.source !== "unavailable")) return false;
+  for (const field of [
+    "inputPerMillionUsd",
+    "outputPerMillionUsd",
+    "requestUsd",
+    "imageUsd",
+    "maximumRunCostMicrosUsd",
+  ]) {
+    const item = price[field];
+    if (item !== undefined && (typeof item !== "number" || !Number.isFinite(item) || item < 0 || item > 1_000_000_000)) {
+      return false;
+    }
+  }
+  if (price.status === "known") {
+    if (price.source !== "catalog"
+        || typeof price.inputPerMillionUsd !== "number"
+        || typeof price.outputPerMillionUsd !== "number"
+        || !safeBoundedInteger(price.maximumRunCostMicrosUsd, 0, Number.MAX_SAFE_INTEGER)) return false;
+  } else if (price.source !== "unavailable"
+      || price.inputPerMillionUsd !== undefined || price.outputPerMillionUsd !== undefined
+      || price.requestUsd !== undefined || price.imageUsd !== undefined
+      || price.maximumRunCostMicrosUsd !== undefined) return false;
+  const usage = policy.usageWindow;
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return false;
+  const window = usage as Record<string, unknown>;
+  return safeBoundedInteger(window.rollingDayTokens, 0, Number.MAX_SAFE_INTEGER)
+    && safeBoundedInteger(window.monthCostMicrosUsd, 0, Number.MAX_SAFE_INTEGER)
+    && typeof window.dailyWarningReached === "boolean"
+    && typeof window.monthlySoftLimitReached === "boolean"
+    && policy.confirmationRequired === (apiProvider && window.monthlySoftLimitReached === true);
+}
+
+function safeBoundedInteger(value: unknown, minimum: number, maximum: number): boolean {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 }
 
 function validResumeState(value: unknown, providerId: unknown, model: unknown): boolean {

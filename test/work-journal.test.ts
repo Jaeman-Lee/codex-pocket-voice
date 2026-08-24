@@ -50,6 +50,7 @@ test("persisted prompt queues remove temporary blob preview URLs", () => {
     provider: "codex",
     accountId: "cli-default",
     routing: { upstreams: ["strict-primary", "strict-backup"], allowFallbacks: true },
+    policyConfirmation: "ephemeral-run-policy-token",
     attachments: [{
       id: "media-1",
       name: "screen.png",
@@ -64,6 +65,8 @@ test("persisted prompt queues remove temporary blob preview URLs", () => {
   const saved = serializableQueue(prompts);
   assert.equal(saved[0]?.attachments[0]?.previewUrl, undefined);
   assert.deepEqual(saved[0]?.routing, { upstreams: ["strict-primary", "strict-backup"], allowFallbacks: true });
+  assert.equal(saved[0]?.policyConfirmation, undefined);
+  assert.equal(prompts[0]?.policyConfirmation, "ephemeral-run-policy-token");
   assert.equal(prompts[0]?.attachments[0]?.previewUrl, "blob:temporary");
 });
 

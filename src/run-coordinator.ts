@@ -9,6 +9,11 @@ import type {
 } from "./providers/types.js";
 import { ProviderRunEventGate } from "./provider-event-contract.js";
 import type { WorkspaceIdentity } from "./workspace-identity.js";
+import {
+  RunPolicyError,
+  type CostAndPolicyGuard,
+  type RunPolicySnapshot,
+} from "./run-policy.js";
 
 const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const DEFAULT_MAX_OPERATIONS = 500;
@@ -29,6 +34,7 @@ export interface RunOperation {
   effort?: string;
   networkAccess?: boolean;
   routing?: ProviderRoutingSelection;
+  runPolicy?: RunPolicySnapshot;
   workspaceIdentity?: WorkspaceIdentity;
   status: RunOperationStatus;
   startedAt: string;
@@ -49,6 +55,7 @@ export interface StartRunCommand {
   input: ProviderRunInput;
   workspaceIdentity?: WorkspaceIdentity;
   idempotencyKey?: string;
+  policyConfirmation?: string;
 }
 
 export interface RunListFilter {
@@ -106,6 +113,7 @@ export interface RunCoordinatorOptions {
   maxOperations?: number;
   assertWorkspace?: (cwd: string) => void;
   stateStore?: RunStateStore;
+  policyGuard?: CostAndPolicyGuard;
 }
 
 interface IdempotencyEntry {
@@ -134,6 +142,7 @@ export class RunCoordinator {
   private maxOperations: number;
   private readonly assertWorkspace: (cwd: string) => void;
   private readonly stateStore?: RunStateStore;
+  private readonly policyGuard?: CostAndPolicyGuard;
   private readonly unsubscribeProvider: () => void;
   private closed = false;
 
@@ -147,6 +156,7 @@ export class RunCoordinator {
     this.maxOperations = options.maxOperations ?? DEFAULT_MAX_OPERATIONS;
     this.assertWorkspace = options.assertWorkspace ?? (() => undefined);
     this.stateStore = options.stateStore;
+    this.policyGuard = options.policyGuard;
     const restored = this.stateStore?.load();
     for (const operation of restored?.operations ?? []) {
       this.assertWorkspace(operation.cwd);
@@ -352,7 +362,7 @@ export class RunCoordinator {
     idempotency?: RunIdempotencyRecord,
   ): Promise<RunOperation> {
     const resumed = this.resumeInput(command);
-    const providerInput = resumed.input;
+    let providerInput = resumed.input;
     const providerAccountId = resumed.accountId;
     const requestedConversation = providerInput.conversationId
       ? conversationKey(command.providerId, providerInput.conversationId)
@@ -360,7 +370,24 @@ export class RunCoordinator {
     if (requestedConversation) this.reserveConversation(requestedConversation);
 
     let begun: ProviderRun;
+    let runPolicy: RunPolicySnapshot | undefined;
     try {
+      if (this.policyGuard) {
+        try {
+          const authorized = await this.policyGuard.authorize({
+            providerId: command.providerId,
+            ...(providerAccountId ? { accountId: providerAccountId } : {}),
+            ...(providerInput.model ? { model: providerInput.model } : {}),
+            ...(providerInput.routing ? { routing: structuredClone(providerInput.routing) } : {}),
+            attachmentCount: providerInput.imagePaths?.length ?? 0,
+          }, [...this.operations.values()], command.policyConfirmation);
+          runPolicy = authorized.snapshot;
+          if (authorized.limits) providerInput = { ...providerInput, limits: authorized.limits };
+        } catch (error) {
+          if (error instanceof RunPolicyError) throw new RunCoordinatorError(error.statusCode, error.message);
+          throw error;
+        }
+      }
       begun = await this.providers.startRun(command.providerId, providerAccountId, providerInput);
     } finally {
       if (requestedConversation) this.pendingConversations.delete(requestedConversation);
@@ -390,6 +417,7 @@ export class RunCoordinator {
         effort: providerInput.effort,
         networkAccess: providerInput.networkAccess === true,
         ...(providerInput.routing ? { routing: structuredClone(providerInput.routing) } : {}),
+        ...(runPolicy ? { runPolicy: structuredClone(runPolicy) } : {}),
         ...(command.workspaceIdentity ? { workspaceIdentity: structuredClone(command.workspaceIdentity) } : {}),
         status: "running",
         startedAt: new Date(this.now()).toISOString(),
@@ -482,7 +510,9 @@ export class RunCoordinator {
       if (this.closed) return;
       operation.status = completed.status;
       operation.completedAt = new Date(this.now()).toISOString();
-      operation.result = completed.result;
+      operation.result = operation.runPolicy && this.policyGuard
+        ? this.policyGuard.accountResult(operation.runPolicy, completed.result)
+        : completed.result;
       if (completed.status === "failed") operation.error = providerFailureMessage(completed.result);
       else delete operation.error;
       if (completed.status === "completed" && completed.resumeState) {

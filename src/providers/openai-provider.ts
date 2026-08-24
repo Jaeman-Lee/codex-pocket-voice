@@ -30,6 +30,7 @@ import {
   type ProviderRun,
   type ProviderRunCompletion,
   type ProviderRunInput,
+  type ProviderRunLimits,
   type ProviderResumeState,
   type ProviderRuntime,
   type ProviderUsage,
@@ -265,6 +266,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
     const gradeState = await safeLoadModelGrades(this.modelGrades, this.id);
     const verification = modelVerification(gradeState.records, model, undefined, gradeState.invalid);
     const toolAccess = modelToolAccess(verification);
+    const limits = providerRunLimits(input.limits);
     const currentInput = await buildResponseInput(input.prompt, input.imagePaths ?? [], this.maxImageBytes);
     const priorTurns = readOpenAIResumeState(input.resumeState, model, Boolean(input.conversationId));
     const conversationId = input.conversationId ?? `openai-conversation-${this.createId()}`;
@@ -284,6 +286,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
           historyTruncated: input.resumeState?.truncated === true,
           toolAccess,
           modelVerification: verification,
+          limits,
           timeoutMs: input.timeoutMs,
           active,
         }).then(resolve, reject);
@@ -317,6 +320,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
     historyTruncated: boolean;
     toolAccess: "none" | "read" | "coding";
     modelVerification: ProviderModelVerification;
+    limits?: ProviderRunLimits;
     timeoutMs?: number;
     active: ActiveOpenAIRun;
   }): Promise<ProviderRunCompletion> {
@@ -324,6 +328,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
     let finalResponse = "";
     let remoteResponseId: string | undefined;
     let totalUsage: ProviderUsage | undefined;
+    let requestCount = 0;
     let toolCallCount = 0;
     const completedTools: Array<{ name: string; status: string; paths?: string[] }> = [];
     const failure = (message: string, statusCode?: number): ProviderRunCompletion => ({
@@ -335,6 +340,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
         error: message,
         ...(statusCode !== undefined ? { errorStatus: statusCode } : {}),
         ...(finalResponse ? { finalResponse } : {}),
+        ...(totalUsage ? { usage: totalUsage } : {}),
       },
     });
     const emit = (event: ProviderEventPayload) => {
@@ -366,6 +372,8 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
       ];
       const turnOutput: ResponseInputItem[] = [];
       while (true) {
+        requestCount += 1;
+        totalUsage = { ...(totalUsage ?? {}), requestCount };
         let completedResponse: Response | undefined;
         let roundText = "";
         const request: ResponseCreateParamsStreaming = {
@@ -374,6 +382,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
           store: false,
           stream: true,
           include: ["reasoning.encrypted_content" as const],
+          ...(options.limits ? { max_output_tokens: options.limits.maxOutputTokens } : {}),
           ...(tools.length > 0 ? {
             tools,
             tool_choice: "auto" as const,
@@ -402,6 +411,11 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
             if (!roundText && event.response.output_text) finalResponse += event.response.output_text;
             totalUsage = addUsage(totalUsage, providerUsage(event.response.usage));
             if (totalUsage) emit({ kind: "usage.updated", usage: totalUsage });
+            if (options.limits && (totalUsage?.totalTokens ?? 0) > options.limits.maxTotalTokens) {
+              const message = "OpenAI run token 사용량이 Companion hard limit을 초과했습니다.";
+              emit({ kind: "run.failed", message });
+              return failure(message);
+            }
           } else if (event.type === "response.failed" || event.type === "response.incomplete") {
             const message = event.type === "response.failed"
               ? safeResponseFailure(event.response.error?.code)
@@ -501,6 +515,7 @@ export class OpenAIProviderAdapter implements ModelProviderAdapter, ProviderRunt
             model: options.model,
             modelVerification: options.modelVerification,
             finalResponse,
+            ...(totalUsage ? { usage: totalUsage } : {}),
           },
         };
       }
@@ -605,12 +620,23 @@ function addUsage(current: ProviderUsage | undefined, next: ProviderUsage | unde
   if (!next) return current;
   if (!current) return next;
   return {
+    requestCount: current.requestCount ?? next.requestCount,
     inputTokens: (current.inputTokens ?? 0) + (next.inputTokens ?? 0),
     cachedInputTokens: (current.cachedInputTokens ?? 0) + (next.cachedInputTokens ?? 0),
     outputTokens: (current.outputTokens ?? 0) + (next.outputTokens ?? 0),
     reasoningTokens: (current.reasoningTokens ?? 0) + (next.reasoningTokens ?? 0),
     totalTokens: (current.totalTokens ?? 0) + (next.totalTokens ?? 0),
   };
+}
+
+function providerRunLimits(value: ProviderRunLimits | undefined): ProviderRunLimits | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value.maxOutputTokens) || value.maxOutputTokens < 64 || value.maxOutputTokens > 32_768
+      || !Number.isSafeInteger(value.maxTotalTokens) || value.maxTotalTokens < value.maxOutputTokens
+      || value.maxTotalTokens > 1_000_000) {
+    throw new ProviderError(400, "OpenAI run token limit이 잘못됐습니다.");
+  }
+  return { ...value };
 }
 
 function providerTools(

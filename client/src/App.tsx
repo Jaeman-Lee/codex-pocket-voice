@@ -133,6 +133,10 @@ import type {
   ProviderResponse,
   QueuedPrompt,
   RunResult,
+  RunPolicyConfig,
+  RunPolicyConfigLimits,
+  RunPolicyPreflight,
+  RunPolicySnapshot,
   SessionHandoff,
   SystemDiagnostics,
   ThreadDetail,
@@ -142,6 +146,13 @@ import type {
   WorkspaceChangeRecoveryStatus,
   WorkspaceResponse,
 } from "./types";
+
+interface PendingRunPolicyReview {
+  queued: QueuedPrompt;
+  continuedThreadId: string;
+  preflight?: RunPolicyPreflight;
+  error?: string;
+}
 
 interface SpeechRecognitionEventLike {
   results: {
@@ -297,6 +308,11 @@ export function App() {
   const [journalPolicy, setJournalPolicy] = useState<JournalPolicy | null>(null);
   const [journalPolicyLimits, setJournalPolicyLimits] = useState<JournalPolicyLimits | null>(null);
   const [updatingJournalPolicy, setUpdatingJournalPolicy] = useState(false);
+  const [runPolicy, setRunPolicy] = useState<RunPolicyConfig | null>(null);
+  const [runPolicyLimits, setRunPolicyLimits] = useState<RunPolicyConfigLimits | null>(null);
+  const [updatingRunPolicy, setUpdatingRunPolicy] = useState(false);
+  const [lastRunPolicyPreflight, setLastRunPolicyPreflight] = useState<RunPolicySnapshot | null>(null);
+  const [pendingRunPolicyReview, setPendingRunPolicyReview] = useState<PendingRunPolicyReview | null>(null);
   const [workspaceRecovery, setWorkspaceRecovery] = useState<WorkspaceChangeRecoveryStatus | null>(null);
   const [retryingWorkspaceRecovery, setRetryingWorkspaceRecovery] = useState(false);
   const [exportingWorkspace, setExportingWorkspace] = useState<string | null>(null);
@@ -321,6 +337,7 @@ export function App() {
   const conversationJournalGenerationRef = useRef(0);
   const queueJournalGenerationRef = useRef(0);
   const queueDispatchingRef = useRef(false);
+  const pendingRunPolicyReviewRef = useRef<PendingRunPolicyReview | null>(null);
   const workspaceRef = useRef("");
   const deviceRef = useRef<DeviceId>(device);
   const threadRef = useRef("");
@@ -529,6 +546,7 @@ export function App() {
   useEffect(() => {
     if (connection !== "online" || activeRunRef.current.operation || activeRunRef.current.requestId
       || queueDispatchingRef.current
+      || pendingRunPolicyReviewRef.current
       || promptQueueRef.current.length === 0
       || promptQueueRef.current[0]?.requiresConfirmation) return;
     const timer = window.setTimeout(() => startNextQueuedPrompt(""), 250);
@@ -685,7 +703,7 @@ export function App() {
     if (attempt !== connectionAttemptRef.current || initializingAttemptRef.current === attempt) return;
     initializingAttemptRef.current = attempt;
     try {
-      const [health, workspaceData, providerData, codexModelData, runData, approvalData, journalData, recoveryData] = await Promise.all([
+      const [health, workspaceData, providerData, codexModelData, runData, approvalData, journalData, runPolicyData, recoveryData] = await Promise.all([
         api<{ userAgent: string; device: { name: string } }>("/api/health"),
         api<WorkspaceResponse>("/api/workspaces"),
         api<ProviderResponse>("/api/providers"),
@@ -695,6 +713,8 @@ export function App() {
         api<{ approvals: ApprovalItem[] }>("/api/approvals")
           .catch(() => ({ approvals: [] })),
         api<{ policy: JournalPolicy; limits: JournalPolicyLimits }>("/api/journal/policy")
+          .catch(() => ({ policy: null, limits: null })),
+        api<{ policy: RunPolicyConfig; limits: RunPolicyConfigLimits }>("/api/run-policy")
           .catch(() => ({ policy: null, limits: null })),
         api<WorkspaceChangeRecoveryResponse>("/api/workspace-changes/recovery")
           .catch(() => ({ supported: false, status: null })),
@@ -713,6 +733,8 @@ export function App() {
       setApprovalInbox(activeApprovals(approvalData.approvals));
       setJournalPolicy(journalData.policy);
       setJournalPolicyLimits(journalData.limits);
+      setRunPolicy(runPolicyData.policy);
+      setRunPolicyLimits(runPolicyData.limits);
       setWorkspaceRecovery(recoveryData.status);
       const storedProvider = localStorage.getItem(storageKey("provider", deviceRef.current));
       let selectedProvider = providerData.providers.find((item) => item.id === storedProvider && item.available)
@@ -738,7 +760,9 @@ export function App() {
         ?? selectedProvider?.accounts[0];
       setAccountId(selectedAccount?.id ?? "cli-default");
       const storedModel = localStorage.getItem(storageKey("model", deviceRef.current)) ?? "";
-      const selectedModel = selectedModelData.models.some((item) => item.id === storedModel) ? storedModel : "";
+      const selectedModel = selectedModelData.models.some((item) => item.id === storedModel)
+        ? storedModel
+        : selectedProviderId === "codex" ? "" : defaultModel(selectedModelData.models)?.id ?? "";
       setModel(selectedModel);
       const selectedModelInfo = selectedModelData.models.find((item) => item.id === selectedModel)
         ?? selectedModelData.models.find((item) => item.isDefault)
@@ -1184,6 +1208,11 @@ export function App() {
         usage.costCredits == null ? null : `비용 ${usage.costCredits.toFixed(6)} credits`,
       ].filter(Boolean).join(" · "));
     }
+    if (result.policyUsage) {
+      lines.push(result.policyUsage.costMicrosUsd === undefined
+        ? `정책 비용 · ${result.policyUsage.status} · 실제 비용 확인 필요`
+        : `정책 비용 · ${result.policyUsage.status} · ${formatPolicyUsd(result.policyUsage.costMicrosUsd)} · 요청 ${result.policyUsage.requestCount}회`);
+    }
     if (result.routing) {
       const requested = result.routing.requestedUpstreams.length > 0
         ? result.routing.requestedUpstreams.join(" → ")
@@ -1263,11 +1292,13 @@ export function App() {
   async function refreshOperationalSnapshot(silent = false) {
     const requestedDevice = deviceRef.current;
     try {
-      const [runData, approvalData, workspaceData, journalData, recoveryData] = await Promise.all([
+      const [runData, approvalData, workspaceData, journalData, runPolicyData, recoveryData] = await Promise.all([
         api<{ operations: Operation[] }>("/api/runs"),
         api<{ approvals: ApprovalItem[] }>("/api/approvals"),
         api<WorkspaceResponse>("/api/workspaces"),
         api<{ policy: JournalPolicy; limits: JournalPolicyLimits }>("/api/journal/policy")
+          .catch(() => ({ policy: null, limits: null })),
+        api<{ policy: RunPolicyConfig; limits: RunPolicyConfigLimits }>("/api/run-policy")
           .catch(() => ({ policy: null, limits: null })),
         api<WorkspaceChangeRecoveryResponse>("/api/workspace-changes/recovery")
           .catch(() => ({ supported: false, status: null })),
@@ -1279,6 +1310,8 @@ export function App() {
       setCreationLocations(workspaceData.creationLocations);
       setJournalPolicy(journalData.policy);
       setJournalPolicyLimits(journalData.limits);
+      setRunPolicy(runPolicyData.policy);
+      setRunPolicyLimits(runPolicyData.limits);
       setWorkspaceRecovery(recoveryData.status);
       if (!silent) showToast("프로젝트 작업 상태를 새로 확인했습니다.");
     } catch (error) {
@@ -1481,6 +1514,11 @@ export function App() {
     if (event.type === "journal" && event.action === "policy_updated" && event.policy) {
       setJournalPolicy(event.policy);
       void refreshOperationalSnapshot(true);
+      return;
+    }
+    if (event.type === "run_policy" && event.action === "updated" && event.runPolicy) {
+      setRunPolicy(event.runPolicy);
+      setLastRunPolicyPreflight(null);
       return;
     }
     if (event.type === "journal" && event.action === "reset") {
@@ -1922,7 +1960,8 @@ export function App() {
     };
     setPrompt("");
     dispatchMediaComposer({ type: "clear" });
-    if (connection !== "online" || activeRunRef.current.operation !== null
+    if (connection !== "online" || pendingRunPolicyReviewRef.current
+        || activeRunRef.current.operation !== null
         || activeRunRef.current.requestId !== null) {
       const nextQueue = [...promptQueueRef.current, queued];
       updatePromptQueue(nextQueue);
@@ -1938,6 +1977,48 @@ export function App() {
 
   async function executePrompt(queued: QueuedPrompt, continuedThreadId = "") {
     const selectedDevice = deviceRef.current;
+    if ((queued.provider === "openai" || queued.provider === "openrouter")
+        && !queued.policyConfirmation) {
+      const holdForPolicyReview = (review: PendingRunPolicyReview) => {
+        pendingRunPolicyReviewRef.current = review;
+        setPendingRunPolicyReview(review);
+        updatePromptQueue([
+          queued,
+          ...promptQueueRef.current.filter((item) => item.id !== queued.id),
+        ]);
+        queueDispatchingRef.current = false;
+      };
+      try {
+        const data = await api<{ preflight: RunPolicyPreflight }>("/api/run-policy/preflight", {
+          method: "POST",
+          body: {
+            provider: queued.provider,
+            accountId: queued.accountId,
+            model: queued.model || undefined,
+            routing: queued.routing,
+            attachments: queued.attachments.map((item) => item.id),
+          },
+        });
+        if (deviceRef.current !== selectedDevice) return;
+        setLastRunPolicyPreflight(data.preflight.snapshot);
+        if (data.preflight.snapshot.confirmationRequired) {
+          const review: PendingRunPolicyReview = data.preflight.confirmationToken
+            ? { queued, continuedThreadId, preflight: data.preflight }
+            : { queued, continuedThreadId, error: "Companion이 비용 확인 토큰을 발급하지 않았습니다." };
+          holdForPolicyReview(review);
+          return;
+        }
+      } catch (error) {
+        if (deviceRef.current !== selectedDevice) return;
+        const review: PendingRunPolicyReview = {
+          queued,
+          continuedThreadId,
+          error: errorMessage(error),
+        };
+        holdForPolicyReview(review);
+        return;
+      }
+    }
     const userId = newId("user");
     const assistantId = newId("assistant");
     const attachmentLabel = queued.attachments.length
@@ -1978,6 +2059,7 @@ export function App() {
           provider: queued.provider,
           accountId: queued.accountId,
           routing: queued.routing,
+          policyConfirmation: queued.policyConfirmation,
           attachments: queued.attachments.map((item) => item.id),
         },
       });
@@ -2031,8 +2113,77 @@ export function App() {
     }
   }
 
+  function approveRunPolicyReview() {
+    const review = pendingRunPolicyReviewRef.current;
+    const token = review?.preflight?.confirmationToken;
+    if (!review || !token) return;
+    pendingRunPolicyReviewRef.current = null;
+    setPendingRunPolicyReview(null);
+    updatePromptQueue(promptQueueRef.current.filter((item) => item.id !== review.queued.id));
+    if (review.preflight?.confirmationExpiresAt
+        && Date.parse(review.preflight.confirmationExpiresAt) <= Date.now()) {
+      void executePrompt({ ...review.queued, policyConfirmation: undefined }, review.continuedThreadId);
+      return;
+    }
+    void executePrompt({ ...review.queued, policyConfirmation: token }, review.continuedThreadId);
+  }
+
+  function retryRunPolicyReview() {
+    const review = pendingRunPolicyReviewRef.current;
+    if (!review) return;
+    pendingRunPolicyReviewRef.current = null;
+    setPendingRunPolicyReview(null);
+    updatePromptQueue(promptQueueRef.current.filter((item) => item.id !== review.queued.id));
+    void executePrompt({ ...review.queued, policyConfirmation: undefined }, review.continuedThreadId);
+  }
+
+  function restoreRunPolicyReview() {
+    const review = pendingRunPolicyReviewRef.current;
+    if (!review) return;
+    pendingRunPolicyReviewRef.current = null;
+    setPendingRunPolicyReview(null);
+    updatePromptQueue(promptQueueRef.current.filter((item) => item.id !== review.queued.id));
+    setProvider(review.queued.provider);
+    providerRef.current = review.queued.provider;
+    localStorage.setItem(storageKey("provider", deviceRef.current), review.queued.provider);
+    setAccountId(review.queued.accountId);
+    if (review.queued.accountId) localStorage.setItem(storageKey("account", deviceRef.current), review.queued.accountId);
+    setModel(review.queued.model);
+    setEffort(review.queued.effort);
+    if (review.queued.model) localStorage.setItem(storageKey("model", deviceRef.current), review.queued.model);
+    else localStorage.removeItem(storageKey("model", deviceRef.current));
+    if (review.queued.effort) localStorage.setItem(storageKey("effort", deviceRef.current), review.queued.effort);
+    else localStorage.removeItem(storageKey("effort", deviceRef.current));
+    setNetworkAccess(review.queued.networkAccess);
+    setRoutingPrimary(review.queued.routing?.upstreams[0] ?? "");
+    setRoutingBackup(review.queued.routing?.upstreams[1] ?? "");
+    setWorkspace(review.queued.cwd);
+    workspaceRef.current = review.queued.cwd;
+    setThreadId(review.queued.threadId);
+    threadRef.current = review.queued.threadId;
+    persistConversationSelection(
+      deviceRef.current,
+      review.queued.provider,
+      review.queued.cwd,
+      review.queued.threadId,
+    );
+    setPrompt(review.queued.text);
+    dispatchMediaComposer({ type: "clear" });
+    for (const attachment of review.queued.attachments) {
+      dispatchMediaComposer({ type: "add_placeholder", attachment });
+    }
+    void api<ModelResponse>(`/api/models?provider=${encodeURIComponent(review.queued.provider)}`)
+      .then((data) => {
+        if (providerRef.current === review.queued.provider) setModels(data.models);
+      })
+      .catch(() => undefined);
+    beginConversationJournalScope();
+    queueDispatchingRef.current = false;
+  }
+
   function startNextQueuedPrompt(continuedThreadId: string) {
-    if (queueDispatchingRef.current || activeRunRef.current.operation || activeRunRef.current.requestId) return;
+    if (queueDispatchingRef.current || pendingRunPolicyReviewRef.current
+        || activeRunRef.current.operation || activeRunRef.current.requestId) return;
     const [next, ...remaining] = promptQueueRef.current;
     if (!next || next.requiresConfirmation) return;
     if (next.expiresAt && Date.parse(next.expiresAt) <= Date.now()) {
@@ -2299,6 +2450,12 @@ export function App() {
     setJournalPolicy(null);
     setJournalPolicyLimits(null);
     setUpdatingJournalPolicy(false);
+    setRunPolicy(null);
+    setRunPolicyLimits(null);
+    setUpdatingRunPolicy(false);
+    setLastRunPolicyPreflight(null);
+    pendingRunPolicyReviewRef.current = null;
+    setPendingRunPolicyReview(null);
     setWorkspaceRecovery(null);
     setRetryingWorkspaceRecovery(false);
     setExportingWorkspace(null);
@@ -2373,7 +2530,10 @@ export function App() {
     if (deviceRef.current !== selectedDevice || providerRef.current !== nextProvider
         || !activeRunScopeMatches(activeRunRef.current, selectionScope)) return;
     setModels(modelData.models);
-    setModel("");
+    const nextModel = nextProvider === "codex" ? "" : defaultModel(modelData.models)?.id ?? "";
+    setModel(nextModel);
+    if (nextModel) localStorage.setItem(storageKey("model", deviceRef.current), nextModel);
+    else localStorage.removeItem(storageKey("model", deviceRef.current));
     setEffort("");
     restoreRoutingSelection(nextProvider, defaultModel(modelData.models));
     setThreadId("");
@@ -3264,6 +3424,31 @@ export function App() {
     }
   }
 
+  async function updateCompanionRunPolicy(policy: RunPolicyConfig) {
+    if (updatingRunPolicy) return false;
+    const requestedDevice = deviceRef.current;
+    setUpdatingRunPolicy(true);
+    try {
+      const data = await api<{ policy: RunPolicyConfig; limits: RunPolicyConfigLimits }>("/api/run-policy", {
+        method: "PUT",
+        body: { ...policy, confirm: "apply-run-policy" },
+      });
+      if (deviceRef.current !== requestedDevice) return false;
+      setRunPolicy(data.policy);
+      setRunPolicyLimits(data.limits);
+      setLastRunPolicyPreflight(null);
+      showToast(data.policy.emergencyStop
+        ? "API 실행 긴급 중단을 켰습니다. Codex 실행은 계속 사용할 수 있습니다."
+        : "API 비용·token 정책을 저장했습니다.");
+      return true;
+    } catch (error) {
+      if (deviceRef.current === requestedDevice) showToast(errorMessage(error));
+      return false;
+    } finally {
+      if (deviceRef.current === requestedDevice) setUpdatingRunPolicy(false);
+    }
+  }
+
   async function updateOperationMetadata(current: Operation, patch: OperationMetadataPatch) {
     if (updatingOperationId) return false;
     setUpdatingOperationId(current.id);
@@ -3427,6 +3612,18 @@ export function App() {
         (item): item is ProviderRoutingOption => item !== undefined,
       ))
     : selectedModelOption?.verification;
+  const selectedRunPolicyPreflight = lastRunPolicyPreflight
+    && lastRunPolicyPreflight.providerId === provider
+    && lastRunPolicyPreflight.model === (model || undefined)
+    && JSON.stringify(lastRunPolicyPreflight.routing) === JSON.stringify(selectedRouting(provider, routingPrimary, routingBackup))
+    ? lastRunPolicyPreflight
+    : null;
+  const selectedPolicyPricingKnown = provider === "openrouter" && (selectedPrimaryRoute || selectedBackupRoute)
+    ? [selectedPrimaryRoute, selectedBackupRoute].filter(Boolean).every((route) => (
+        route?.pricing?.inputPerMillionUsd !== undefined && route.pricing.outputPerMillionUsd !== undefined
+      ))
+    : selectedModelOption?.pricing?.inputPerMillionUsd !== undefined
+      && selectedModelOption.pricing.outputPerMillionUsd !== undefined;
   const updateInstallBlockedReason = prompt.trim() || attachments.length > 0
     ? "전송하지 않은 입력·첨부를 먼저 보내거나 지워 주세요."
     : mediaBusy
@@ -3519,6 +3716,9 @@ export function App() {
           journalPolicy={journalPolicy}
           journalPolicyLimits={journalPolicyLimits}
           updatingJournalPolicy={updatingJournalPolicy}
+          runPolicy={runPolicy}
+          runPolicyLimits={runPolicyLimits}
+          updatingRunPolicy={updatingRunPolicy}
           exportingWorkspace={exportingWorkspace}
           deletingWorkspace={deletingWorkspace}
           onClose={() => setShowOperationsDashboard(false)}
@@ -3527,10 +3727,55 @@ export function App() {
           onOpenOperation={openOperationFromDashboard}
           onUpdateOperation={updateOperationMetadata}
           onUpdateJournalPolicy={updateCompanionJournalPolicy}
+          onUpdateRunPolicy={updateCompanionRunPolicy}
           onDecision={(approval, decision) => void decideApproval(approval, decision)}
           onExportWorkspace={exportCompanionJournal}
           onDeleteWorkspaceHistory={deleteCompanionJournal}
         />
+      )}
+
+      {pendingRunPolicyReview && (
+        <section className="run-policy-review" role="dialog" aria-modal="true" aria-labelledby="run-policy-review-title">
+          <div className="run-policy-review-card">
+            <header>
+              <div>
+                <strong id="run-policy-review-title">
+                  {pendingRunPolicyReview.error ? "API 실행이 정책으로 멈췄습니다" : "월간 API 비용 확인"}
+                </strong>
+                <small>아직 Provider 요청을 보내지 않았습니다.</small>
+              </div>
+            </header>
+            {pendingRunPolicyReview.error ? (
+              <p className="run-policy-review-error" role="alert">{pendingRunPolicyReview.error}</p>
+            ) : pendingRunPolicyReview.preflight && (
+              <>
+                <div className="run-policy-review-facts">
+                  <span><strong>Provider</strong>{pendingRunPolicyReview.preflight.snapshot.providerId}</span>
+                  <span><strong>모델</strong>{pendingRunPolicyReview.preflight.snapshot.model}</span>
+                  <span><strong>Privacy</strong>{runPrivacyLabel(pendingRunPolicyReview.preflight.snapshot.privacyProfile)}</span>
+                  <span><strong>Token 상한</strong>{pendingRunPolicyReview.preflight.snapshot.limits?.maxTotalTokens.toLocaleString()} total · {pendingRunPolicyReview.preflight.snapshot.limits?.maxOutputTokens.toLocaleString()} output</span>
+                  <span><strong>Run 비용 hard cap</strong>{formatPolicyUsd(pendingRunPolicyReview.preflight.snapshot.limits?.maxRunCostMicrosUsd)}</span>
+                  <span><strong>이번 달 집계</strong>{formatPolicyUsd(pendingRunPolicyReview.preflight.snapshot.usageWindow.monthCostMicrosUsd)}</span>
+                  <span><strong>가격</strong>{pendingRunPolicyReview.preflight.snapshot.pricing.status === "known"
+                    ? `최악 상한 ${formatPolicyUsd(pendingRunPolicyReview.preflight.snapshot.pricing.maximumRunCostMicrosUsd)}`
+                    : "가격 확인 필요 · 추측 안 함"}</span>
+                </div>
+                {pendingRunPolicyReview.preflight.snapshot.warnings.length > 0 && (
+                  <ul>{pendingRunPolicyReview.preflight.snapshot.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+                )}
+                <p>승인은 이 모델·route·정책·현재 집계에만 묶인 1회용 토큰이며 10분 안에 한 번만 사용할 수 있습니다.</p>
+              </>
+            )}
+            <div className="run-policy-review-actions">
+              <button type="button" onClick={restoreRunPolicyReview}>취소·입력으로 복원</button>
+              {pendingRunPolicyReview.error ? (
+                <button type="button" className="retry" onClick={retryRunPolicyReview}>정책 다시 확인</button>
+              ) : (
+                <button type="button" className="approve" onClick={approveRunPolicyReview}>검토하고 이 1회 실행</button>
+              )}
+            </div>
+          </div>
+        </section>
       )}
 
       {pairing && (
@@ -4314,10 +4559,10 @@ export function App() {
                 <span>{tr("model")}</span>
                 <select
                   value={model}
-                  aria-label="Codex 모델"
+                  aria-label="AI 모델"
                   onChange={(event) => selectModel(event.target.value)}
                 >
-                  <option value="">{tr("automatic")} · {defaultModel(models)?.displayName ?? "Codex"}</option>
+                  {provider === "codex" && <option value="">{tr("automatic")} · {defaultModel(models)?.displayName ?? "Codex"}</option>}
                   {models.map((item) => (
                     <option key={item.id} value={item.id}>{item.displayName}{item.isDefault ? " · 기본" : ""}</option>
                   ))}
@@ -4350,6 +4595,27 @@ export function App() {
               {selectedModelOption.expiresAt && <span>만료 예정 {selectedModelOption.expiresAt.slice(0, 10)}</span>}
               <span className={modelVerificationClass(selectedModelVerification)}>{modelVerificationLabel(selectedModelVerification, provider)}</span>
               <small>{selectedModelOption.description} · catalog metadata와 보호된 eval 등급은 별도로 적용됩니다.</small>
+            </div>
+          )}
+          {(provider === "openrouter" || provider === "openai") && runPolicy && (
+            <div className={`run-policy-status${runPolicy.emergencyStop ? " stopped" : ""}`} aria-label="API 실행 정책 상태">
+              <strong>{runPolicy.emergencyStop ? "API 실행 긴급 중단" : "Companion 사전검사 사용"}</strong>
+              <span>{provider === "openai" ? "store:false" : "strict ZDR"}</span>
+              <span>합계 {runPolicy.maxTotalTokens.toLocaleString()} tokens</span>
+              <span>run hard cap {formatPolicyUsd(runPolicy.maxRunCostMicrosUsd)}</span>
+              <span>월 soft limit {formatPolicyUsd(runPolicy.monthlyCostSoftLimitMicrosUsd)}</span>
+              {selectedRunPolicyPreflight ? (
+                <>
+                  <small>{selectedRunPolicyPreflight.pricing.status === "known"
+                    ? `최근 사전확인 · 최대 ${formatPolicyUsd(selectedRunPolicyPreflight.pricing.maximumRunCostMicrosUsd)}`
+                    : "최근 사전확인 · 가격 확인 필요 · 비용을 추측하지 않음"}</small>
+                  {selectedRunPolicyPreflight.warnings.map((warning) => <small className="warning" key={warning}>{warning}</small>)}
+                </>
+              ) : (
+                <small>{selectedPolicyPricingKnown
+                  ? "catalog 가격 있음 · 전송 시 실제 첨부·route·사용량으로 상한을 검사합니다."
+                  : "가격 확인 필요 · 비용을 추측하지 않고 전송 직전 Companion에서 다시 검사합니다."}</small>
+              )}
             </div>
           )}
           {provider === "openrouter" && (selectedModelOption?.routingOptions?.length ?? 0) > 0 && (
@@ -4732,6 +4998,18 @@ function catalogPricingLabel(pricing: ProviderCatalogPricing | undefined): strin
     pricing.inputPerMillionUsd === undefined ? null : `입력 $${catalogNumber(pricing.inputPerMillionUsd)}/M`,
     pricing.outputPerMillionUsd === undefined ? null : `출력 $${catalogNumber(pricing.outputPerMillionUsd)}/M`,
   ].filter(Boolean).join(" · ");
+}
+
+function formatPolicyUsd(micros: number | undefined): string {
+  if (micros === undefined) return "가격 확인 필요";
+  return `$${(micros / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
+}
+
+function runPrivacyLabel(profile: RunPolicySnapshot["privacyProfile"]): string {
+  if (profile === "openai-store-false") return "OpenAI store:false";
+  if (profile === "openrouter-strict-zdr") return "OpenRouter strict ZDR";
+  if (profile === "codex-managed") return "Codex 관리 연결";
+  return "Provider 정의 확인 필요";
 }
 
 function routingOptionLabel(option: ProviderRoutingOption): string {

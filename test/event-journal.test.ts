@@ -317,6 +317,42 @@ test("event journal persists bounded retention settings and applies them immedia
   await assert.rejects(EventJournal.create(databaseFile), /retention policy cannot be authenticated/);
 });
 
+test("event journal authenticates the complete server-authored run policy", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-pocket-run-policy-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const databaseFile = join(directory, "events.sqlite3");
+  const journal = await EventJournal.create(databaseFile);
+  assert.equal(journal.runPolicy().emergencyStop, false);
+  const policy = journal.updateRunPolicy({
+    emergencyStop: true,
+    maxOutputTokens: 2_048,
+    maxTotalTokens: 20_000,
+    maxRunCostMicrosUsd: 500_000,
+    dailyTokenWarning: 100_000,
+    monthlyCostSoftLimitMicrosUsd: 5_000_000,
+  });
+  assert.equal(policy.emergencyStop, true);
+  assert.throws(() => journal.updateRunPolicy({ ...policy, maxTotalTokens: 1_000 }), /at least maxOutputTokens/);
+  journal.close();
+
+  const reopened = await EventJournal.create(databaseFile);
+  assert.deepEqual(reopened.runPolicy(), policy);
+  reopened.close();
+  const tampered = new Database(databaseFile);
+  tampered.prepare("UPDATE journal_settings SET value_integer = value_integer + 1 WHERE key = 'run_max_total_tokens'").run();
+  tampered.close();
+  await assert.rejects(EventJournal.create(databaseFile), /Run policy settings cannot be authenticated/);
+
+  const partialFile = join(directory, "partial.sqlite3");
+  const partial = await EventJournal.create(partialFile);
+  partial.close();
+  const partialRaw = new Database(partialFile);
+  partialRaw.prepare("INSERT INTO journal_settings (key, value_integer, auth_tag) VALUES (?, ?, ?)")
+    .run("run_emergency_stop", 0, "0".repeat(64));
+  partialRaw.close();
+  await assert.rejects(EventJournal.create(partialFile), /Run policy settings are incomplete/);
+});
+
 class JournalFakeProviders implements RunProviderRegistry {
   readonly starts: ProviderRunInput[] = [];
   private readonly listeners = new Set<(event: ProviderEvent) => void>();

@@ -57,6 +57,7 @@ test("OpenAI provider streams a store:false response through the common runtime 
     prompt: "인사해 주세요",
     model: "gpt-test",
     timeoutMs: 5_000,
+    limits: { maxOutputTokens: 128, maxTotalTokens: 1_000 },
   });
   const completion = await run.completion;
 
@@ -66,6 +67,7 @@ test("OpenAI provider streams a store:false response through the common runtime 
   assert.equal(completion.status, "completed");
   assert.equal(completion.result.finalResponse, "안녕하세요");
   assert.deepEqual(completion.result.usage, {
+    requestCount: 1,
     inputTokens: 12,
     cachedInputTokens: 2,
     outputTokens: 4,
@@ -83,8 +85,53 @@ test("OpenAI provider streams a store:false response through the common runtime 
   assert.equal(client.requests[0]?.store, false);
   assert.equal(client.requests[0]?.stream, true);
   assert.equal(client.requests[0]?.model, "gpt-test");
+  assert.equal(client.requests[0]?.max_output_tokens, 128);
   assert.deepEqual(client.requests[0]?.include, ["reasoning.encrypted_content"]);
   assert.doesNotMatch(JSON.stringify(client.requests[0]), /sk-test-super-secret/);
+});
+
+test("OpenAI enforces server-authored output and total-token hard limits", async () => {
+  const client = new FakeOpenAIClient([event({
+    type: "response.completed",
+    sequence_number: 1,
+    response: {
+      id: "resp-over-limit",
+      output_text: "too much",
+      output: [assistantOutput("message-over-limit", "too much")],
+      usage: usage(60, 5, 0),
+    },
+  })]);
+  const adapter = new OpenAIProviderAdapter({
+    credentials: staticCredentials("sk-test-limit"),
+    clientFactory: () => client,
+    modelAllowlist: ["gpt-test"],
+  });
+  const run = await adapter.startRun({
+    cwd: process.cwd(),
+    prompt: "bounded",
+    model: "gpt-test",
+    limits: { maxOutputTokens: 64, maxTotalTokens: 64 },
+  });
+  const completion = await run.completion;
+  assert.equal(completion.status, "failed");
+  assert.match(String(completion.result.error), /hard limit/);
+  assert.deepEqual(completion.result.usage, {
+    requestCount: 1,
+    inputTokens: 60,
+    cachedInputTokens: 0,
+    outputTokens: 5,
+    reasoningTokens: 0,
+    totalTokens: 65,
+  });
+  assert.equal(client.requests.length, 1);
+  assert.equal(client.requests[0]?.max_output_tokens, 64);
+  await assert.rejects(adapter.startRun({
+    cwd: process.cwd(),
+    prompt: "invalid",
+    model: "gpt-test",
+    limits: { maxOutputTokens: 63, maxTotalTokens: 64 },
+  }), /limit/);
+  assert.equal(client.requests.length, 1);
 });
 
 test("OpenAI provider replays encrypted store:false output for the next local conversation turn", async () => {
@@ -269,6 +316,7 @@ test("OpenAI provider executes a stateless project-tool loop through LocalToolBr
   assert.equal(completion.status, "completed");
   assert.equal(completion.result.finalResponse, "확인했습니다");
   assert.deepEqual(completion.result.usage, {
+    requestCount: 2,
     inputTokens: 7,
     cachedInputTokens: 0,
     outputTokens: 5,

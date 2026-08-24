@@ -84,6 +84,47 @@ test("OpenRouter resumes a bounded local conversation without retaining image da
   });
 });
 
+test("OpenRouter enforces server-authored output and total-token hard limits", async () => {
+  const client = new FakeOpenRouterClient([[chunk({
+    id: "router-over-limit",
+    choices: [{ delta: { content: "too much" }, finish_reason: "stop" }],
+    usage: usage(60, 5, 0, 0.001),
+  })]], models());
+  const adapter = new OpenRouterProviderAdapter({
+    credentials: staticCredentials("sk-or-limit"),
+    clientFactory: () => client,
+    modelAllowlist: ["vendor/chat-model"],
+    defaultModel: "vendor/chat-model",
+  });
+  const run = await adapter.startRun({
+    cwd: process.cwd(),
+    prompt: "bounded",
+    model: "vendor/chat-model",
+    limits: { maxOutputTokens: 64, maxTotalTokens: 64 },
+  });
+  const completion = await run.completion;
+  assert.equal(completion.status, "failed");
+  assert.match(String(completion.result.error), /hard limit/);
+  assert.deepEqual(completion.result.usage, {
+    requestCount: 1,
+    inputTokens: 60,
+    cachedInputTokens: 0,
+    outputTokens: 5,
+    reasoningTokens: 0,
+    totalTokens: 65,
+    costCredits: 0.001,
+  });
+  assert.equal(client.requests.length, 1);
+  assert.equal(client.requests[0]?.max_tokens, 64);
+  await assert.rejects(adapter.startRun({
+    cwd: process.cwd(),
+    prompt: "invalid",
+    model: "vendor/chat-model",
+    limits: { maxOutputTokens: 63, maxTotalTokens: 64 },
+  }), /limit/);
+  assert.equal(client.requests.length, 1);
+});
+
 test("OpenRouter runs strict ZDR project tools and keeps unsupported models chat-only", async (t) => {
   const paths = await PathPolicy.fromEnvironment(process.cwd());
   const approvals = new InMemoryApprovalBroker();
@@ -226,12 +267,14 @@ test("OpenRouter runs strict ZDR project tools and keeps unsupported models chat
     prompt: "Inspect the project",
     model: "vendor/tool-model",
     routing: { upstreams: ["provider-a"], allowFallbacks: false },
+    limits: { maxOutputTokens: 128, maxTotalTokens: 1_000 },
   });
   const completion = await run.completion;
   assert.equal(completion.status, "completed");
   assert.equal(completion.result.finalResponse, "확인 완료");
   assert.equal(completion.result.routedProvider, "Provider A");
   assert.deepEqual(completion.result.usage, {
+    requestCount: 2,
     inputTokens: 7,
     cachedInputTokens: 0,
     outputTokens: 5,
@@ -262,6 +305,8 @@ test("OpenRouter runs strict ZDR project tools and keeps unsupported models chat
     only: ["provider-a"],
   });
   assert.equal(first.model, "vendor/tool-model");
+  assert.equal(first.max_tokens, 128);
+  assert.equal(client.requests[1]?.max_tokens, 128);
   assert.equal(first.parallel_tool_calls, false);
   assert.equal(first.tools?.length, 3);
   assert.equal(first.tools?.[0]?.function.name, "workspace_read");

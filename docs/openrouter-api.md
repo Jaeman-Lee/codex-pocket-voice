@@ -43,7 +43,9 @@ upstream별 가격, p50 latency/throughput, 30분 uptime, quantization과 tool p
 실제 run의 `usage.cost`와 별개이고, 품질 또는 코딩 등급으로 해석하지 않는다. 연결 테스트는 `/key`의
 남은 credit 한도와 만료일만 인증된 화면에 보여 주며 key label이나 원문 key는 반환하지 않는다.
 OpenRouter는 usage를 자동으로 응답에 포함하며 `usage.cost`는 credits 단위다. Credit 기준 통화와 catalog
-API 가격은 USD이지만 report에서는 `actualCostCredits`와 `estimatedMaximumUsd`를 별도 필드로 유지한다.
+API 가격은 USD이지만 보호된 smoke report에서는 `actualCostCredits`와 `estimatedMaximumUsd`를 별도 필드로
+유지한다. Companion operation도 원본 호환 필드 `usage.costCredits`를 남기되, 월 정책 집계용
+`policyUsage`에는 provider-reported USD micro 단위로 정규화해 catalog 추정값과 출처를 구분한다.
 
 모든 inference 요청은 다음 profile을 강제한다.
 
@@ -78,12 +80,15 @@ OpenRouter의 ZDR와 data-collection 설정은 upstream 내용 보존을 제한�
 - ZDR endpoint 기반 1차 upstream 고정과 사용자가 승인한 단일 backup 범위
 - 모델/upstream 가격·성능 snapshot, key quota·만료 가시성
 - 원시 OpenRouter chunk와 도구 결과를 제거한 공통 ProviderEvent
+- Companion이 강제하는 `max_tokens`, 누적 total token과 가장 비싼 승인 route 기준 run 비용 상한
 
 대화 재개와 등급을 통과한 승인형 파일 변경·검증 도구는 공통 암호화 journal/ToolBroker 계약으로 활성화된다.
 임의 명령, network 도구, 개인정보 조건 완화와 모델 fallback은 비활성화되어 있다. 모델별 실제 저비용
 contract/eval과 현장 검증 전에는 이 범위를 넓히지 않는다.
 
 공개 CI는 가짜 HTTP/SSE와 모델 catalog만 사용하며 실제 API key나 유료 inference를 사용하지 않는다.
+사전 비용검사, 월 soft-limit 확인, emergency stop과 완료 비용 분류는
+[API run policy](run-policy.md)를 따른다.
 
 ## 보호된 실제 smoke/eval
 

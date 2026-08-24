@@ -10,6 +10,20 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Server-authored API cost/token policy는 OpenAI·OpenRouter 실행 전에 새 사용자 보호 workflow를
+  추가하므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서
+  `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를
+  대체한다. APK 전달·설치, 실제 API key·유료 inference와 실행 중 Companion 재시작은 하지 않는다.
+  current v1 후보 1.8.2, staged v1.8.4와 검증된 v1.8.1 rollback을 그대로 보존한다.
+- Companion journal key로 인증한 정책은 API emergency stop, output/total token hard limit, run 비용 hard
+  cap, rolling 24시간 token 경고와 UTC 월 비용 soft limit을 제공한다. 가격이 확인된 모델은 OpenRouter의
+  모든 승인 route 중 가장 비싼 가격과 최대 9개 Provider 요청을 사용해 상한을 검사하고, 가격이 없으면
+  추측하지 않는다. 월 soft limit 이후 실행은 모델·route·설정·현재 집계에 묶인 10분/1회용 화면 승인
+  토큰을 요구하며 이 토큰은 모바일 journal에 저장하지 않는다.
+- Provider 요청은 서버가 정한 `max_output_tokens`/`max_tokens`와 누적 total token 상한을 강제한다.
+  operation에는 실행 시점의 immutable 정책·privacy·가격·사용량 snapshot을 암호화해 남기고 완료 결과에는
+  Provider 보고 비용, catalog 추정 또는 unknown을 구분해 기록한다. 모바일은 전송 직전 사전검사,
+  touch-only 월 비용 확인, API 전용 긴급 중단과 bounded 정책 편집, 작업별 실제/추정 비용을 표시한다.
 - Provider model grade gate는 모델·upstream별 검증 결과를 모바일 권한과 실제 API tool 목록에 연결하는
   새 v2 workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서
   `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를

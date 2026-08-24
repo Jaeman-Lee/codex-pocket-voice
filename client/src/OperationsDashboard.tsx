@@ -14,6 +14,8 @@ import type {
   Operation,
   OperationMetadataPatch,
   ProviderModelVerification,
+  RunPolicyConfig,
+  RunPolicyConfigLimits,
   Workspace,
   WorkspaceChangeRecoveryStatus,
   WorkspaceIdentity,
@@ -31,6 +33,9 @@ interface OperationsDashboardProps {
   journalPolicy: JournalPolicy | null;
   journalPolicyLimits: JournalPolicyLimits | null;
   updatingJournalPolicy: boolean;
+  runPolicy: RunPolicyConfig | null;
+  runPolicyLimits: RunPolicyConfigLimits | null;
+  updatingRunPolicy: boolean;
   exportingWorkspace: string | null;
   deletingWorkspace: string | null;
   updatingOperationId: string | null;
@@ -40,6 +45,7 @@ interface OperationsDashboardProps {
   onOpenOperation(operation: Operation): void;
   onUpdateOperation(operation: Operation, patch: OperationMetadataPatch): Promise<boolean>;
   onUpdateJournalPolicy(policy: JournalPolicy): Promise<boolean>;
+  onUpdateRunPolicy(policy: RunPolicyConfig): Promise<boolean>;
   onDecision(approval: ApprovalItem, decision: "approved" | "declined"): void;
   onExportWorkspace(workspace: string): Promise<void>;
   onDeleteWorkspaceHistory(workspace: string): Promise<void>;
@@ -51,6 +57,7 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
   const [confirmingRecovery, setConfirmingRecovery] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [showPolicyEditor, setShowPolicyEditor] = useState(false);
+  const [showRunPolicyEditor, setShowRunPolicyEditor] = useState(false);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 15_000);
     return () => window.clearInterval(timer);
@@ -119,6 +126,35 @@ export function OperationsDashboard(props: OperationsDashboardProps) {
                 onDecision={props.onDecision}
               />
             ))}
+          </section>
+        )}
+
+        {props.runPolicy && props.runPolicyLimits && (
+          <section className={`run-policy-dashboard${props.runPolicy.emergencyStop ? " stopped" : ""}`} aria-labelledby="run-policy-dashboard-title">
+            <div className="dashboard-section-title">
+              <div>
+                <strong id="run-policy-dashboard-title">API 비용·token 보호</strong>
+                <span>{props.runPolicy.emergencyStop ? "OpenAI·OpenRouter 긴급 중단 중" : "OpenAI·OpenRouter 실행 전 Companion이 검사"}</span>
+              </div>
+              <button type="button" aria-expanded={showRunPolicyEditor} onClick={() => setShowRunPolicyEditor((current) => !current)}>
+                정책 설정
+              </button>
+            </div>
+            <div className="run-policy-summary">
+              <span>출력 {props.runPolicy.maxOutputTokens.toLocaleString()}</span>
+              <span>합계 {props.runPolicy.maxTotalTokens.toLocaleString()} tokens</span>
+              <span>run hard cap {formatUsdMicros(props.runPolicy.maxRunCostMicrosUsd)}</span>
+              <span>월 soft limit {formatUsdMicros(props.runPolicy.monthlyCostSoftLimitMicrosUsd)}</span>
+            </div>
+            {showRunPolicyEditor && (
+              <RunPolicyEditor
+                policy={props.runPolicy}
+                limits={props.runPolicyLimits}
+                busy={props.updatingRunPolicy}
+                onClose={() => setShowRunPolicyEditor(false)}
+                onUpdate={props.onUpdateRunPolicy}
+              />
+            )}
           </section>
         )}
 
@@ -372,6 +408,132 @@ function RetentionPolicyEditor({
   );
 }
 
+function RunPolicyEditor({
+  policy,
+  limits,
+  busy,
+  onClose,
+  onUpdate,
+}: {
+  policy: RunPolicyConfig;
+  limits: RunPolicyConfigLimits;
+  busy: boolean;
+  onClose(): void;
+  onUpdate(policy: RunPolicyConfig): Promise<boolean>;
+}) {
+  const [emergencyStop, setEmergencyStop] = useState(policy.emergencyStop);
+  const [maxOutputTokens, setMaxOutputTokens] = useState(String(policy.maxOutputTokens));
+  const [maxTotalTokens, setMaxTotalTokens] = useState(String(policy.maxTotalTokens));
+  const [maxRunUsd, setMaxRunUsd] = useState(String(policy.maxRunCostMicrosUsd / 1_000_000));
+  const [dailyTokenWarning, setDailyTokenWarning] = useState(String(policy.dailyTokenWarning));
+  const [monthlyUsd, setMonthlyUsd] = useState(String(policy.monthlyCostSoftLimitMicrosUsd / 1_000_000));
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    setEmergencyStop(policy.emergencyStop);
+    setMaxOutputTokens(String(policy.maxOutputTokens));
+    setMaxTotalTokens(String(policy.maxTotalTokens));
+    setMaxRunUsd(String(policy.maxRunCostMicrosUsd / 1_000_000));
+    setDailyTokenWarning(String(policy.dailyTokenWarning));
+    setMonthlyUsd(String(policy.monthlyCostSoftLimitMicrosUsd / 1_000_000));
+    setConfirming(false);
+  }, [policy]);
+  const next = {
+    emergencyStop,
+    maxOutputTokens: Number(maxOutputTokens),
+    maxTotalTokens: Number(maxTotalTokens),
+    maxRunCostMicrosUsd: Math.round(Number(maxRunUsd) * 1_000_000),
+    dailyTokenWarning: Number(dailyTokenWarning),
+    monthlyCostSoftLimitMicrosUsd: Math.round(Number(monthlyUsd) * 1_000_000),
+  };
+  const valid = bounded(next.maxOutputTokens, limits.maxOutputTokens)
+    && bounded(next.maxTotalTokens, limits.maxTotalTokens)
+    && next.maxTotalTokens >= next.maxOutputTokens
+    && bounded(next.maxRunCostMicrosUsd, limits.maxRunCostMicrosUsd)
+    && bounded(next.dailyTokenWarning, limits.dailyTokenWarning)
+    && bounded(next.monthlyCostSoftLimitMicrosUsd, limits.monthlyCostSoftLimitMicrosUsd);
+  const changed = Object.keys(next).some((key) => (
+    next[key as keyof RunPolicyConfig] !== policy[key as keyof RunPolicyConfig]
+  ));
+  const change = (setter: (value: string) => void) => (value: string) => {
+    setter(value);
+    setConfirming(false);
+  };
+  const submit = async () => {
+    if (!valid || !changed || busy) return;
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    const saved = await onUpdate(next);
+    if (saved) onClose();
+  };
+  return (
+    <section className="run-policy-editor" aria-labelledby="run-policy-editor-title">
+      <div>
+        <strong id="run-policy-editor-title">서버 강제 실행 정책</strong>
+        <button type="button" disabled={busy} onClick={onClose}>닫기</button>
+      </div>
+      <label className={`run-policy-stop${emergencyStop ? " active" : ""}`}>
+        <input
+          type="checkbox"
+          checked={emergencyStop}
+          disabled={busy}
+          onChange={(event) => { setEmergencyStop(event.target.checked); setConfirming(false); }}
+        />
+        <span>API 실행 긴급 중단</span>
+        <small>OpenAI·OpenRouter만 차단합니다. Codex와 실행 중 작업은 중단하지 않습니다.</small>
+      </label>
+      <div className="run-policy-fields">
+        <PolicyNumber label="출력 token hard limit" value={maxOutputTokens} limits={limits.maxOutputTokens} busy={busy} onChange={change(setMaxOutputTokens)} />
+        <PolicyNumber label="run 합계 token hard limit" value={maxTotalTokens} limits={limits.maxTotalTokens} busy={busy} onChange={change(setMaxTotalTokens)} />
+        <PolicyNumber label="24시간 token 경고" value={dailyTokenWarning} limits={limits.dailyTokenWarning} busy={busy} onChange={change(setDailyTokenWarning)} />
+        <PolicyNumber label="run 비용 hard cap · USD" value={maxRunUsd} limits={{ minimum: limits.maxRunCostMicrosUsd.minimum / 1_000_000, maximum: limits.maxRunCostMicrosUsd.maximum / 1_000_000 }} busy={busy} step="0.01" onChange={change(setMaxRunUsd)} />
+        <PolicyNumber label="월 비용 soft limit · USD" value={monthlyUsd} limits={{ minimum: limits.monthlyCostSoftLimitMicrosUsd.minimum / 1_000_000, maximum: limits.monthlyCostSoftLimitMicrosUsd.maximum / 1_000_000 }} busy={busy} step="0.01" onChange={change(setMonthlyUsd)} />
+      </div>
+      <p>가격이 확인된 모델은 가장 비싼 승인 route 기준 상한을 검사합니다. 가격이 없으면 추측하지 않고 ‘가격 확인 필요’로 표시합니다.</p>
+      {confirming && <strong className="run-policy-confirm">이 설정은 다음 API 실행부터 서버에서 강제됩니다. 다시 눌러 적용하세요.</strong>}
+      <button
+        type="button"
+        className={confirming ? "confirm-run-policy" : undefined}
+        disabled={busy || !valid || !changed}
+        onClick={() => void submit()}
+      >{busy ? "적용 중…" : confirming ? "확인하고 API 정책 적용" : "API 정책 검토"}</button>
+    </section>
+  );
+}
+
+function PolicyNumber({
+  label,
+  value,
+  limits,
+  busy,
+  step = "1",
+  onChange,
+}: {
+  label: string;
+  value: string;
+  limits: { minimum: number; maximum: number };
+  busy: boolean;
+  step?: string;
+  onChange(value: string): void;
+}) {
+  return (
+    <label>
+      <span>{label}</span>
+      <input
+        type="number"
+        inputMode="decimal"
+        min={limits.minimum}
+        max={limits.maximum}
+        step={step}
+        value={value}
+        disabled={busy}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
 function WorkspaceOperationGroup({
   group,
   workspaces,
@@ -531,6 +693,7 @@ function OperationCard({
     if (!editingName) setNameDraft(operation.goalName ?? "");
   }, [editingName, operation.goalName]);
   const usage = operation.result?.usage;
+  const policyUsage = operation.result?.policyUsage;
   const model = operation.model || stringResult(operation.result, "model") || "기본 모델";
   const routedProvider = operation.result?.routing?.actualUpstream
     ? `${operation.result.routing.actualUpstream}${operation.result.routing.actualProvider ? ` (${operation.result.routing.actualProvider})` : ""}`
@@ -556,9 +719,18 @@ function OperationCard({
         {routedProvider && <span>실제 {routedProvider}</span>}
         {operation.routing?.allowFallbacks && <span>승인 fallback {operation.routing.upstreams.length}개</span>}
         {modelVerification && <span>{operationVerificationLabel(modelVerification)}</span>}
+        {operation.runPolicy && <span>{privacyProfileLabel(operation.runPolicy.privacyProfile)}</span>}
+        {operation.runPolicy?.limits && (
+          <span>상한 {operation.runPolicy.limits.maxTotalTokens.toLocaleString()} tokens · {formatUsdMicros(operation.runPolicy.limits.maxRunCostMicrosUsd)}</span>
+        )}
+        {operation.runPolicy?.pricing.status === "unknown" && <span>가격 확인 필요</span>}
         <span>{workspaceIdentityLabel(identity)}</span>
         {usage?.totalTokens !== undefined && <span>{usage.totalTokens.toLocaleString()} tokens</span>}
         {usage?.costCredits !== undefined && <span>{usage.costCredits.toFixed(6)} credits</span>}
+        {policyUsage?.costMicrosUsd !== undefined && (
+          <span>{policyUsage.status === "provider-reported" ? "Provider 비용" : "catalog 추정"} {formatUsdMicros(policyUsage.costMicrosUsd)}</span>
+        )}
+        {policyUsage?.status === "unknown" && <span>실제 비용 확인 필요</span>}
       </div>
       {editingName && (
         <form className="operation-name-editor" onSubmit={(event) => { event.preventDefault(); void saveName(); }}>
@@ -604,6 +776,13 @@ function operationVerificationLabel(verification: ProviderModelVerification): st
   if (verification.projectRead === "invalid" || verification.coding === "invalid") return "eval 오류 · 도구 차단";
   if (verification.projectRead === "fail" || verification.coding === "fail") return "eval 미통과 · 도구 차단";
   return "project eval 미실행 · chat-only";
+}
+
+function privacyProfileLabel(profile: NonNullable<Operation["runPolicy"]>["privacyProfile"]): string {
+  if (profile === "openai-store-false") return "OpenAI store:false";
+  if (profile === "openrouter-strict-zdr") return "OpenRouter strict ZDR";
+  if (profile === "codex-managed") return "Codex 관리 연결";
+  return "Provider privacy 확인";
 }
 
 function elapsed(operation: Operation, now: number): string {
@@ -666,6 +845,14 @@ function journalPolicyLabel(operationCount: number, policy: JournalPolicy | null
   const retention = Number.isInteger(days) ? `${days}일` : `${Math.round(policy.retentionMs / 3_600_000)}시간`;
   const exportMiB = policy.maxExportBytes / (1024 * 1024);
   return `최근 작업 ${operationCount}건 · 보존 ${retention} · 작업 ${policy.maxOperations.toLocaleString()} · 이벤트 ${policy.maxEvents.toLocaleString()} · 내보내기 ${exportMiB.toLocaleString()} MiB`;
+}
+
+function bounded(value: number, limits: { minimum: number; maximum: number }): boolean {
+  return Number.isSafeInteger(value) && value >= limits.minimum && value <= limits.maximum;
+}
+
+function formatUsdMicros(value: number): string {
+  return `$${(value / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
 }
 
 function deletionProtected(group: OperationGroup): boolean {

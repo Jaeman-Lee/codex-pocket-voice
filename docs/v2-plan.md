@@ -13,8 +13,8 @@
 | 변경 분류 | `breaking` — 제공자 실행 계약, Gateway 프로토콜, 작업 저널과 전송 계층을 함께 확장한다. |
 | 목표 버전 | `2.0.0` |
 | 구현 브랜치 | `feature/v2-control-plane` |
-| v1 정책 | 연결 불능을 고친 `1.8.3` Companion은 별도 runtime으로 운영하고 APK는 staged 후보로 유지하며, 1.8.1을 검증된 rollback으로 보존한다. 보안, 데이터 유실, 연결 불능만 추가 `1.8.x` hotfix로 다룬다. |
-| APK 정책 | 2.0 현장 설치 전에는 1.8.2 current와 별도 staged 1.8.3 후보를 섞지 않고, 1.8.1을 rollback으로 유지한다. 2.0 candidate를 설치할 때도 1.8.1 rollback을 보존한다. |
+| v1 정책 | 연결 불능을 고친 `1.8.3` Companion은 별도 runtime으로 운영하고, 외부 CLI writer 안내를 보강한 1.8.4 APK는 별도 staged 후보로 유지하며, 1.8.1을 검증된 rollback으로 보존한다. 보안, 데이터 유실, 연결 불능만 추가 `1.8.x` hotfix로 다룬다. |
+| APK 정책 | 2.0 현장 설치 전에는 1.8.2 current와 별도 staged 1.8.4 후보를 섞지 않고, 1.8.1을 rollback으로 유지한다. 2.0 candidate를 설치할 때도 1.8.1 rollback을 보존한다. |
 | Companion 정책 | 1.x와 2.x 기능 협상을 지원하고, 2.0 검증 중 1.8.1 Companion 복구 지점을 유지한다. |
 
 ### 구현 진행 상황
@@ -22,9 +22,9 @@
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
 | Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Tool/Approval 계약, 세 Provider 공용 contract·stream failure fixture, protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신 모듈 구현; production build·실제 pairing/Gateway/SSE/run/approval 기반 Playwright 모바일 회귀 통과, 실기기 회귀 잔여 |
-| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only systemd encrypted credential, 암호화 durable multi-turn, model-grade 기반 read/coding tool gate, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구, 격리 npm 검증과 보호된 2-call smoke harness 구현; 실제 모델 실행·프로젝트 등급 잔여 |
-| Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker, 보호된 synthetic smoke harness와 exact model/upstream grade enforcement 구현; 실제 model eval 실행·현장 등급 잔여 |
-| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 설정, opt-in process-death native 알림·retained run 열기, API 30 token-gated notification Intent 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed 구현; 실기기 background/tray-tap deep-link acceptance 잔여 |
+| Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only systemd encrypted credential, 암호화 durable multi-turn, server-authored output/total token·비용 hard limit과 실제/추정 비용 accounting, model-grade 기반 read/coding tool gate, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구, 격리 npm 검증과 보호된 2-call smoke harness 구현; 실제 모델 실행·프로젝트 등급 잔여 |
+| Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가장 비싼 승인 route 기준 사전 비용검사, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker, 보호된 synthetic smoke harness와 exact model/upstream grade enforcement 구현; 실제 model eval 실행·현장 등급 잔여 |
+| Phase D | 진행 중 | Android encrypted snapshot/rollback mirror, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox와 two-touch workspace 복구, live branch/worktree identity, workspace export/protected delete, 목표 이름·pin/archive, bounded retention 및 API 비용 정책 설정, touch-only 월 비용 확인, opt-in process-death native 알림·retained run 열기, API 30 token-gated notification Intent 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed 구현; 실기기 background/tray-tap deep-link acceptance 잔여 |
 | Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; API 30 ATD에서 Keystore config/identity/background state와 notification Intent 계측 회귀 추가, 실제 P2P group formation·external edge DDoS/실부하·tray-tap/reconnect/voice 실기기 release gate 잔여 |
 
 ## 2. 제품 정의

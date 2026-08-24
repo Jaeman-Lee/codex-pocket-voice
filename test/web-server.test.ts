@@ -302,6 +302,62 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(typeof openAIProvider.capabilities.commandExecution, "boolean");
   assert.equal(openRouterProvider.capabilities.approvals, false);
   assert.equal(openRouterProvider.capabilities.workspaceWrite, false);
+  const unauthenticatedRunPolicy = await fetch(`${base}/api/run-policy`);
+  assert.equal(unauthenticatedRunPolicy.status, 401);
+  const initialRunPolicy = await jsonFetch(`${base}/api/run-policy`, { headers: authorized() });
+  assert.equal(initialRunPolicy.policy.emergencyStop, false);
+  assert.equal(initialRunPolicy.policy.maxOutputTokens, 4_096);
+  assert.deepEqual(initialRunPolicy.limits.maxOutputTokens, { minimum: 64, maximum: 32_768 });
+  const unconfirmedRunPolicy = await fetch(`${base}/api/run-policy`, {
+    method: "PUT",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ ...initialRunPolicy.policy }),
+  });
+  assert.equal(unconfirmedRunPolicy.status, 400);
+  const expandedRunPolicy = await fetch(`${base}/api/run-policy`, {
+    method: "PUT",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ ...initialRunPolicy.policy, confirm: "apply-run-policy", hiddenOverride: true }),
+  });
+  assert.equal(expandedRunPolicy.status, 400);
+  const emergencyPolicy = {
+    emergencyStop: true,
+    maxOutputTokens: 1_024,
+    maxTotalTokens: 10_000,
+    maxRunCostMicrosUsd: 500_000,
+    dailyTokenWarning: 5_000,
+    monthlyCostSoftLimitMicrosUsd: 2_000_000,
+  };
+  const updatedRunPolicy = await jsonFetch(`${base}/api/run-policy`, {
+    method: "PUT",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ ...emergencyPolicy, confirm: "apply-run-policy" }),
+  });
+  assert.deepEqual(updatedRunPolicy.policy, emergencyPolicy);
+  assert.deepEqual(
+    (await jsonFetch(`${base}/api/run-policy`, { headers: authorized() })).policy,
+    emergencyPolicy,
+  );
+  const codexPolicyPreflight = await jsonFetch(`${base}/api/run-policy/preflight`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ provider: "codex", accountId: "cli-default", model: "test-codex" }),
+  });
+  assert.equal(codexPolicyPreflight.preflight.snapshot.privacyProfile, "codex-managed");
+  assert.equal(codexPolicyPreflight.preflight.snapshot.limits, undefined);
+  assert.equal(codexPolicyPreflight.preflight.confirmationToken, undefined);
+  const emergencyApiPreflight = await fetch(`${base}/api/run-policy/preflight`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ provider: "openai", accountId: "default", model: "gpt-test" }),
+  });
+  assert.equal(emergencyApiPreflight.status, 423);
+  assert.match((await emergencyApiPreflight.json() as any).error, /긴급 중단/);
+  await jsonFetch(`${base}/api/run-policy`, {
+    method: "PUT",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ ...emergencyPolicy, emergencyStop: false, confirm: "apply-run-policy" }),
+  });
   const providerTest = await jsonFetch(`${base}/api/providers/codex/test`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
@@ -401,6 +457,10 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   });
   assert.equal(started.operation.status, "running");
   assert.equal(started.operation.providerId, "codex");
+  assert.equal(started.operation.runPolicy.providerId, "codex");
+  assert.equal(started.operation.runPolicy.model, "test-codex");
+  assert.equal(started.operation.runPolicy.privacyProfile, "codex-managed");
+  assert.equal(started.operation.runPolicy.limits, undefined);
   assert.equal(started.operation.workspaceIdentity.kind, "git");
   assert.equal(
     typeof started.operation.workspaceIdentity.branch === "string"

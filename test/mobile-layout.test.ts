@@ -53,6 +53,9 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   const recoveryWorkspace = css.match(/\.workspace-recovery-transactions > li > code \{([^}]+)\}/)?.[1] ?? "";
   const recoveryPaths = css.match(/\.workspace-recovery-transactions > li > div code \{([^}]+)\}/)?.[1] ?? "";
   const recoveryActions = css.match(/\.workspace-recovery-actions \{([^}]+)\}/)?.[1] ?? "";
+  const runPolicyReview = css.match(/\.run-policy-review \{([^}]+)\}/)?.[1] ?? "";
+  const runPolicyReviewCard = css.match(/\.run-policy-review-card \{([^}]+)\}/)?.[1] ?? "";
+  const runPolicyFields = css.match(/\.run-policy-fields \{([^}]+)\}/)?.[1] ?? "";
 
   assert.match(overlay, /grid-template-rows:\s*minmax\(0,\s*1fr\)/);
   assert.match(overlay, /overflow:\s*hidden/);
@@ -100,6 +103,29 @@ test("operations dashboard and approval details stay inside the mobile viewport"
   assert.match(recoveryPaths, /overflow-wrap:\s*anywhere/);
   assert.match(recoveryActions, /minmax\(0,\s*0\.7fr\)/);
   assert.match(recoveryActions, /minmax\(0,\s*1\.3fr\)/);
+  assert.match(runPolicyReview, /grid-template-rows:\s*minmax\(0,\s*1fr\)/);
+  assert.match(runPolicyReview, /overflow:\s*hidden/);
+  assert.match(runPolicyReviewCard, /max-width:\s*100%/);
+  assert.match(runPolicyReviewCard, /max-height:\s*100%/);
+  assert.match(runPolicyReviewCard, /overflow-x:\s*hidden/);
+  assert.match(runPolicyReviewCard, /overflow-y:\s*auto/);
+  assert.match(runPolicyFields, /minmax\(0,\s*1fr\)/);
+  assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.run-policy-review-facts, \.run-policy-review-actions, \.run-policy-fields \{[^}]*minmax\(0,\s*1fr\)/);
+});
+
+test("API policy confirmation is touch-only and never persists its one-time token", async () => {
+  const app = await readFile(new URL("../client/src/App.tsx", import.meta.url), "utf8");
+  const journal = await readFile(new URL("../client/src/work-journal-model.ts", import.meta.url), "utf8");
+  const dashboard = await readFile(new URL("../client/src/OperationsDashboard.tsx", import.meta.url), "utf8");
+
+  assert.match(app, /\/api\/run-policy\/preflight/);
+  assert.match(app, /검토하고 이 1회 실행/);
+  assert.match(app, /아직 Provider 요청을 보내지 않았습니다/);
+  assert.match(app, /policyConfirmation:\s*queued\.policyConfirmation/);
+  assert.match(journal, /policyConfirmation:\s*_policyConfirmation/);
+  assert.match(dashboard, /API 실행 긴급 중단/);
+  assert.match(dashboard, /if \(!confirming\)/);
+  assert.match(dashboard, /확인하고 API 정책 적용/);
 });
 
 test("workspace recovery stays fail-closed and requires a second touch", async () => {

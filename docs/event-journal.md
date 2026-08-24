@@ -60,6 +60,11 @@ workspace 기록 삭제는 화면에서 정확한 전체 경로와 영향 범위
 인증한다. 누락·범위 초과·변조된 정책은 적용하지 않고 Companion 시작을 실패시킨다. 정책 변경은
 `policy_updated` SSE로 연결 기기에 알린다.
 
+같은 additive settings table에는 여섯 개의 API run 정책값도 별도 이름과 HMAC으로 완전하게 저장한다.
+operation은 실행 시점의 token/cost/privacy/가격/사용량 정책 snapshot과 완료 뒤의 실제·추정·unknown
+비용 상태를 암호문에 포함한다. 설정 일부 누락과 snapshot의 Provider·모델·route 불일치는 복원 시
+거절한다. 세부 한도와 확인 token 계약은 [API run policy](run-policy.md)를 따른다.
+
 ## 검사 범위
 
 자동 테스트는 private directory와 DB/key/WAL 권한, symlink·hard link 차단, 평문

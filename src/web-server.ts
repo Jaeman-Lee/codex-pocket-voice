@@ -16,6 +16,11 @@ import { compactThread, presentThread } from "./result.js";
 import { MediaError, MediaManager } from "./media-manager.js";
 import { ProjectCreationError, ProjectManager } from "./project-manager.js";
 import { ProviderError, ProviderRegistry } from "./providers/registry.js";
+import {
+  CostAndPolicyGuard,
+  RUN_POLICY_CONFIG_LIMITS,
+  RunPolicyError,
+} from "./run-policy.js";
 import { ProviderLoginManager } from "./provider-login-manager.js";
 import { GatewayAuth, GatewayAuthError } from "./gateway-auth.js";
 import { APP_VERSION, GATEWAY_CAPABILITIES, GATEWAY_PROTOCOL_MINIMUM, GATEWAY_PROTOCOL_VERSION } from "./version.js";
@@ -80,6 +85,7 @@ export interface WebServerOptions {
   handoffs?: SessionHandoffStore;
   providers?: ProviderRegistry;
   modelGrades?: ProviderModelGradeSource;
+  runPolicyGuard?: CostAndPolicyGuard;
   journal?: EventJournal;
   approvals?: ApprovalBroker;
   pocketLink?: PocketLinkTlsConfig;
@@ -117,6 +123,7 @@ interface RunBody {
   provider?: unknown;
   accountId?: unknown;
   routing?: unknown;
+  policyConfirmation?: unknown;
 }
 
 interface CreateProjectBody {
@@ -171,11 +178,13 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   });
   const providerLogins = new ProviderLoginManager(providers);
   const journalPolicy = journal.policy();
+  const runPolicy = options.runPolicyGuard ?? new CostAndPolicyGuard(providers, journal);
   const runs = new RunCoordinator(providers, {
     assertWorkspace: (cwd) => options.paths.assertAllowed(cwd),
     stateStore: journal,
     retentionMs: journalPolicy.retentionMs,
     maxOperations: journalPolicy.maxOperations,
+    policyGuard: runPolicy,
   });
   const threadWriterReleases = new Map<string, Promise<ThreadUnsubscribeResponse>>();
   const releaseThreadWriter = (threadId: string): Promise<ThreadUnsubscribeResponse> => {
@@ -241,13 +250,13 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   });
 
   const requestListener = (request: IncomingMessage, response: ServerResponse) => {
-    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, undefined).catch(
+    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, runPolicy, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, undefined).catch(
       (error) => sendError(response, error),
     );
   };
   const pocketLinkRequestListener = (request: IncomingMessage, response: ServerResponse) => {
     void Promise.resolve().then(() => pocketLinkClientPublicKeyPin(request)).then((tlsPublicKeyPin) => (
-      handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, tlsPublicKeyPin)
+      handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, runs, runPolicy, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, tlsPublicKeyPin)
     )).catch((error) => sendError(response, error));
   };
   const server = createServer(requestListener);
@@ -406,6 +415,7 @@ async function handleRequest(
   providers: ProviderRegistry,
   providerLogins: ProviderLoginManager,
   runs: RunCoordinator,
+  runPolicy: CostAndPolicyGuard,
   approvals: ApprovalBroker,
   journal: EventJournal,
   workspaceChangeEngine: WorkspaceChangeEngine | undefined,
@@ -426,7 +436,7 @@ async function handleRequest(
       response.end();
       return;
     }
-    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, runs, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, tlsPublicKeyPin);
+    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, runs, runPolicy, approvals, journal, workspaceChangeEngine, sseClients, notificationSseClients, tlsPublicKeyPin);
     return;
   }
   await serveStatic(request, response, url.pathname, options.staticDir);
@@ -444,6 +454,7 @@ async function handleApi(
   providers: ProviderRegistry,
   providerLogins: ProviderLoginManager,
   runs: RunCoordinator,
+  runPolicy: CostAndPolicyGuard,
   approvals: ApprovalBroker,
   journal: EventJournal,
   workspaceChangeEngine: WorkspaceChangeEngine | undefined,
@@ -866,6 +877,100 @@ async function handleApi(
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/run-policy") {
+    sendJson(response, 200, {
+      policy: journal.runPolicy(),
+      limits: RUN_POLICY_CONFIG_LIMITS,
+    });
+    return;
+  }
+
+  if (request.method === "PUT" && url.pathname === "/api/run-policy") {
+    assertSameOrigin(request);
+    const value = await readJson(request);
+    if (!isRecord(value)) throw new HttpError(400, "Run policy body is invalid");
+    const allowedFields = new Set([
+      "emergencyStop",
+      "maxOutputTokens",
+      "maxTotalTokens",
+      "maxRunCostMicrosUsd",
+      "dailyTokenWarning",
+      "monthlyCostSoftLimitMicrosUsd",
+      "confirm",
+    ]);
+    if (Object.keys(value).some((key) => !allowedFields.has(key))) {
+      throw new HttpError(400, "Run policy body contains an unsupported field");
+    }
+    if (value.confirm !== "apply-run-policy") {
+      throw new HttpError(400, "Explicit run policy confirmation is required");
+    }
+    if (typeof value.emergencyStop !== "boolean") throw new HttpError(400, "emergencyStop must be boolean");
+    const policy = journal.updateRunPolicy({
+      emergencyStop: value.emergencyStop,
+      maxOutputTokens: requiredBoundedInteger(
+        value.maxOutputTokens,
+        RUN_POLICY_CONFIG_LIMITS.maxOutputTokens.minimum,
+        RUN_POLICY_CONFIG_LIMITS.maxOutputTokens.maximum,
+        "maxOutputTokens",
+      ),
+      maxTotalTokens: requiredBoundedInteger(
+        value.maxTotalTokens,
+        RUN_POLICY_CONFIG_LIMITS.maxTotalTokens.minimum,
+        RUN_POLICY_CONFIG_LIMITS.maxTotalTokens.maximum,
+        "maxTotalTokens",
+      ),
+      maxRunCostMicrosUsd: requiredBoundedInteger(
+        value.maxRunCostMicrosUsd,
+        RUN_POLICY_CONFIG_LIMITS.maxRunCostMicrosUsd.minimum,
+        RUN_POLICY_CONFIG_LIMITS.maxRunCostMicrosUsd.maximum,
+        "maxRunCostMicrosUsd",
+      ),
+      dailyTokenWarning: requiredBoundedInteger(
+        value.dailyTokenWarning,
+        RUN_POLICY_CONFIG_LIMITS.dailyTokenWarning.minimum,
+        RUN_POLICY_CONFIG_LIMITS.dailyTokenWarning.maximum,
+        "dailyTokenWarning",
+      ),
+      monthlyCostSoftLimitMicrosUsd: requiredBoundedInteger(
+        value.monthlyCostSoftLimitMicrosUsd,
+        RUN_POLICY_CONFIG_LIMITS.monthlyCostSoftLimitMicrosUsd.minimum,
+        RUN_POLICY_CONFIG_LIMITS.monthlyCostSoftLimitMicrosUsd.maximum,
+        "monthlyCostSoftLimitMicrosUsd",
+      ),
+    });
+    broadcast(sseClients, { type: "run_policy", action: "updated", runPolicy: policy });
+    sendJson(response, 200, { policy, limits: RUN_POLICY_CONFIG_LIMITS });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/run-policy/preflight") {
+    assertSameOrigin(request);
+    const value = await readJson(request);
+    if (!isRecord(value)) throw new HttpError(400, "Run policy preflight body is invalid");
+    const allowedFields = new Set(["provider", "accountId", "model", "routing", "attachments"]);
+    if (Object.keys(value).some((key) => !allowedFields.has(key))) {
+      throw new HttpError(400, "Run policy preflight body contains an unsupported field");
+    }
+    const providerId = optionalString(value.provider, "provider", 40) ?? "codex";
+    const accountId = optionalString(value.accountId, "accountId", 100);
+    const model = optionalString(value.model, "model", 200);
+    const routing = optionalRoutingSelection(value.routing);
+    if (routing && providerId !== "openrouter") {
+      throw new HttpError(400, "upstream routing is only available for OpenRouter");
+    }
+    const attachmentIds = optionalStringArray(value.attachments, "attachments", 4, 200);
+    const attachmentCount = media.resolveForTurn(attachmentIds).imagePaths.length;
+    const preflight = await runPolicy.preflight({
+      providerId,
+      ...(accountId ? { accountId } : {}),
+      ...(model ? { model } : {}),
+      ...(routing ? { routing } : {}),
+      attachmentCount,
+    }, runs.list());
+    sendJson(response, 200, { preflight });
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/api/approvals") {
     const pending = approvals.listPending().flatMap((approval) => {
       const operation = runs.findByProviderRun(approval.providerId, approval.conversationId, approval.runId);
@@ -992,6 +1097,7 @@ async function handleApi(
       throw new HttpError(400, "upstream routing is only available for OpenRouter");
     }
     const networkAccess = body.networkAccess === true;
+    const policyConfirmation = optionalString(body.policyConfirmation, "policyConfirmation", 200);
     const timeoutSeconds = optionalInteger(body.timeoutSeconds, 30, 3600, 900, "timeoutSeconds");
     const attachmentIds = optionalStringArray(body.attachments, "attachments", 4, 200);
     const attachmentInput = media.resolveForTurn(attachmentIds);
@@ -1012,6 +1118,7 @@ async function handleApi(
       },
       workspaceIdentity: await inspectWorkspaceIdentity(cwd),
       idempotencyKey: requestId ? `${authenticatedClient.id}:${requestId}` : undefined,
+      policyConfirmation,
     });
     sendJson(response, 202, { operation: publicOperation(operation) });
     return;
@@ -1383,6 +1490,7 @@ function sendError(response: ServerResponse, error: unknown): void {
       || error instanceof RunCoordinatorError
       || error instanceof ApprovalBrokerError
       || error instanceof EventJournalExportError
+      || error instanceof RunPolicyError
       ? error.statusCode
       : 500;
   const message = error instanceof Error ? error.message : String(error);

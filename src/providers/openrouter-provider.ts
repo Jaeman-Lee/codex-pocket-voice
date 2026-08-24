@@ -19,6 +19,7 @@ import {
   type ProviderRun,
   type ProviderRunCompletion,
   type ProviderRunInput,
+  type ProviderRunLimits,
   type ProviderRoutingSelection,
   type ProviderResumeState,
   type ProviderRuntime,
@@ -161,6 +162,7 @@ export interface OpenRouterChatRequest {
   }>;
   tool_choice?: "auto";
   parallel_tool_calls?: false;
+  max_tokens?: number;
 }
 
 export interface OpenRouterClient {
@@ -420,6 +422,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     const toolAccess = supportsTools(model) && selectedSupportTools
       ? modelToolAccess(verification)
       : "none";
+    const limits = providerRunLimits(input.limits);
     const currentMessages = await buildInitialMessages(
       input.prompt,
       input.imagePaths ?? [],
@@ -447,6 +450,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
           historyTruncated: input.resumeState?.truncated === true,
           toolAccess,
           modelVerification: verification,
+          limits,
           routing,
           timeoutMs: input.timeoutMs,
           active,
@@ -478,6 +482,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     historyTruncated: boolean;
     toolAccess: "none" | "read" | "coding";
     modelVerification: ProviderModelVerification;
+    limits?: ProviderRunLimits;
     routing?: ProviderRoutingSelection;
     timeoutMs?: number;
     active: ActiveOpenRouterRun;
@@ -487,6 +492,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
     let remoteResponseId: string | undefined;
     let routedProvider: string | undefined;
     let totalUsage: ProviderUsage | undefined;
+    let requestCount = 0;
     let toolCallCount = 0;
     const completedTools: Array<{ name: string; status: string; paths?: string[] }> = [];
     const failure = (message: string, statusCode?: number): ProviderRunCompletion => ({
@@ -498,6 +504,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
         error: message,
         ...(statusCode !== undefined ? { errorStatus: statusCode } : {}),
         ...(finalResponse ? { finalResponse } : {}),
+        ...(totalUsage ? { usage: totalUsage } : {}),
         routing: routingResult(options.routing, routedProvider, options.model.upstreams),
       },
     });
@@ -525,6 +532,8 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
       const tools = providerTools(this.toolBroker, options.toolAccess);
       const allowedToolNames = new Set(tools.map((tool) => tool.function.name));
       while (true) {
+        requestCount += 1;
+        totalUsage = { ...(totalUsage ?? {}), requestCount };
         const request: OpenRouterChatRequest = {
           model: options.model.id,
           messages: options.messages,
@@ -535,6 +544,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
             zdr: true,
             ...openRouterRoutingPolicy(options.routing),
           },
+          ...(options.limits ? { max_tokens: options.limits.maxOutputTokens } : {}),
           ...(tools.length > 0 ? {
             tools,
             tool_choice: "auto" as const,
@@ -592,6 +602,11 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
           const nextUsage = providerUsage(chunk.usage);
           totalUsage = addUsage(totalUsage, nextUsage);
           if (nextUsage && totalUsage) emit({ kind: "usage.updated", usage: totalUsage });
+          if (options.limits && (totalUsage?.totalTokens ?? 0) > options.limits.maxTotalTokens) {
+            const message = "OpenRouter run token 사용량이 Companion hard limit을 초과했습니다.";
+            emit({ kind: "run.failed", message });
+            return failure(message);
+          }
         }
         if (!receivedChunk) throw new ProviderError(502, "OpenRouter 응답 스트림이 비어 있습니다.");
         const completedCalls = [...toolCalls.values()].sort((left, right) => left.index - right.index);
@@ -684,6 +699,7 @@ export class OpenRouterProviderAdapter implements ModelProviderAdapter, Provider
             model: options.model.id,
             modelVerification: options.modelVerification,
             finalResponse,
+            ...(totalUsage ? { usage: totalUsage } : {}),
             routing: routingResult(options.routing, routedProvider, options.model.upstreams),
           },
         };
@@ -1049,6 +1065,16 @@ function cloneJson(value: unknown): unknown {
   return JSON.parse(JSON.stringify(value)) as unknown;
 }
 
+function providerRunLimits(value: ProviderRunLimits | undefined): ProviderRunLimits | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value.maxOutputTokens) || value.maxOutputTokens < 64 || value.maxOutputTokens > 32_768
+      || !Number.isSafeInteger(value.maxTotalTokens) || value.maxTotalTokens < value.maxOutputTokens
+      || value.maxTotalTokens > 1_000_000) {
+    throw new ProviderError(400, "OpenRouter run token limit이 잘못됐습니다.");
+  }
+  return { ...value };
+}
+
 function providerTools(
   broker: ToolBroker | undefined,
   access: "none" | "read" | "coding",
@@ -1149,6 +1175,7 @@ function addUsage(current: ProviderUsage | undefined, next: ProviderUsage | unde
   if (!next) return current;
   if (!current) return next;
   return {
+    requestCount: current.requestCount ?? next.requestCount,
     inputTokens: sum(current.inputTokens, next.inputTokens),
     cachedInputTokens: sum(current.cachedInputTokens, next.cachedInputTokens),
     outputTokens: sum(current.outputTokens, next.outputTokens),

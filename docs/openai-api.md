@@ -40,6 +40,7 @@ Responses·이미지·도구 capability를 추정하지 않으며, 허용 목록
 - Gateway operation 단위 중단과 timeout
 - Models API 인증·목록 확인만 수행하는 무료 연결 테스트
 - 공급자 원본 JSON과 Authorization 값을 제거한 오류 분류
+- Companion이 강제하는 `max_output_tokens`, 누적 total token과 run 비용 상한
 
 유효한 `projectRead` 등급의 관찰 도구는 읽기 전용으로 자동 실행되고, `coding` 등급까지 통과한
 파일 교체·생성·rename과 격리 npm 검증은 SHA-bound diff와
@@ -63,6 +64,8 @@ summary만 전달한다.
 [OpenAI data controls](https://developers.openai.com/api/docs/guides/your-data)를 기준으로 확인한다.
 
 공개 CI는 가짜 stream만 사용하며 실제 유료 inference를 보내지 않는다.
+사전 비용검사, 월 soft-limit 확인, emergency stop과 완료 비용 분류는
+[API run policy](run-policy.md)를 따른다.
 
 ## 보호된 실제 모델 smoke
 
