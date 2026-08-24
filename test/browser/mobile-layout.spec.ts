@@ -184,7 +184,11 @@ async function expectVisualViewportMatchesWindow(page: Page): Promise<void> {
 async function installApiPolicyFixture(page: Page, observe: (token: string) => void): Promise<void> {
   await page.route("**/api/providers", async (route) => {
     const response = await route.fetch();
-    const body = await response.json() as { providers: any[] };
+    const body = await response.json() as { providers?: any[] };
+    if (!Array.isArray(body.providers)) {
+      await route.fulfill({ response, json: body });
+      return;
+    }
     body.providers = body.providers.filter((provider) => provider.id !== "openai");
     body.providers.push({
       id: "openai",
