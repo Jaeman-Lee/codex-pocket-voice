@@ -2,6 +2,25 @@
 
 이 문서는 사용자가 설치할 수 있는 배포판과 개발 중 CI 산출물을 구분한다.
 
+## 1.8.4 hotfix candidate — distinguish Companion and external CLI writers
+
+Update decision: 1.8.3의 세션 반납 화면이 Companion app-server writer와 별도
+Codex CLI/TMUX writer의 소유 범위를 구분하지 않아, 사용자가 반납 성공 뒤 터미널에서
+같은 thread를 바로 재개할 수 있다고 오인하게 만든 버그이므로 `patch`로 분류한다.
+버전은 `1.8.4`/Android `versionCode 10804`, 대상은
+`hotfix/1.8.4-external-writer-clarity` 브랜치이다. 검증된 1.8.4 산출물이 생기기 전에는
+1.8.3 staged APK를 보존하고, 이후 1.8.4가 이를 대체하면 1.8.3은 복구 가능한 archive로
+옮긴다. Android current 1.8.2와 rollback 1.8.1은 그대로 유지한다. 실행 중 Linux
+Companion 1.8.3은 재시작하거나 작업 디렉터리를 변경하지 않는다.
+
+- 반납 확인 화면에 선택한 프로젝트의 정확한 경로와 전체 Codex thread ID를 표시한다.
+- 기능 이름을 `Companion 연결 반납`으로 좁히고 별도 Codex CLI/TMUX를 종료하지 않는다고 명시한다.
+- 서버 응답은 `threadUnsubscribeStatus`와 함께 writer 해제 범위가 Companion뿐이며 외부 CLI
+  writer를 관리하지 않는다는 기계 판독 필드를 제공한다.
+- 성공 안내는 Companion writer가 실제로 `unsubscribed`됐는지, 실행 완료 뒤 해제 예정인지,
+  Companion이 해당 writer를 소유하지 않았는지를 구분한다.
+- 새 APK 설치, Companion 재시작, 활성 Codex/TMUX 종료는 이 변경에서 수행하지 않는다.
+
 ## 1.8.3 hotfix candidate — release handed-off thread writers
 
 Update decision: 사용자가 세션을 반납한 뒤에도 Companion의 app-server가 writer lock을
@@ -86,6 +105,7 @@ Candidate build history:
 | 1.8.1 | `c5563ec` | rollback candidate | 스마트폰 뷰포트 수용과 조절 가능한 WebView |
 | 1.8.2 | `d76e478` | preserved current candidate | 프로젝트별 세션 인계와 종료 대상 격리 |
 | 1.8.3 | `e0f6ea1` | staged install candidate | 반납한 thread의 app-server writer 반환 |
+| 1.8.4 | pending | source hotfix candidate | Companion writer와 외부 CLI/TMUX writer 범위 구분 |
 
 ## 1.6.0 — 2026-08-16
 

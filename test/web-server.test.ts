@@ -174,6 +174,8 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(released.handoff.operationId, operationId);
   assert.equal(released.operation.status, "running");
   assert.equal(released.threadUnsubscribeStatus, null);
+  assert.equal(released.writerReleaseScope, "companion");
+  assert.equal(released.externalCliWriterManaged, false);
   assert.equal(fake.interrupted, undefined);
   const availableHandoff = await jsonFetch(`${base}/api/session/handoff`, { headers: authorized() });
   assert.equal(availableHandoff.handoff.id, released.handoff.id);
@@ -216,6 +218,8 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
     body: JSON.stringify({ workspace: cwd, threadId: "thread-web" }),
   });
   assert.equal(idleRelease.threadUnsubscribeStatus, "unsubscribed");
+  assert.equal(idleRelease.writerReleaseScope, "companion");
+  assert.equal(idleRelease.externalCliWriterManaged, false);
   assert.deepEqual(fake.unsubscribed, ["thread-web", "thread-web"]);
 });
 

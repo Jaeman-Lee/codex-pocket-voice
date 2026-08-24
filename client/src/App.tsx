@@ -1061,7 +1061,12 @@ export function App() {
           updatedAt: new Date().toISOString(),
         });
       }
-      const data = await api<{ handoff: SessionHandoff }>("/api/session/handoff", {
+      const data = await api<{
+        handoff: SessionHandoff;
+        threadUnsubscribeStatus: "notLoaded" | "notSubscribed" | "unsubscribed" | null;
+        writerReleaseScope: "companion";
+        externalCliWriterManaged: false;
+      }>("/api/session/handoff", {
         method: "POST",
         body: {
           workspace: workspaceRef.current || currentOperation?.cwd,
@@ -1073,8 +1078,10 @@ export function App() {
       setHandoff(null);
       detachLocalSession();
       showToast(currentOperation?.status === "running"
-        ? "세션을 반납했습니다. PC 작업은 계속되며 다른 기기에서 이어받을 수 있습니다."
-        : "세션을 반납했습니다. 다른 기기에서 이어받을 수 있습니다.");
+        ? "Companion 연결을 반납했습니다. 작업 완료 뒤 Companion writer만 해제되며 별도 Codex/TMUX는 계속됩니다."
+        : data.threadUnsubscribeStatus === "unsubscribed"
+          ? "Companion writer를 해제했습니다. 별도 Codex/TMUX 터미널은 종료되지 않습니다."
+          : "모바일 연결을 반납했습니다. 이 Companion이 소유하지 않은 Codex/TMUX writer는 그대로입니다.");
     } catch (error) {
       showToast(errorMessage(error));
     } finally {
@@ -1511,8 +1518,8 @@ export function App() {
           <button
             className="icon-button handoff-button"
             type="button"
-            aria-label="현재 세션 반납"
-            title={handoffSupported ? "세션 반납 · 다른 기기에서 이어가기" : "Companion 1.8.0 이상에서 사용할 수 있습니다"}
+            aria-label="선택한 프로젝트의 Companion 연결 반납"
+            title={handoffSupported ? `${workspaceName(workspace)} Companion 연결 반납` : "Companion 1.8.0 이상에서 사용할 수 있습니다"}
             disabled={!handoffSupported || handoffBusy || (!threadId && !operationBelongsToSession(operation, workspace, threadId))}
             onClick={() => setShowHandoffDialog(true)}
           >⇥</button>
@@ -1575,14 +1582,16 @@ export function App() {
           <div className="project-dialog-card handoff-dialog-card">
             <div className="project-dialog-head">
               <div>
-                <strong id="handoff-dialog-title">이 기기에서 세션 반납</strong>
-                <small>대화와 프로젝트 파일은 PC에 그대로 보존됩니다.</small>
+                <strong id="handoff-dialog-title">{workspaceName(workspace)} Companion 연결 반납</strong>
+                <small>아래의 정확한 프로젝트와 대화에서 모바일 연결만 분리합니다.</small>
               </div>
               <button type="button" aria-label="닫기" onClick={() => setShowHandoffDialog(false)}>×</button>
             </div>
             <div className="handoff-summary">
               <span><strong>프로젝트</strong>{workspaceName(workspaceRef.current)}</span>
+              <span><strong>정확한 경로</strong><code>{workspaceRef.current}</code></span>
               <span><strong>대화</strong>{threadId ? short(threads.find((item) => item.id === threadId)?.name || threads.find((item) => item.id === threadId)?.preview || threadId, 42) : "새 대화"}</span>
+              <span><strong>대화 ID</strong><code>{threadId || operation?.threadId || "아직 없음"}</code></span>
               <span><strong>PC 작업</strong>{operationBelongsToSession(operation, workspace, threadId) && operation?.status === "running"
                 ? "반납 후에도 계속 실행"
                 : "현재 실행 중인 작업 없음"}</span>
@@ -1591,9 +1600,9 @@ export function App() {
               <p className="project-dialog-error">대기열 {promptQueue.length}건은 이 기기에만 저장되어 있습니다. 먼저 실행하거나 취소해야 안전하게 반납할 수 있습니다.</p>
             )}
             <button className="create-project-button" type="button" disabled={handoffBusy || promptQueue.length > 0} onClick={() => void releaseSession()}>
-              {handoffBusy ? "반납 중…" : "세션 반납"}
+              {handoffBusy ? "반납 중…" : "Companion 연결 반납"}
             </button>
-            <p className="handoff-note">‘작업 중단’과 다릅니다. 실행 중인 Codex는 PC에서 계속되고, 다른 폰이나 노트북이 이 세션에 다시 붙을 수 있습니다.</p>
+            <p className="handoff-note">Codex CLI/TMUX 종료 기능이 아닙니다. Companion app-server가 소유한 writer만 해제하며, 별도 터미널의 Codex는 그 터미널에서 종료해야 합니다.</p>
           </div>
         </section>
       )}

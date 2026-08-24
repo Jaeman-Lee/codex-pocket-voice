@@ -406,6 +406,8 @@ async function handleApi(
       handoff,
       operation: operation ? publicOperation(operation) : null,
       threadUnsubscribeStatus: unsubscribe?.status ?? null,
+      writerReleaseScope: "companion",
+      externalCliWriterManaged: false,
     });
     return;
   }
