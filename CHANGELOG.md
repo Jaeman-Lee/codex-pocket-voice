@@ -10,6 +10,19 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Durable Gateway authorization fix는 동시 pairing·revoke·TLS key rotation의 상태 파일 쓰기가 겹쳐
+  재시작 뒤 token 권한이나 단말 key가 역행할 수 있던 v2 보안 결함을 고치는 `patch`다. 아직 전달하지
+  않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,
+  `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. APK 전달·설치, 실제 Provider
+  호출과 실행 중 Companion 재시작은 하지 않으며 current v1 후보 1.8.2, staged v1.8.4, 검증된 1.8.1
+  rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- Gateway token claim/revoke와 PocketLink TLS key rotation의 start/inspect/complete/abort/finalize를 한
+  durable mutation queue로 직렬화한다. atomic file replace가 성공한 뒤에만 새 인증 상태를 공개하므로
+  저장 실패한 pairing은 ghost client를 만들지 않고, 실패한 revoke는 기존 token을 보존하며, 실패한 key
+  교체는 이전 TLS identity만 계속 허용한다.
+- 지연 writer로 동시 pairing 두 건이 모두 복원되는지, 같은 단말의 동시 rotation은 한 건만 발급되는지,
+  claim/revoke/rotation 저장 실패가 live 권한을 바꾸지 않는지를 결정적으로 검사한다. `release:check`의
+  단위 검사 291개와 실제 app-server 통합 3개, production build·schema 일치·SBOM이 통과했다.
 - Durable session handoff persistence fix는 동시에 들어온 release/claim의 상태 파일 쓰기가 역순으로
   끝나 Companion 재시작 뒤 오래된 handoff가 되살아날 수 있던 v2 결함을 고치는 `patch`다. 아직
   전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,

@@ -21,11 +21,11 @@
 
 | 단계 | 상태 | 현재 결과 |
 | --- | --- | --- |
-| Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Codex exact-turn Steer와 durable idempotency, terminal operation 기반 명시적 Provider context Fork와 redacted provenance, Tool/Approval 계약, 세 Provider 공용 contract·stream failure fixture, protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신, 프로젝트별 음성 용어 사전 및 strict 설정 말하기→터치 검토 구현; production build·실제 pairing/Gateway/SSE/run/approval 기반 Playwright 모바일 회귀 통과, 새 설정 음성 Chromium CI·실기기 음성 회귀 잔여 |
+| Phase A | 진행 중 | 공통 ProviderEvent·runtime·RunCoordinator, Codex exact-turn Steer와 durable idempotency, terminal operation 기반 명시적 Provider context Fork와 redacted provenance, Tool/Approval 계약, 세 Provider 공용 contract·stream failure fixture, protocol 2–3 호환, operation UI와 App connection/run/journal/voice/media/PocketLink bootstrap 상태 머신, 프로젝트별 음성 용어 사전 및 strict 설정 말하기→터치 검토 구현; production build·실제 pairing/Gateway/SSE/run/approval 및 설정 음성 기반 Playwright 모바일 회귀 통과, 실기기 음성 회귀 잔여 |
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only systemd encrypted credential, 암호화 durable multi-turn, server-authored output/total token·비용 hard limit과 실제/추정 비용 accounting, model-grade 기반 read/coding tool gate, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구, 격리 npm 검증, 보호된 2-call smoke와 단계별 합성 프로젝트 grade harness 구현; 실제 모델 workflow 실행·현장 프로젝트 acceptance 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가장 비싼 승인 route 기준 사전 비용검사, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker, 보호된 synthetic smoke와 단계별 합성 프로젝트 grade harness 및 exact model/upstream grade enforcement 구현; 실제 model/upstream workflow 실행·현장 acceptance 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror와 schema 2 glossary, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, bounded syntax-highlighted old/new-line diff와 최대 8개 touch-decline same-run feedback, two-touch workspace 복구, 최대 8대의 redacted read-only Multi-Companion Fleet와 명시적 PC 전환, live branch/worktree identity와 exact normalized-cwd session scope, workspace export/protected delete, 목표 이름·pin/archive, 모바일 기본 Queue·명시적 Codex Steer, Provider 전환의 기본 빈 대화와 touch-reviewed bounded Fork, durable 기록, bounded retention 및 API 비용 정책 설정, touch-only 월 비용 확인, opt-in process-death native 알림·retained run 열기와 default-network-triggered bounded SSE reconnect, API 30 token-gated notification Intent·system-tray tap 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed, run artifact 검토/download와 allowlist-only diagnostic support bundle 구현; 실기기 multi-PC/artifact/background/locked-screen/process-kill/voice acceptance 잔여 |
-| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, observed server-pin promotion, recoverable A/B client-key rotation, two-touch exact-client revocation→native key→local target removal, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; SystemUI 포함 API 30 AOSP device에서 Keystore config/identity/background state와 notification Intent·tray-tap 계측 회귀 추가, 실제 multi-PC 해제·P2P group formation·external edge DDoS/실부하·locked-screen/reconnect/voice 실기기 release gate 잔여 |
+| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, durable serialized pairing/revoke/key-rotation state, observed server-pin promotion, recoverable A/B client-key rotation, two-touch exact-client revocation→native key→local target removal, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer 구현; SystemUI 포함 API 30 AOSP device에서 Keystore config/identity/background state와 notification Intent·tray-tap 계측 회귀 추가, 실제 multi-PC 해제·P2P group formation·external edge DDoS/실부하·locked-screen/reconnect/voice 실기기 release gate 잔여 |
 
 ## 2. 제품 정의
 
@@ -533,7 +533,10 @@ device ID가 다르면 pairing code를 사용하지 않는다. 서버 인증서�
 받고 Keystore A/B 슬롯에 새 non-exportable key를 준비한다. Companion이 새 key의 실제 TLS proof를
 영속화하고 이전 binding을 거부한 뒤에만 Android가 이전 alias를 삭제한다. 승인 hash와 pending 슬롯은
 각각 Companion `0600` state와 Android 암호화 설정에 남아 재시작·응답 유실을 복구하며, 불확실하면 두
-key를 모두 유지하고 자동 downgrade하지 않는다. Companion은 별도 opt-in에서 이름·TLS port·protocol
+key를 모두 유지하고 자동 downgrade하지 않는다. Companion의 pairing token claim/revoke와 TLS key
+rotation 전 단계는 단일 mutation queue에서 호출 순서대로 atomic replace하고, 저장 성공 뒤에만 새
+인증 상태를 공개한다. 실패한 claim은 client를 만들지 않고 실패한 revoke·rotation은 이전 token·key
+권한을 보존해 재시도한다. Companion은 별도 opt-in에서 이름·TLS port·protocol
 version만 DNS-SD로 광고한다. Android의 user-triggered 8초 검색은 service/TXT를 exact-match하고 최대
 16개의 private IPv4/IPv6 ULA 후보만 2분 동안 검토용으로 유지한다. discovery 결과는 인증이 아니므로
 선택 뒤에도 Companion 터미널의 SPKI pin을 직접 입력하며 자동 페어링·연결·SSH fallback은 없다.
@@ -624,8 +627,8 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
   scope의 AES-GCM ciphertext와 hash index, Android SQLite schema 1→2·API 33 bounded bias 및 320px
   추가/삭제·reload 복원을 검증 — Node/Chromium/Android CI 자동 검사 구현; 실제 음성 품질은 실기기 gate 잔여
 - 설정 음성의 단일 strict command, exact/unknown/ambiguous/oversize 결과, inert review와 stale owner/catalog
-  거부, Provider catalog 선조회 원자성, 기존 prompt 비변경 및 320px touch-only 적용을 검증 — Node 검사 구현,
-  production Chromium CI와 실제 Android 음성·터치 gate 잔여
+  거부, Provider catalog 선조회 원자성, 기존 prompt 비변경 및 320px touch-only 적용을 검증 — Node 및
+  production Chromium CI 자동 검사 구현; 실제 Android 음성·터치 gate 잔여
 - Android API 30 managed-device instrumentation에서 Keystore config/identity, background encrypted cursor·
   변조 거부와 notification Intent token/bounds/extra scrub/one-time consume, UI Automator system-tray tap 검증 —
   CI 자동 검사 구현;
@@ -635,6 +638,8 @@ SemVer/versionCode이고 현재보다 높은 versionCode인지 기존 native ver
 - Android ZIP importer의 path/duplicate/size 상한, current signer/package binding, 10분 재검토와 설치 전 rehash
 - 공식 Release의 잘못된 repo/tag/중복 asset/digest/content-type, oversized JSON/ZIP, HTTP·외부-host redirect와 조회 token 만료 차단
 - DNS-SD의 wrong service/TXT, public·loopback 주소, 후보 flood·중복·만료·Unicode control과 pin/TXT smuggling 차단
+- Gateway의 동시 pairing 보존, 동일 client 동시 key rotation 단일 승인, claim/revoke/rotation 저장 실패 시
+  live 권한 불변과 재시도 가능성 검사
 - relay의 private secret/key, TLS hostname+SPKI pin, 틀린 slot/secret 비소비, connection/slot/waiter/frame/
   timeout 상한, source IP 정규화·동시 연결·fixed-window 시작/new-slot 제한, 무응답 pre-TLS burst·shutdown과
   aggregate-only stats schema 및 relay 안쪽

@@ -42,6 +42,7 @@ npm run release:check
 
 - Node 20 on Linux
 - Node 22 on Linux
+- Mobile browser acceptance on Chromium
 - Android stable APK
 
 Android 산출물에는 서명 APK 또는 fork용 unsigned APK, `SHA256SUMS`, CycloneDX SBOM과
@@ -85,10 +86,11 @@ package, 정확한 manifest 서명·APK/SBOM hash와 더 높은 versionCode를 �
 
 - 기존 설치 위에 APK가 정상 업데이트된다.
 - signed ZIP importer가 변조·동일/낮은 versionCode·다른 package/signer를 거부하고 Android 설치 확인창만 연다.
-- Companion과 페어링되고 앱 재시작 후에도 인증이 유지된다.
+- Companion과 두 단말이 동시에 페어링되어도 재시작 후 각 인증이 유지된다.
 - 보조 Companion의 `삭제` 첫 터치는 검토만 열고 권한·key·등록을 바꾸지 않는다.
   두 번째 터치는 exact Companion client 권한을 먼저 해제한 뒤 Android key와 등록을
-  삭제하며, PC offline·mTLS 불일치에서는 아무것도 지우지 않고 재시도할 수 있다.
+  삭제하며, PC offline·mTLS 불일치에서는 아무것도 지우지 않고 재시도할 수 있다. 성공한 해제 또는
+  TLS key 교체 뒤 Companion을 재시작해도 이전 token·identity가 다시 허용되지 않는다.
 - 프로젝트 목록, 새 프로젝트 생성과 `main` 브랜치 초기화가 동작한다.
 - AI 연결 센터가 작은 화면과 키보드 표시 상태에서 내부 스크롤된다.
 - 음성 짧게 누르기·길게 누르기와 중복 문장 방지가 동작한다.

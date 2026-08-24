@@ -164,3 +164,185 @@ test("gateway auth rate limits incorrect pairing codes", async (t) => {
     error instanceof GatewayAuthError && error.code === "PAIRING_RATE_LIMITED"
   ));
 });
+
+test("gateway auth persists concurrent pairings in call order without exposing uncommitted clients", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-pocket-auth-serialization-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const stateFile = join(directory, "auth.json");
+  const auth = await GatewayAuth.create({ stateFile, pairingCode: "12121212" });
+  let activeWrites = 0;
+  let maximumActiveWrites = 0;
+  let writes = 0;
+  let releaseFirstWrite!: () => void;
+  const firstWriteReleased = new Promise<void>((resolve) => {
+    releaseFirstWrite = resolve;
+  });
+  let markFirstWriteStarted!: () => void;
+  const firstWriteStarted = new Promise<void>((resolve) => {
+    markFirstWriteStarted = resolve;
+  });
+  overrideGatewayPersistence(auth, async (state) => {
+    writes += 1;
+    activeWrites += 1;
+    maximumActiveWrites = Math.max(maximumActiveWrites, activeWrites);
+    try {
+      if (writes === 1) {
+        markFirstWriteStarted();
+        await firstWriteReleased;
+      }
+      await writeFile(stateFile, `${JSON.stringify(state)}\n`, { mode: 0o600 });
+    } finally {
+      activeWrites -= 1;
+    }
+  });
+
+  const firstClaim = auth.claim("12121212", "First phone");
+  await firstWriteStarted;
+  const secondClaim = auth.claim("12121212", "Second phone");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(auth.pairedClientCount, 0);
+  assert.equal(writes, 1);
+  assert.equal(maximumActiveWrites, 1);
+
+  releaseFirstWrite();
+  const [first, second] = await Promise.all([firstClaim, secondClaim]);
+  assert.equal(auth.pairedClientCount, 2);
+  assert.equal(writes, 2);
+  assert.equal(maximumActiveWrites, 1);
+
+  const restored = await GatewayAuth.create({ stateFile, pairingCode: "34343434" });
+  assert.equal(restored.requireAuthorization(`Bearer ${first.token}`).label, "First phone");
+  assert.equal(restored.requireAuthorization(`Bearer ${second.token}`).label, "Second phone");
+});
+
+test("only one concurrent TLS key rotation can become durable", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-pocket-auth-rotation-serialization-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const stateFile = join(directory, "auth.json");
+  const firstPin = `sha256/${Buffer.alloc(32, 10).toString("base64")}`;
+  const nextPin = `sha256/${Buffer.alloc(32, 11).toString("base64")}`;
+  const auth = await GatewayAuth.create({ stateFile, pairingCode: "56565656" });
+  const paired = await auth.claim("56565656", "Rotating phone", firstPin);
+  let writes = 0;
+  let activeWrites = 0;
+  let maximumActiveWrites = 0;
+  let releaseFirstWrite!: () => void;
+  const firstWriteReleased = new Promise<void>((resolve) => {
+    releaseFirstWrite = resolve;
+  });
+  let markFirstWriteStarted!: () => void;
+  const firstWriteStarted = new Promise<void>((resolve) => {
+    markFirstWriteStarted = resolve;
+  });
+  overrideGatewayPersistence(auth, async (state) => {
+    writes += 1;
+    activeWrites += 1;
+    maximumActiveWrites = Math.max(maximumActiveWrites, activeWrites);
+    try {
+      if (writes === 1) {
+        markFirstWriteStarted();
+        await firstWriteReleased;
+      }
+      await writeFile(stateFile, `${JSON.stringify(state)}\n`, { mode: 0o600 });
+    } finally {
+      activeWrites -= 1;
+    }
+  });
+
+  const firstRotation = auth.startTlsKeyRotation(paired.client.id, firstPin);
+  await firstWriteStarted;
+  const competingRotation = auth.startTlsKeyRotation(paired.client.id, firstPin);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(writes, 1);
+  assert.equal(maximumActiveWrites, 1);
+  releaseFirstWrite();
+
+  const started = await firstRotation;
+  await assert.rejects(competingRotation, (error: unknown) => (
+    error instanceof GatewayAuthError && error.code === "TLS_KEY_ROTATION_ALREADY_PENDING"
+  ));
+  assert.equal(writes, 1);
+  assert.equal(maximumActiveWrites, 1);
+
+  const restored = await GatewayAuth.create({ stateFile, pairingCode: "78787878" });
+  assert.equal((await restored.inspectTlsKeyRotation(
+    `Bearer ${paired.token}`,
+    started.rotationToken,
+    nextPin,
+  )).status, "pending");
+});
+
+test("failed gateway auth persistence never changes live pairing or TLS authority", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-pocket-auth-persistence-failure-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const firstPin = `sha256/${Buffer.alloc(32, 12).toString("base64")}`;
+  const nextPin = `sha256/${Buffer.alloc(32, 13).toString("base64")}`;
+  const auth = await GatewayAuth.create({
+    stateFile: join(directory, "auth.json"),
+    pairingCode: "90909090",
+  });
+  let failNextWrite = false;
+  overrideGatewayPersistence(auth, async () => {
+    if (failNextWrite) {
+      failNextWrite = false;
+      throw new Error("synthetic auth persistence failure");
+    }
+  });
+
+  failNextWrite = true;
+  await assert.rejects(auth.claim("90909090", "Ghost phone"), /synthetic auth persistence failure/);
+  assert.equal(auth.pairedClientCount, 0);
+
+  const legacy = await auth.claim("90909090", "Retained phone");
+  failNextWrite = true;
+  await assert.rejects(auth.revoke(legacy.client.id), /synthetic auth persistence failure/);
+  assert.equal(auth.requireAuthorization(`Bearer ${legacy.token}`).label, "Retained phone");
+  await auth.revoke(legacy.client.id);
+  assert.throws(() => auth.requireAuthorization(`Bearer ${legacy.token}`), (error: unknown) => (
+    error instanceof GatewayAuthError && error.code === "INVALID_TOKEN"
+  ));
+
+  const pocketLink = await auth.claim("90909090", "PocketLink phone", firstPin);
+  failNextWrite = true;
+  await assert.rejects(
+    auth.startTlsKeyRotation(pocketLink.client.id, firstPin),
+    /synthetic auth persistence failure/,
+  );
+  assert.equal(auth.requireAuthorization(`Bearer ${pocketLink.token}`, firstPin).tlsBound, true);
+
+  const started = await auth.startTlsKeyRotation(pocketLink.client.id, firstPin);
+  failNextWrite = true;
+  await assert.rejects(
+    auth.completeTlsKeyRotation(`Bearer ${pocketLink.token}`, started.rotationToken, nextPin),
+    /synthetic auth persistence failure/,
+  );
+  assert.equal(auth.requireAuthorization(`Bearer ${pocketLink.token}`, firstPin).tlsBound, true);
+  assert.throws(
+    () => auth.requireAuthorization(`Bearer ${pocketLink.token}`, nextPin),
+    (error: unknown) => error instanceof GatewayAuthError && error.code === "TLS_DEVICE_MISMATCH",
+  );
+
+  await auth.completeTlsKeyRotation(`Bearer ${pocketLink.token}`, started.rotationToken, nextPin);
+  failNextWrite = true;
+  await assert.rejects(
+    auth.finalizeTlsKeyRotation(`Bearer ${pocketLink.token}`, started.rotationToken, nextPin),
+    /synthetic auth persistence failure/,
+  );
+  assert.equal((await auth.inspectTlsKeyRotation(
+    `Bearer ${pocketLink.token}`,
+    started.rotationToken,
+    nextPin,
+  )).status, "completed");
+  assert.equal((await auth.finalizeTlsKeyRotation(
+    `Bearer ${pocketLink.token}`,
+    started.rotationToken,
+    nextPin,
+  )).finalized, true);
+});
+
+function overrideGatewayPersistence(
+  auth: GatewayAuth,
+  persist: (state: unknown) => Promise<void>,
+): void {
+  (auth as unknown as { persist: (state: unknown) => Promise<void> }).persist = persist;
+}

@@ -82,6 +82,7 @@ export class GatewayAuth {
   private state: StoredGatewayState;
   private readonly now: () => number;
   private failedAttempts: number[] = [];
+  private mutationTail: Promise<void> = Promise.resolve();
 
   private constructor(state: StoredGatewayState, options: Required<Pick<GatewayAuthOptions, "stateFile" | "now">> & GatewayAuthOptions) {
     this.state = state;
@@ -108,7 +109,7 @@ export class GatewayAuth {
       state.device = { ...state.device, kind: configuredKind, name: configuredName };
     }
     const auth = new GatewayAuth(state, { ...options, stateFile, now });
-    await auth.persist();
+    await auth.persist(state);
     return auth;
   }
 
@@ -142,66 +143,78 @@ export class GatewayAuth {
   }
 
   async claim(code: unknown, label: unknown, tlsPublicKeyPin?: string): Promise<PairingResult> {
-    this.trimFailedAttempts();
-    if (this.failedAttempts.length >= MAX_PAIRING_ATTEMPTS) {
-      throw new GatewayAuthError(429, "PAIRING_RATE_LIMITED", "잠시 후 페어링을 다시 시도해 주세요.");
-    }
-    if (this.now() > Date.parse(this.pairingExpiresAt)) {
-      throw new GatewayAuthError(410, "PAIRING_CODE_EXPIRED", "페어링 코드가 만료되었습니다. Companion을 다시 시작해 주세요.");
-    }
-    if (typeof code !== "string" || !safeEqual(code.replace(/[ -]/g, ""), this.pairingCode)) {
-      this.failedAttempts.push(this.now());
-      throw new GatewayAuthError(403, "PAIRING_CODE_INVALID", "페어링 코드가 올바르지 않습니다.");
-    }
-    const clientLabel = typeof label === "string" && label.trim()
-      ? label.trim().slice(0, 80)
-      : "Codex Pocket";
-    if (tlsPublicKeyPin !== undefined && !isPublicKeyPin(tlsPublicKeyPin)) {
-      throw new GatewayAuthError(400, "TLS_DEVICE_PROOF_INVALID", "PocketLink 단말 인증서가 올바르지 않습니다.");
-    }
-    const token = randomBytes(32).toString("base64url");
-    const client: StoredClient = {
-      id: randomUUID(),
-      label: clientLabel,
-      tokenHash: hashToken(token),
-      createdAt: new Date(this.now()).toISOString(),
-      ...(tlsPublicKeyPin ? { tlsPublicKeyPin } : {}),
-    };
-    this.state.clients.push(client);
-    await this.persist();
-    return { token, client: { id: client.id, label: client.label, tlsBound: tlsPublicKeyPin !== undefined }, device: this.device };
+    return this.enqueueMutation(async () => {
+      this.trimFailedAttempts();
+      if (this.failedAttempts.length >= MAX_PAIRING_ATTEMPTS) {
+        throw new GatewayAuthError(429, "PAIRING_RATE_LIMITED", "잠시 후 페어링을 다시 시도해 주세요.");
+      }
+      if (this.now() > Date.parse(this.pairingExpiresAt)) {
+        throw new GatewayAuthError(410, "PAIRING_CODE_EXPIRED", "페어링 코드가 만료되었습니다. Companion을 다시 시작해 주세요.");
+      }
+      if (typeof code !== "string" || !safeEqual(code.replace(/[ -]/g, ""), this.pairingCode)) {
+        this.failedAttempts.push(this.now());
+        throw new GatewayAuthError(403, "PAIRING_CODE_INVALID", "페어링 코드가 올바르지 않습니다.");
+      }
+      const clientLabel = typeof label === "string" && label.trim()
+        ? label.trim().slice(0, 80)
+        : "Codex Pocket";
+      if (tlsPublicKeyPin !== undefined && !isPublicKeyPin(tlsPublicKeyPin)) {
+        throw new GatewayAuthError(400, "TLS_DEVICE_PROOF_INVALID", "PocketLink 단말 인증서가 올바르지 않습니다.");
+      }
+      const token = randomBytes(32).toString("base64url");
+      const client: StoredClient = {
+        id: randomUUID(),
+        label: clientLabel,
+        tokenHash: hashToken(token),
+        createdAt: new Date(this.now()).toISOString(),
+        ...(tlsPublicKeyPin ? { tlsPublicKeyPin } : {}),
+      };
+      const nextState: StoredGatewayState = {
+        ...this.state,
+        clients: [...this.state.clients, client],
+      };
+      await this.commit(nextState);
+      return {
+        token,
+        client: { id: client.id, label: client.label, tlsBound: tlsPublicKeyPin !== undefined },
+        device: this.device,
+      };
+    });
   }
 
   async revoke(clientId: string): Promise<void> {
-    const next = this.state.clients.filter((client) => client.id !== clientId);
-    if (next.length === this.state.clients.length) return;
-    this.state.clients = next;
-    await this.persist();
+    return this.enqueueMutation(async () => {
+      const clients = this.state.clients.filter((client) => client.id !== clientId);
+      if (clients.length === this.state.clients.length) return;
+      await this.commit({ ...this.state, clients });
+    });
   }
 
   async startTlsKeyRotation(clientId: string, tlsPublicKeyPin: string | undefined): Promise<TlsKeyRotationStart> {
-    const client = this.state.clients.find((item) => item.id === clientId);
-    if (!client?.tlsPublicKeyPin) {
-      throw new GatewayAuthError(409, "TLS_KEY_ROTATION_UNAVAILABLE", "PocketLink로 페어링된 단말만 key를 교체할 수 있습니다.");
-    }
-    if (!isPublicKeyPin(tlsPublicKeyPin) || !safeEqual(client.tlsPublicKeyPin, tlsPublicKeyPin)) {
-      throw new GatewayAuthError(401, "TLS_DEVICE_PROOF_REQUIRED", "현재 PocketLink 단말 identity의 TLS proof가 필요합니다.");
-    }
-    if (client.tlsKeyRotation?.nextPin
-        || (client.tlsKeyRotation && this.now() <= Date.parse(client.tlsKeyRotation.expiresAt))) {
-      throw new GatewayAuthError(409, "TLS_KEY_ROTATION_ALREADY_PENDING", "이미 진행 중인 PocketLink key 교체를 먼저 확인해 주세요.");
-    }
-    const rotationToken = randomBytes(32).toString("base64url");
-    const expiresAt = new Date(this.now() + TLS_KEY_ROTATION_LIFETIME_MS).toISOString();
-    await this.replaceClient(client.id, {
-      ...client,
-      tlsKeyRotation: {
-        tokenHash: hashToken(rotationToken),
-        previousPin: client.tlsPublicKeyPin,
-        expiresAt,
-      },
+    return this.enqueueMutation(async () => {
+      const client = this.state.clients.find((item) => item.id === clientId);
+      if (!client?.tlsPublicKeyPin) {
+        throw new GatewayAuthError(409, "TLS_KEY_ROTATION_UNAVAILABLE", "PocketLink로 페어링된 단말만 key를 교체할 수 있습니다.");
+      }
+      if (!isPublicKeyPin(tlsPublicKeyPin) || !safeEqual(client.tlsPublicKeyPin, tlsPublicKeyPin)) {
+        throw new GatewayAuthError(401, "TLS_DEVICE_PROOF_REQUIRED", "현재 PocketLink 단말 identity의 TLS proof가 필요합니다.");
+      }
+      if (client.tlsKeyRotation?.nextPin
+          || (client.tlsKeyRotation && this.now() <= Date.parse(client.tlsKeyRotation.expiresAt))) {
+        throw new GatewayAuthError(409, "TLS_KEY_ROTATION_ALREADY_PENDING", "이미 진행 중인 PocketLink key 교체를 먼저 확인해 주세요.");
+      }
+      const rotationToken = randomBytes(32).toString("base64url");
+      const expiresAt = new Date(this.now() + TLS_KEY_ROTATION_LIFETIME_MS).toISOString();
+      await this.replaceClient(client.id, {
+        ...client,
+        tlsKeyRotation: {
+          tokenHash: hashToken(rotationToken),
+          previousPin: client.tlsPublicKeyPin,
+          expiresAt,
+        },
+      });
+      return { rotationToken, expiresAt };
     });
-    return { rotationToken, expiresAt };
   }
 
   async inspectTlsKeyRotation(
@@ -209,17 +222,19 @@ export class GatewayAuth {
     rotationToken: unknown,
     tlsPublicKeyPin: string | undefined,
   ): Promise<TlsKeyRotationState> {
-    const { client, rotation } = await this.requireTlsKeyRotation(header, rotationToken, tlsPublicKeyPin);
-    if (rotation.nextPin) {
-      if (!safeEqual(client.tlsPublicKeyPin!, rotation.nextPin) || !safeEqual(tlsPublicKeyPin!, rotation.nextPin)) {
-        throw new GatewayAuthError(409, "TLS_KEY_ROTATION_STATE_MISMATCH", "PocketLink key 교체 상태가 일치하지 않습니다.");
+    return this.enqueueMutation(async () => {
+      const { client, rotation } = await this.requireTlsKeyRotation(header, rotationToken, tlsPublicKeyPin);
+      if (rotation.nextPin) {
+        if (!safeEqual(client.tlsPublicKeyPin!, rotation.nextPin) || !safeEqual(tlsPublicKeyPin!, rotation.nextPin)) {
+          throw new GatewayAuthError(409, "TLS_KEY_ROTATION_STATE_MISMATCH", "PocketLink key 교체 상태가 일치하지 않습니다.");
+        }
+        return { status: "completed", expiresAt: rotation.expiresAt };
       }
-      return { status: "completed", expiresAt: rotation.expiresAt };
-    }
-    if (!safeEqual(client.tlsPublicKeyPin!, rotation.previousPin) || safeEqual(tlsPublicKeyPin!, rotation.previousPin)) {
-      throw new GatewayAuthError(409, "TLS_KEY_ROTATION_STATE_MISMATCH", "새 PocketLink 단말 key의 TLS proof가 필요합니다.");
-    }
-    return { status: "pending", expiresAt: rotation.expiresAt };
+      if (!safeEqual(client.tlsPublicKeyPin!, rotation.previousPin) || safeEqual(tlsPublicKeyPin!, rotation.previousPin)) {
+        throw new GatewayAuthError(409, "TLS_KEY_ROTATION_STATE_MISMATCH", "새 PocketLink 단말 key의 TLS proof가 필요합니다.");
+      }
+      return { status: "pending", expiresAt: rotation.expiresAt };
+    });
   }
 
   async completeTlsKeyRotation(
@@ -227,23 +242,25 @@ export class GatewayAuth {
     rotationToken: unknown,
     tlsPublicKeyPin: string | undefined,
   ): Promise<TlsKeyRotationState & { previousKeyRetired: true }> {
-    const { client, rotation } = await this.requireTlsKeyRotation(header, rotationToken, tlsPublicKeyPin);
-    if (rotation.nextPin) {
-      if (!safeEqual(client.tlsPublicKeyPin!, rotation.nextPin) || !safeEqual(tlsPublicKeyPin!, rotation.nextPin)) {
-        throw new GatewayAuthError(409, "TLS_KEY_ROTATION_STATE_MISMATCH", "PocketLink key 교체 상태가 일치하지 않습니다.");
+    return this.enqueueMutation(async () => {
+      const { client, rotation } = await this.requireTlsKeyRotation(header, rotationToken, tlsPublicKeyPin);
+      if (rotation.nextPin) {
+        if (!safeEqual(client.tlsPublicKeyPin!, rotation.nextPin) || !safeEqual(tlsPublicKeyPin!, rotation.nextPin)) {
+          throw new GatewayAuthError(409, "TLS_KEY_ROTATION_STATE_MISMATCH", "PocketLink key 교체 상태가 일치하지 않습니다.");
+        }
+        return { status: "completed", expiresAt: rotation.expiresAt, previousKeyRetired: true };
       }
+      if (!safeEqual(client.tlsPublicKeyPin!, rotation.previousPin) || safeEqual(tlsPublicKeyPin!, rotation.previousPin)) {
+        throw new GatewayAuthError(409, "TLS_KEY_ROTATION_STATE_MISMATCH", "새 PocketLink 단말 key의 TLS proof가 필요합니다.");
+      }
+      const nextPin = tlsPublicKeyPin!;
+      await this.replaceClient(client.id, {
+        ...client,
+        tlsPublicKeyPin: nextPin,
+        tlsKeyRotation: { ...rotation, nextPin },
+      });
       return { status: "completed", expiresAt: rotation.expiresAt, previousKeyRetired: true };
-    }
-    if (!safeEqual(client.tlsPublicKeyPin!, rotation.previousPin) || safeEqual(tlsPublicKeyPin!, rotation.previousPin)) {
-      throw new GatewayAuthError(409, "TLS_KEY_ROTATION_STATE_MISMATCH", "새 PocketLink 단말 key의 TLS proof가 필요합니다.");
-    }
-    const nextPin = tlsPublicKeyPin!;
-    await this.replaceClient(client.id, {
-      ...client,
-      tlsPublicKeyPin: nextPin,
-      tlsKeyRotation: { ...rotation, nextPin },
     });
-    return { status: "completed", expiresAt: rotation.expiresAt, previousKeyRetired: true };
   }
 
   async abortTlsKeyRotation(
@@ -251,17 +268,19 @@ export class GatewayAuth {
     rotationToken: unknown,
     tlsPublicKeyPin: string | undefined,
   ): Promise<{ aborted: true; retainedPreviousKey: true }> {
-    const { client, rotation } = await this.requireTlsKeyRotation(header, rotationToken, tlsPublicKeyPin);
-    if (rotation.nextPin) {
-      throw new GatewayAuthError(409, "TLS_KEY_ROTATION_ALREADY_COMPLETED", "Companion은 이미 새 단말 key만 허용합니다.");
-    }
-    if (!safeEqual(client.tlsPublicKeyPin!, rotation.previousPin)) {
-      throw new GatewayAuthError(409, "TLS_KEY_ROTATION_STATE_MISMATCH", "PocketLink key 교체 상태가 일치하지 않습니다.");
-    }
-    const next = { ...client };
-    delete next.tlsKeyRotation;
-    await this.replaceClient(client.id, next);
-    return { aborted: true, retainedPreviousKey: true };
+    return this.enqueueMutation(async () => {
+      const { client, rotation } = await this.requireTlsKeyRotation(header, rotationToken, tlsPublicKeyPin);
+      if (rotation.nextPin) {
+        throw new GatewayAuthError(409, "TLS_KEY_ROTATION_ALREADY_COMPLETED", "Companion은 이미 새 단말 key만 허용합니다.");
+      }
+      if (!safeEqual(client.tlsPublicKeyPin!, rotation.previousPin)) {
+        throw new GatewayAuthError(409, "TLS_KEY_ROTATION_STATE_MISMATCH", "PocketLink key 교체 상태가 일치하지 않습니다.");
+      }
+      const next = { ...client };
+      delete next.tlsKeyRotation;
+      await this.replaceClient(client.id, next);
+      return { aborted: true, retainedPreviousKey: true };
+    });
   }
 
   async finalizeTlsKeyRotation(
@@ -269,15 +288,17 @@ export class GatewayAuth {
     rotationToken: unknown,
     tlsPublicKeyPin: string | undefined,
   ): Promise<{ finalized: true }> {
-    const { client, rotation } = await this.requireTlsKeyRotation(header, rotationToken, tlsPublicKeyPin);
-    if (!rotation.nextPin || !safeEqual(client.tlsPublicKeyPin!, rotation.nextPin)
-        || !safeEqual(tlsPublicKeyPin!, rotation.nextPin)) {
-      throw new GatewayAuthError(409, "TLS_KEY_ROTATION_NOT_COMPLETED", "PocketLink 단말 key 교체가 아직 완료되지 않았습니다.");
-    }
-    const next = { ...client };
-    delete next.tlsKeyRotation;
-    await this.replaceClient(client.id, next);
-    return { finalized: true };
+    return this.enqueueMutation(async () => {
+      const { client, rotation } = await this.requireTlsKeyRotation(header, rotationToken, tlsPublicKeyPin);
+      if (!rotation.nextPin || !safeEqual(client.tlsPublicKeyPin!, rotation.nextPin)
+          || !safeEqual(tlsPublicKeyPin!, rotation.nextPin)) {
+        throw new GatewayAuthError(409, "TLS_KEY_ROTATION_NOT_COMPLETED", "PocketLink 단말 key 교체가 아직 완료되지 않았습니다.");
+      }
+      const next = { ...client };
+      delete next.tlsKeyRotation;
+      await this.replaceClient(client.id, next);
+      return { finalized: true };
+    });
   }
 
   private trimFailedAttempts(): void {
@@ -326,21 +347,27 @@ export class GatewayAuth {
   private async replaceClient(clientId: string, next: StoredClient): Promise<void> {
     const index = this.state.clients.findIndex((client) => client.id === clientId);
     if (index < 0) throw new GatewayAuthError(401, "INVALID_TOKEN", "페어링이 만료되었거나 해제되었습니다.");
-    const previous = this.state.clients[index]!;
-    this.state.clients[index] = next;
-    try {
-      await this.persist();
-    } catch (error) {
-      this.state.clients[index] = previous;
-      throw error;
-    }
+    const clients = [...this.state.clients];
+    clients[index] = next;
+    await this.commit({ ...this.state, clients });
   }
 
-  private async persist(): Promise<void> {
+  private enqueueMutation<T>(mutation: () => Promise<T>): Promise<T> {
+    const result = this.mutationTail.then(mutation);
+    this.mutationTail = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private async commit(state: StoredGatewayState): Promise<void> {
+    await this.persist(state);
+    this.state = state;
+  }
+
+  private async persist(state: StoredGatewayState): Promise<void> {
     const directory = dirname(this.stateFile);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const temporary = `${this.stateFile}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(this.state, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600, flag: "wx" });
     await rename(temporary, this.stateFile);
   }
 }
