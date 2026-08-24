@@ -42,6 +42,7 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | Mobile browser acceptance | Playwright Chromium on Node 22 | production build plus real pairing/Gateway/SSE/run/approval path covers 320/360/412px, 150% text, keyboard resize, rotation, long diff and touch decline line-feedback payload; synthetic only, device acceptance still pending |
 | Android work notifications | opt-in connectedDevice service | maximum 8 encrypted loopback subscriptions, notification-only authenticated SSE, durable cursor/replay freshness, default-network-triggered bounded reconnect and generic retained-operation navigation implemented; API 30 token/bounds/consume/extra-scrub plus system-tray tap automated, physical locked-screen/process-kill/network-switch acceptance pending |
 | Android low-load gate | schema 1 aggregate ADB report | read-only 60-minute CPU/PSS/battery/background-wake collector and fixed fail-closed thresholds implemented with privacy fixtures; no physical result recorded yet |
+| Functional field gate | schema 1 operator-attested aggregate | signed manifest/version/commit/APK-bound inert template and fixed 20-scenario fail-closed verdict implemented; no physical/provider result recorded yet |
 | Approved API tools | SHA-bound replace/create/rename + probed sandbox verifier | 1–8 text files; bounded fail-closed manual recovery; delete/directory/chmod/binary blocked; check/test/build only |
 | Run artifact boundary | maximum 8 / 256 MiB per operation | redacted verifier/Codex logs plus allowlisted run-reported test/image/APK regular-file snapshots; authenticated opaque download, symlink/sensitive/path escape rejection and history-delete cleanup implemented; physical Android download acceptance pending |
 | Diagnostic support bundle | schema 1 allowlist JSON | authenticated app/protocol/tool/count aggregate download, normalized version tokens and capability-gated 320px UI implemented; no device/network/workspace/request/error content, physical share acceptance pending |
@@ -49,6 +50,18 @@ V2 development decision: Provider 공통 실행 계층, API Provider, 작업 저
 | PocketLink TLS bootstrap | opt-in LAN/P2P mTLS + Android server/client SPKI binding | pairing/revoke/key-rotation state uses durable serialized commits; reviewed QR, bounded untrusted DNS-SD and opaque Wi-Fi Direct discovery, Android group-client enforcement, standalone Linux GO/PBC + memory-only DHCP cleanup lifecycle, observed backup-pin promotion and recoverable Keystore A/B client identity rotation implemented; actual P2P field validation pending |
 | PocketLink outbound relay | protocol 1 broker + Linux/Android connectors | fixed direct/P2P/relay plus LAN→P2P→relay auto mode, Keystore-encrypted peer/endpoint/slot/secret, outer relay TLS and existing end-to-end PocketLink mTLS implemented; public-service/device acceptance pending |
 | Android update integrity | canonical schema 1 manifest + detached release-key signature | bounded official Latest discovery/download, same-signer native ZIP importer and user-confirmed installer implemented; field rollback acceptance pending |
+
+Functional field acceptance harness checkpoint decision: 기존 v2 physical/provider release checklist를 exact
+candidate에 묶어 반복 가능하게 검증하는 developer validation이므로 internal compatibility `patch`로 분류한다.
+아직 전달하지 않은 incompatible v2 범위 안에서 SemVer `2.0.0`/Android `versionCode 20000`, 대상
+`feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. 별도 암호 검증한 signed update
+manifest의 version/commit·manifest/APK/signer digest와 clean checkout을 묶고, inert owner-only template의
+20개 고정 scenario와 physical API 30+·Companion/client/upstream 개수, 여섯 attestation이 모두 pass일 때만
+create-once aggregate report를 통과시킨다. device/network 값·credential·prompt/response·오류 원문·자유 형식
+note는 schema에 없다. 현재는 fixture만 실행하며 실제 단말·Provider·P2P·rollback 통과 결과를 기록하지
+않는다. APK 전달·설치, 실제 Provider 호출과 Companion 재시작은 하지 않고 current v1 후보 1.8.2,
+staged v1.8.4, 검증된 rollback 1.8.1과 배포 중인 v1.8.3 Companion을 그대로 보존한다. `release:check`의
+단위 검사 296개와 실제 app-server 통합 3개, production build·schema 일치·SBOM이 통과했다.
 
 Durable Gateway authorization checkpoint decision: 동시 pairing·revoke·TLS key rotation의 atomic rename이
 역순 완료되면 재시작 뒤 해제한 token 또는 이전 key가 되살아나거나 새 client가 사라질 수 있던 기존 v2

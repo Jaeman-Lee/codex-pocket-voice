@@ -10,6 +10,20 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Functional field acceptance harness는 기존 v2 physical/provider release checklist를 exact candidate에
+  묶어 반복 가능하게 검증하는 developer validation이므로 internal compatibility `patch`다. 아직 전달하지
+  않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,
+  `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다. APK 전달·설치, 실제 Provider
+  호출과 실행 중 Companion 재시작은 하지 않으며 current v1 후보 1.8.2, staged v1.8.4, 검증된 1.8.1
+  rollback과 배포 중인 v1.8.3 Companion을 보존한다.
+- 별도 검증한 signed update manifest의 version/commit·manifest/APK/signer digest와 clean checkout을
+  observation에 결합한다. 생성 템플릿은 20개 scenario가 전부 `not_run`인 실패 상태이고, 실제 API 30+
+  Android, Companion/client 각 2대, OpenRouter upstream 계열 2개, 여섯 attestation과 모든 scenario가
+  통과해야 owner-only create-once report가 pass된다.
+- schema는 device/network identifier, credential, prompt/response, 오류 원문과 자유 형식 note를 허용하지
+  않으며 후보 drift·누락·중복·미래/30일 초과 결과를 실패-폐쇄로 거부한다. 이 report는 실제 실행을 대신하지
+  않는 `operator_attested_structured` 증거로 표시한다. `release:check`의 단위 검사 296개와 실제
+  app-server 통합 3개, production build·schema 일치·SBOM이 통과했다.
 - Durable Gateway authorization fix는 동시 pairing·revoke·TLS key rotation의 상태 파일 쓰기가 겹쳐
   재시작 뒤 token 권한이나 단말 key가 역행할 수 있던 v2 보안 결함을 고치는 `patch`다. 아직 전달하지
   않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,

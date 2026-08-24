@@ -99,6 +99,8 @@ package, 정확한 manifest 서명·APK/SBOM hash와 더 높은 versionCode를 �
   경쟁 claim이나 응답 실패는 기존 모바일 프로젝트·Provider·대화를 바꾸지 않고, claim 뒤 Companion을
   재시작해도 소비된 handoff가 다시 나타나지 않는다.
 - 사진·영상 첨부와 로컬 분석 실패 메시지가 확인된다.
+- [v2 기능 현장 검증](functional-field-acceptance.md)의 exact signed candidate·clean commit에 묶인 20개
+  scenario가 모두 통과하고 owner-only aggregate report를 검토한다.
 - [Android 저부하 현장 검증](android-field-acceptance.md)의 60분 release gate를 direct LAN, 실제 P2P와
   outbound relay 지원 경로별로 통과하고 aggregate 결과를 검토한다.
 
