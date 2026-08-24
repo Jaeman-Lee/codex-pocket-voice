@@ -91,7 +91,7 @@ test("API preflight confirmation stays contained and forwards only the one-time 
 
   await page.getByRole("button", { name: "프로젝트와 대화 선택 열기" }).click();
   await page.getByLabel("AI 제공자 선택").selectOption("openai");
-  await expect(page.getByLabel("AI 모델")).toHaveValue("browser-openai-model");
+  await expect(page.getByLabel("AI 모델", { exact: true })).toHaveValue("browser-openai-model");
   await expect(page.getByLabel("API 실행 정책 상태")).toContainText("Companion 사전검사 사용");
   await page.getByLabel("Codex에게 보낼 요청").fill("API 비용 확인 후 실행해 주세요.");
   await page.getByRole("button", { name: "요청 전송" }).click();
