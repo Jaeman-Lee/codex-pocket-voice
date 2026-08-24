@@ -10,6 +10,20 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Project speech glossary는 PC·프로젝트별 받아쓰기 보정을 추가하는 새 user-visible workflow이므로
+  `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android
+  `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only candidate를 대체한다.
+  APK 전달·설치, 실제 Provider 호출과 실행 중 Companion 재시작은 하지 않으며 current v1 후보
+  1.8.2, staged v1.8.4와 검증된 v1.8.1 rollback을 그대로 보존한다.
+- 사용자가 검토한 `인식되는 말 → 요청에 넣을 표기`를 최대 32개 저장한다. 긴 표현을 먼저 적용하고
+  단어 경계를 벗어난 부분·연쇄 치환은 건드리지 않으며, 직접 입력한 문장 대신 새 partial/final
+  음성 구간만 보정해 전송 전 textarea에서 다시 편집할 수 있다. Android 13 이상에서는 고유한
+  표기만 bounded recognition bias로 보내고 구형 Android·PWA도 동일한 로컬 후처리를 사용한다.
+- 사전은 exact device+workspace에 고정하고 기존 WorkJournal AES-GCM key로 암호화한다. IndexedDB,
+  localStorage rollback mirror와 Android SQLite에는 domain-separated SHA-256 scope만 남기며 Android
+  journal schema 1→2는 기존 conversation·queue row를 유지한 채 전용 table만 추가한다. 브라우저
+  IndexedDB version/store 계약은 올리지 않아 1.8.1 rollback reader를 유지하고, 늦게 끝난 다른
+  PC·프로젝트 load는 현재 사전에 적용하지 않는다.
 - Multi-Companion Fleet는 등록한 여러 Linux PC의 작업 상태를 한 모바일 대시보드에 보여 주는 새
   user-visible workflow이므로 `feature`로 분류한다. 아직 현장 전달하지 않은 incompatible v2 범위
   안에서 `2.0.0`/Android `versionCode 20000`, `feature/v2-control-plane`을 유지하고 이전 CI-only

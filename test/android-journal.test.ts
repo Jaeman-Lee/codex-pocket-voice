@@ -21,6 +21,10 @@ test("Android journal uses app-owned SQLite and accepts encrypted envelopes only
   assert.match(plugin, /codex_pocket_work_journal\.db/);
   assert.match(plugin, /journal_key TEXT PRIMARY KEY/);
   assert.match(plugin, /device_id TEXT PRIMARY KEY/);
+  assert.match(plugin, /scope_id TEXT PRIMARY KEY/);
+  assert.match(plugin, /DATABASE_VERSION = 2/);
+  assert.match(plugin, /oldVersion == 1 && newVersion == 2/);
+  assert.match(plugin, /createSpeechGlossaries\(database\)/);
   assert.match(plugin, /CONFLICT_REPLACE/);
   assert.match(plugin, /envelope\.length\(\) == 3/);
   assert.match(plugin, /version instanceof Number/);

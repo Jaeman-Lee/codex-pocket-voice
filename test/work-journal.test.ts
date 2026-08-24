@@ -7,7 +7,12 @@ import {
   NativeSqliteRawJournal,
   type RawJournal,
 } from "../client/src/work-journal-raw.js";
-import { conversationKey, restoredMessages, serializableQueue } from "../client/src/work-journal-model.js";
+import {
+  conversationKey,
+  restoredMessages,
+  serializableQueue,
+  speechGlossaryKey,
+} from "../client/src/work-journal-model.js";
 
 test("work journal keys isolate device, provider, workspace, and thread without changing Codex rollback keys", () => {
   const phone = conversationKey("phone", "/workspace/a", "thread-1");
@@ -90,6 +95,12 @@ test("native journal migration copies legacy records without deleting the rollba
   await journal.saveConversation(next);
   assert.deepEqual(primary.conversations.get(record.key), next);
   assert.deepEqual(legacy.conversations.get(record.key), next);
+
+  const glossary = { key: speechGlossaryKey("phone", "/workspace/a"), version: 2, iv: "iv", ciphertext: "terms" };
+  legacy.speechGlossaries.set(glossary.key, glossary);
+  assert.deepEqual(await journal.loadSpeechGlossary(glossary.key), glossary);
+  assert.deepEqual(primary.speechGlossaries.get(glossary.key), glossary);
+  assert.deepEqual(legacy.speechGlossaries.get(glossary.key), glossary);
 });
 
 test("native journal keeps saving when either SQLite or the rollback mirror is unavailable", async () => {
@@ -114,6 +125,8 @@ test("native SQLite bridge sends only encrypted envelopes and ignores corrupt ro
     async putConversation(options) { writes.push(options); },
     async getQueue() { return { payload: null }; },
     async putQueue() {},
+    async getSpeechGlossary() { return { payload: null }; },
+    async putSpeechGlossary() {},
   };
   const journal = new NativeSqliteRawJournal(native);
   const envelope = { key: "conversation-a", version: 2, iv: "safe-iv", ciphertext: "encrypted-only" };
@@ -131,9 +144,35 @@ test("native SQLite bridge sends only encrypted envelopes and ignores corrupt ro
   assert.doesNotMatch(writes[0]!.payload, /prompt|Authorization|OPENAI_API_KEY/);
 });
 
+test("native SQLite bridge hashes the project glossary scope and sends ciphertext only", async () => {
+  const writes: Array<{ scope: string; payload: string }> = [];
+  const native: NativeJournalPlugin = {
+    async getConversation() { return { payload: null }; },
+    async putConversation() {},
+    async getQueue() { return { payload: null }; },
+    async putQueue() {},
+    async getSpeechGlossary() { return { payload: null }; },
+    async putSpeechGlossary(options) { writes.push(options); },
+  };
+  const journal = new NativeSqliteRawJournal(native);
+  const key = speechGlossaryKey("linux-a", "/private/project/path");
+  await journal.saveSpeechGlossary({ key, version: 2, iv: "safe-iv", ciphertext: "encrypted-terms" });
+
+  assert.equal(writes.length, 1);
+  assert.match(writes[0]!.scope, /^[a-f0-9]{64}$/);
+  assert.notEqual(writes[0]!.scope, key);
+  assert.doesNotMatch(writes[0]!.payload, /private|project|OpenRouter/);
+  assert.deepEqual(JSON.parse(writes[0]!.payload), {
+    version: 2,
+    iv: "safe-iv",
+    ciphertext: "encrypted-terms",
+  });
+});
+
 class MemoryRawJournal implements RawJournal {
   readonly conversations = new Map<string, unknown>();
   readonly queues = new Map<string, unknown>();
+  readonly speechGlossaries = new Map<string, unknown>();
   failWrites = false;
 
   async loadConversation(key: string): Promise<unknown> {
@@ -156,5 +195,16 @@ class MemoryRawJournal implements RawJournal {
     const device = (value as { device?: string }).device;
     if (!device) throw new Error("device missing");
     this.queues.set(device, structuredClone(value));
+  }
+
+  async loadSpeechGlossary(key: string): Promise<unknown> {
+    return this.speechGlossaries.get(key);
+  }
+
+  async saveSpeechGlossary(value: unknown): Promise<void> {
+    if (this.failWrites) throw new Error("write failed");
+    const key = (value as { key?: string }).key;
+    if (!key) throw new Error("key missing");
+    this.speechGlossaries.set(key, structuredClone(value));
   }
 }

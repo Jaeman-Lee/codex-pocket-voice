@@ -42,6 +42,14 @@ import {
   type PocketLinkRoute,
 } from "./native";
 import { mergeSpeechSegments } from "./speech-utils";
+import {
+  applySpeechGlossary,
+  appendSpeechGlossaryEntry,
+  createSpeechGlossaryEntry,
+  MAX_SPEECH_GLOSSARY_ENTRIES,
+  speechGlossaryHints,
+  type SpeechGlossaryEntry,
+} from "./speech-glossary";
 import { initialConnectionState, reduceConnection } from "./connection-state";
 import {
   activeRunOwnsOperation,
@@ -77,7 +85,7 @@ import {
 } from "./provider-conversations";
 import { workspaceIdentityFor, workspaceIdentityLabel } from "./workspace-identity";
 import { createWorkJournal } from "./work-journal";
-import { conversationKey, restoredMessages, serializableQueue } from "./work-journal-model";
+import { conversationKey, restoredMessages, serializableQueue, speechGlossaryKey } from "./work-journal-model";
 import {
   conversationJournalRestored,
   initialJournalState,
@@ -251,6 +259,12 @@ export function App() {
   const [effort, setEffort] = useState("");
   const [voiceInput, dispatchVoiceInput] = useReducer(reduceVoiceInput, initialVoiceInputState);
   const { dictating, handsFree, supported: speechSupported } = voiceInput;
+  const [speechGlossary, setSpeechGlossary] = useState<SpeechGlossaryEntry[]>([]);
+  const [speechGlossaryLoading, setSpeechGlossaryLoading] = useState(false);
+  const [speechGlossarySaving, setSpeechGlossarySaving] = useState(false);
+  const [showSpeechGlossary, setShowSpeechGlossary] = useState(false);
+  const [speechGlossarySpoken, setSpeechGlossarySpoken] = useState("");
+  const [speechGlossaryReplacement, setSpeechGlossaryReplacement] = useState("");
   const [controlsCollapsed, setControlsCollapsed] = useState(
     () => localStorage.getItem("codex-pocket-controls-open") !== "true",
   );
@@ -382,6 +396,9 @@ export function App() {
   const nativeFinalRef = useRef("");
   const handsFreeRef = useRef(false);
   const speechLanguageRef = useRef(speechLanguage);
+  const speechGlossaryRef = useRef<SpeechGlossaryEntry[]>([]);
+  const speechGlossaryLoadGenerationRef = useRef(0);
+  const speechGlossarySaveRef = useRef(false);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
   const voiceWasActiveRef = useRef(false);
@@ -629,6 +646,34 @@ export function App() {
     setToast(text);
     toastTimerRef.current = window.setTimeout(() => setToast(""), 4_000);
   }, []);
+
+  useEffect(() => {
+    const generation = speechGlossaryLoadGenerationRef.current + 1;
+    speechGlossaryLoadGenerationRef.current = generation;
+    speechGlossaryRef.current = [];
+    setSpeechGlossary([]);
+    setSpeechGlossaryLoading(Boolean(workspace));
+    setSpeechGlossarySaving(false);
+    setShowSpeechGlossary(false);
+    setSpeechGlossarySpoken("");
+    setSpeechGlossaryReplacement("");
+    if (!workspace) return;
+    let disposed = false;
+    void journal.loadSpeechGlossary(device, workspace).then((record) => {
+      if (disposed || generation !== speechGlossaryLoadGenerationRef.current
+          || deviceRef.current !== device || workspaceRef.current !== workspace) return;
+      const entries = record?.entries ?? [];
+      speechGlossaryRef.current = entries;
+      setSpeechGlossary(entries);
+      setSpeechGlossaryLoading(false);
+    }).catch(() => {
+      if (disposed || generation !== speechGlossaryLoadGenerationRef.current
+          || deviceRef.current !== device || workspaceRef.current !== workspace) return;
+      setSpeechGlossaryLoading(false);
+      showToast("이 프로젝트의 음성 용어 사전을 불러오지 못했습니다.");
+    });
+    return () => { disposed = true; };
+  }, [device, journal, showToast, workspace]);
 
   useEffect(() => {
     if (!isNativeApp()) return;
@@ -1090,7 +1135,8 @@ export function App() {
       else listeners.push(handle);
     };
     const updateTranscript = (tail: string) => {
-      setPrompt(joinDictation(dictationBaseRef.current, mergeSpeechSegments([nativeFinalRef.current, tail])));
+      const transcript = mergeSpeechSegments([nativeFinalRef.current, tail]);
+      setPrompt(joinDictation(dictationBaseRef.current, applySpeechGlossary(transcript, speechGlossaryRef.current)));
     };
 
     void keep(NativeSpeech.addListener("speechPartial", (event: NativeSpeechResult) => {
@@ -1143,7 +1189,8 @@ export function App() {
       for (let index = 0; index < event.results.length; index += 1) {
         segments.push(event.results[index]?.[0]?.transcript ?? "");
       }
-      setPrompt(joinDictation(dictationBaseRef.current, mergeSpeechSegments(segments)));
+      const transcript = mergeSpeechSegments(segments);
+      setPrompt(joinDictation(dictationBaseRef.current, applySpeechGlossary(transcript, speechGlossaryRef.current)));
     };
     recognition.onerror = (event) => {
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
@@ -3187,6 +3234,7 @@ export function App() {
         await NativeSpeech.start({
           language: speechLanguageRef.current,
           continuous,
+          phrases: speechGlossaryHints(speechGlossaryRef.current),
         });
       } catch (error) {
         handsFreeRef.current = false;
@@ -3225,6 +3273,62 @@ export function App() {
       return;
     }
     recognitionRef.current?.stop();
+  }
+
+  async function addSpeechGlossaryTerm() {
+    if (speechGlossarySaving || speechGlossaryLoading || !workspaceRef.current) return;
+    let next: SpeechGlossaryEntry[];
+    try {
+      next = appendSpeechGlossaryEntry(
+        speechGlossaryRef.current,
+        createSpeechGlossaryEntry(speechGlossarySpoken, speechGlossaryReplacement),
+      );
+    } catch (error) {
+      showToast(errorMessage(error));
+      return;
+    }
+    if (await persistSpeechGlossary(next)) {
+      setSpeechGlossarySpoken("");
+      setSpeechGlossaryReplacement("");
+      showToast("이 프로젝트의 음성 용어를 저장했습니다.");
+    }
+  }
+
+  async function removeSpeechGlossaryTerm(id: string) {
+    if (speechGlossarySaving || speechGlossaryLoading || !workspaceRef.current) return;
+    const next = speechGlossaryRef.current.filter((entry) => entry.id !== id);
+    if (next.length === speechGlossaryRef.current.length) return;
+    if (await persistSpeechGlossary(next)) showToast("프로젝트 음성 용어를 삭제했습니다.");
+  }
+
+  async function persistSpeechGlossary(next: SpeechGlossaryEntry[]): Promise<boolean> {
+    if (speechGlossarySaveRef.current) return false;
+    const selectedDevice = deviceRef.current;
+    const selectedWorkspace = workspaceRef.current;
+    if (!selectedWorkspace) return false;
+    speechGlossarySaveRef.current = true;
+    setSpeechGlossarySaving(true);
+    try {
+      await journal.saveSpeechGlossary({
+        key: speechGlossaryKey(selectedDevice, selectedWorkspace),
+        device: selectedDevice,
+        workspace: selectedWorkspace,
+        entries: next,
+        updatedAt: new Date().toISOString(),
+      });
+      if (deviceRef.current !== selectedDevice || workspaceRef.current !== selectedWorkspace) return false;
+      speechGlossaryRef.current = next;
+      setSpeechGlossary(next);
+      return true;
+    } catch (error) {
+      if (deviceRef.current === selectedDevice && workspaceRef.current === selectedWorkspace) {
+        showToast(`음성 용어를 저장하지 못했습니다: ${errorMessage(error)}`);
+      }
+      return false;
+    } finally {
+      speechGlossarySaveRef.current = false;
+      setSpeechGlossarySaving(false);
+    }
   }
 
   function clearLongPressTimer() {
@@ -5236,9 +5340,82 @@ export function App() {
               <span aria-hidden="true">🎙</span><small>{handsFree ? tr("continuous") : dictating ? tr("listening") : tr("speech")}</small>
             </button>
           </div>
-          <p className={`voice-help${handsFree ? " active" : ""}`}>
-            {handsFree ? tr("speechActive") : tr("speechHelp")}
-          </p>
+          <div className={`voice-help${handsFree ? " active" : ""}`}>
+            <span>{handsFree ? tr("speechActive") : tr("speechHelp")}</span>
+            <button
+              type="button"
+              disabled={!workspace || dictating || speechGlossaryLoading}
+              aria-expanded={showSpeechGlossary}
+              aria-controls="project-speech-glossary"
+              aria-label={showSpeechGlossary ? "프로젝트 용어 사전 닫기" : "프로젝트 용어 사전 열기"}
+              onClick={() => setShowSpeechGlossary((current) => !current)}
+            >용어 {speechGlossaryLoading ? "…" : speechGlossary.length}</button>
+          </div>
+          {showSpeechGlossary && workspace && (
+            <section id="project-speech-glossary" className="voice-glossary" aria-label="프로젝트 음성 용어 사전">
+              <header>
+                <div>
+                  <strong>프로젝트 음성 용어</strong>
+                  <small>이 PC·프로젝트에서 새로 받아쓰는 말만 보정 · 암호화 로컬 저장</small>
+                </div>
+                <span>{speechGlossary.length}/{MAX_SPEECH_GLOSSARY_ENTRIES}</span>
+              </header>
+              <form
+                className="voice-glossary-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void addSpeechGlossaryTerm();
+                }}
+              >
+                <label>
+                  <span>인식되는 말</span>
+                  <input
+                    type="text"
+                    maxLength={80}
+                    value={speechGlossarySpoken}
+                    disabled={speechGlossarySaving}
+                    aria-label="음성에서 들리는 표현"
+                    placeholder="예: 오픈 라우터"
+                    onChange={(event) => setSpeechGlossarySpoken(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>요청에 넣을 표기</span>
+                  <input
+                    type="text"
+                    maxLength={120}
+                    value={speechGlossaryReplacement}
+                    disabled={speechGlossarySaving}
+                    aria-label="요청에 넣을 표기"
+                    placeholder="예: OpenRouter"
+                    onChange={(event) => setSpeechGlossaryReplacement(event.target.value)}
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={speechGlossarySaving || speechGlossary.length >= MAX_SPEECH_GLOSSARY_ENTRIES
+                    || !speechGlossarySpoken.trim() || !speechGlossaryReplacement.trim()}
+                >{speechGlossarySaving ? "저장 중…" : "프로젝트 용어 추가"}</button>
+              </form>
+              {speechGlossary.length === 0 ? (
+                <p className="voice-glossary-empty">등록된 용어가 없습니다. 받아쓰기 후에도 입력창에서 직접 검토·수정할 수 있습니다.</p>
+              ) : (
+                <ul className="voice-glossary-list">
+                  {speechGlossary.map((entry) => (
+                    <li key={entry.id}>
+                      <span>{entry.spoken}</span><b aria-hidden="true">→</b><code>{entry.replacement}</code>
+                      <button
+                        type="button"
+                        disabled={speechGlossarySaving}
+                        aria-label={`${entry.replacement} 용어 삭제`}
+                        onClick={() => void removeSpeechGlossaryTerm(entry.id)}
+                      >삭제</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
           <div className="composer-bar">
             <input
               ref={fileInputRef}

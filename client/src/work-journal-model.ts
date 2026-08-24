@@ -1,4 +1,5 @@
 import type { ChatMessage, DeviceId, ProviderId, QueuedPrompt } from "./types";
+import type { SpeechGlossaryEntry } from "./speech-glossary";
 
 export type JournalSyncState = "local" | "queued" | "running" | "synced";
 
@@ -18,6 +19,14 @@ export interface JournalQueue {
   updatedAt: string;
 }
 
+export interface JournalSpeechGlossary {
+  key: string;
+  device: DeviceId;
+  workspace: string;
+  entries: SpeechGlossaryEntry[];
+  updatedAt: string;
+}
+
 export function conversationKey(
   device: DeviceId,
   workspace: string,
@@ -26,6 +35,10 @@ export function conversationKey(
 ): string {
   if (provider !== "codex") return JSON.stringify([device, provider, workspace, threadId || "new"]);
   return JSON.stringify([device, workspace, threadId || "new"]);
+}
+
+export function speechGlossaryKey(device: DeviceId, workspace: string): string {
+  return JSON.stringify([device, workspace]);
 }
 
 export function restoredMessages(messages: ChatMessage[]): ChatMessage[] {

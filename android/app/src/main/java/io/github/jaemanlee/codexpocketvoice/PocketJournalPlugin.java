@@ -49,6 +49,20 @@ public class PocketJournalPlugin extends Plugin {
         write(call, "queues", "device_id", device);
     }
 
+    @PluginMethod
+    public void getSpeechGlossary(PluginCall call) {
+        String scope = validatedIndex(call, "scope");
+        if (scope == null) return;
+        read(call, "speech_glossaries", "scope_id", scope);
+    }
+
+    @PluginMethod
+    public void putSpeechGlossary(PluginCall call) {
+        String scope = validatedIndex(call, "scope");
+        if (scope == null) return;
+        write(call, "speech_glossaries", "scope_id", scope);
+    }
+
     private void read(PluginCall call, String table, String column, String key) {
         try (Cursor cursor = helper().getReadableDatabase().query(
                 table,
@@ -142,7 +156,7 @@ public class PocketJournalPlugin extends Plugin {
 
     private class JournalDatabase extends SQLiteOpenHelper {
         private static final String DATABASE_NAME = "codex_pocket_work_journal.db";
-        private static final int DATABASE_VERSION = 1;
+        private static final int DATABASE_VERSION = 2;
 
         JournalDatabase() {
             super(getContext().getApplicationContext(), DATABASE_NAME, null, DATABASE_VERSION);
@@ -169,11 +183,25 @@ public class PocketJournalPlugin extends Plugin {
                     + "payload TEXT NOT NULL, "
                     + "updated_at INTEGER NOT NULL)"
             );
+            createSpeechGlossaries(database);
         }
 
         @Override
         public void onUpgrade(SQLiteDatabase database, int oldVersion, int newVersion) {
+            if (oldVersion == 1 && newVersion == 2) {
+                createSpeechGlossaries(database);
+                return;
+            }
             throw new IllegalStateException("지원되지 않는 작업 저널 schema upgrade입니다.");
+        }
+
+        private void createSpeechGlossaries(SQLiteDatabase database) {
+            database.execSQL(
+                "CREATE TABLE speech_glossaries ("
+                    + "scope_id TEXT PRIMARY KEY NOT NULL, "
+                    + "payload TEXT NOT NULL, "
+                    + "updated_at INTEGER NOT NULL)"
+            );
         }
     }
 }

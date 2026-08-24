@@ -16,6 +16,56 @@ test("the paired shell stays inside 320, 360, and 412px portrait viewports", asy
   }
 });
 
+test("project speech terms stay encrypted, persist across reload, and fit a 320px composer", async ({ page }) => {
+  await bootPairedApp(page, { width: 320, height: 740 });
+
+  await page.getByRole("button", { name: "프로젝트 용어 사전 열기" }).click();
+  const glossary = page.getByLabel("프로젝트 음성 용어 사전");
+  await expect(glossary).toBeVisible();
+  await page.getByLabel("음성에서 들리는 표현").fill("오픈 라우터");
+  await page.getByLabel("요청에 넣을 표기").fill("OpenRouter");
+  await page.getByRole("button", { name: "프로젝트 용어 추가" }).click();
+  await expect(glossary).toContainText("오픈 라우터");
+  await expect(glossary).toContainText("OpenRouter");
+  await expectElementContained(page, glossary);
+  await expectElementContained(page, page.getByLabel("음성에서 들리는 표현"));
+  await expectElementContained(page, page.getByRole("button", { name: "프로젝트 용어 추가" }));
+  await expectShellContained(page);
+
+  const stored = await page.evaluate(async () => {
+    const request = indexedDB.open("codex-pocket-work-journal", 2);
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const transaction = database.transaction("conversations", "readonly");
+    const getAll = transaction.objectStore("conversations").getAll();
+    const rows = await new Promise<unknown[]>((resolve, reject) => {
+      getAll.onsuccess = () => resolve(getAll.result);
+      getAll.onerror = () => reject(getAll.error);
+    });
+    database.close();
+    return rows;
+  });
+  const glossaryRows = stored.filter((row) => /^[a-f0-9]{64}$/.test(String((row as { key?: string }).key ?? "")));
+  expect(glossaryRows).toHaveLength(1);
+  expect(JSON.stringify(glossaryRows)).not.toContain("오픈 라우터");
+  expect(JSON.stringify(glossaryRows)).not.toContain("OpenRouter");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator(".status-dot.online")).toBeVisible();
+  await page.getByRole("button", { name: "프로젝트 용어 사전 열기" }).click();
+  const restoredGlossary = page.getByLabel("프로젝트 음성 용어 사전");
+  await expect(restoredGlossary).toContainText("OpenRouter");
+  await page.getByRole("button", { name: "OpenRouter 용어 삭제" }).click();
+  await expect(restoredGlossary).toContainText("등록된 용어가 없습니다");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator(".status-dot.online")).toBeVisible();
+  await page.getByRole("button", { name: "프로젝트 용어 사전 열기" }).click();
+  await expect(page.getByLabel("프로젝트 음성 용어 사전")).toContainText("등록된 용어가 없습니다");
+  await expectShellContained(page);
+});
+
 test("the mobile Fleet shows bounded summaries for another Companion without exposing its work", async ({ page }) => {
   const fleetToken = `F${"f".repeat(42)}`;
   const fleetPaths: string[] = [];

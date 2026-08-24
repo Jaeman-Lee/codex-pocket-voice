@@ -15,7 +15,7 @@ export interface NativeSpeechError {
 }
 
 interface NativeSpeechPlugin {
-  start(options: { language: string; continuous: boolean }): Promise<{ started: boolean; continuous: boolean }>;
+  start(options: { language: string; continuous: boolean; phrases: string[] }): Promise<{ started: boolean; continuous: boolean }>;
   stop(): Promise<void>;
   addListener(eventName: "speechPartial", listener: (event: NativeSpeechResult) => void): Promise<PluginListenerHandle>;
   addListener(eventName: "speechFinal", listener: (event: NativeSpeechResult) => void): Promise<PluginListenerHandle>;

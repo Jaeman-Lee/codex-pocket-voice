@@ -32,6 +32,33 @@ test("OpenRouter routing controls collapse to one bounded column on phones", asy
   assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.routing-bar \{[^}]*minmax\(0,\s*1fr\)/);
 });
 
+test("project speech glossary uses bounded encrypted mobile controls", async () => {
+  const [app, css, journal] = await Promise.all([
+    readFile(new URL("../client/src/App.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../client/src/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../client/src/work-journal.ts", import.meta.url), "utf8"),
+  ]);
+  const panel = css.match(/\.voice-glossary \{([^}]+)\}/)?.[1] ?? "";
+  const form = css.match(/\.voice-glossary-form \{([^}]+)\}/)?.[1] ?? "";
+  const list = css.match(/\.voice-glossary-list \{([^}]+)\}/)?.[1] ?? "";
+
+  assert.match(panel, /max-width:\s*100%/);
+  assert.match(panel, /min-width:\s*0/);
+  assert.match(panel, /overflow:\s*hidden/);
+  assert.match(form, /minmax\(0,\s*1fr\)/);
+  assert.match(list, /overflow-x:\s*hidden/);
+  assert.match(list, /overflow-y:\s*auto/);
+  assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.voice-glossary-form \{[^}]*minmax\(0,\s*1fr\)/);
+  assert.match(app, /applySpeechGlossary\(transcript, speechGlossaryRef\.current\)/);
+  assert.match(app, /phrases: speechGlossaryHints\(speechGlossaryRef\.current\)/);
+  assert.match(app, /deviceRef\.current !== device \|\| workspaceRef\.current !== workspace/);
+  assert.match(journal, /encryptValue\(record, `speech-glossary:\$\{record\.key\}`/);
+  assert.match(journal, /journalStorageIndex\("speech-glossary", record\.key\)/);
+  assert.match(journal, /const DATABASE_VERSION = 2/);
+  assert.match(journal, /loadSpeechGlossary\(key: string\)[\s\S]*this\.get\(CONVERSATION_STORE, key\)/);
+  assert.doesNotMatch(journal, /SPEECH_GLOSSARY_STORE/);
+});
+
 test("operations dashboard and approval details stay inside the mobile viewport", async () => {
   const css = await readFile(new URL("../client/src/styles.css", import.meta.url), "utf8");
   const overlay = css.match(/\.operations-dashboard \{([^}]+)\}/)?.[1] ?? "";

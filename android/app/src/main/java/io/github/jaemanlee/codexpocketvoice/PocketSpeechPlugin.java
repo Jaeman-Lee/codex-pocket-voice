@@ -3,11 +3,13 @@ package io.github.jaemanlee.codexpocketvoice;
 import android.Manifest;
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
@@ -17,6 +19,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 
 @CapacitorPlugin(
@@ -27,6 +30,8 @@ public class PocketSpeechPlugin extends Plugin implements RecognitionListener {
     private static final long RESTART_DELAY_MS = 280;
     private static final long COMPLETE_SILENCE_MS = 4_500;
     private static final long POSSIBLY_COMPLETE_SILENCE_MS = 2_800;
+    private static final int MAX_BIASING_STRINGS = 32;
+    private static final int MAX_BIASING_STRING_LENGTH = 120;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private SpeechRecognizer recognizer;
@@ -34,6 +39,7 @@ public class PocketSpeechPlugin extends Plugin implements RecognitionListener {
     private boolean continuous;
     private boolean listening;
     private boolean stopRequested = true;
+    private ArrayList<String> biasingStrings = new ArrayList<>();
 
     @PluginMethod
     public void start(PluginCall call) {
@@ -58,8 +64,14 @@ public class PocketSpeechPlugin extends Plugin implements RecognitionListener {
     }
 
     private void startRecognizer(PluginCall call) {
-        language = call.getString("language", Locale.getDefault().toLanguageTag());
-        continuous = Boolean.TRUE.equals(call.getBoolean("continuous", false));
+        try {
+            language = call.getString("language", Locale.getDefault().toLanguageTag());
+            continuous = Boolean.TRUE.equals(call.getBoolean("continuous", false));
+            biasingStrings = validatedBiasingStrings(call.getArray("phrases"));
+        } catch (Exception error) {
+            call.reject("프로젝트 음성 용어가 올바르지 않습니다.", error);
+            return;
+        }
         stopRequested = false;
         mainHandler.removeCallbacksAndMessages(null);
         mainHandler.post(() -> {
@@ -106,6 +118,9 @@ public class PocketSpeechPlugin extends Plugin implements RecognitionListener {
         intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, COMPLETE_SILENCE_MS);
         intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, POSSIBLY_COMPLETE_SILENCE_MS);
         intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1_500L);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !biasingStrings.isEmpty()) {
+            intent.putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, biasingStrings);
+        }
         try {
             recognizer.startListening(intent);
             listening = true;
@@ -131,6 +146,20 @@ public class PocketSpeechPlugin extends Plugin implements RecognitionListener {
         if (results == null) return "";
         ArrayList<String> matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
         return matches == null || matches.isEmpty() ? "" : matches.get(0).trim();
+    }
+
+    private ArrayList<String> validatedBiasingStrings(JSArray values) throws Exception {
+        if (values == null) return new ArrayList<>();
+        if (values.length() > MAX_BIASING_STRINGS) throw new IllegalArgumentException("음성 용어가 너무 많습니다.");
+        LinkedHashSet<String> unique = new LinkedHashSet<>();
+        for (int index = 0; index < values.length(); index += 1) {
+            String value = values.getString(index).replaceAll("[\\p{Cntrl}]", " ").replaceAll("\\s+", " ").trim();
+            if (value.isEmpty() || value.length() > MAX_BIASING_STRING_LENGTH) {
+                throw new IllegalArgumentException("음성 용어 길이가 올바르지 않습니다.");
+            }
+            unique.add(value);
+        }
+        return new ArrayList<>(unique);
     }
 
     private void emitTranscript(String eventName, String transcript) {
