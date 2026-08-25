@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, sign, X509Certificate } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,6 +53,14 @@ const manifest = canonicalJson({
 });
 const candidate = parseFunctionalCandidateManifest(manifest);
 const source = { version: "2.0.0", versionCode: 20_000, commit };
+const rollbackArtifact = {
+  applicationId: candidate.applicationId,
+  version: "1.8.1",
+  versionCode: 10_801,
+  apkSha256: "2".repeat(64),
+  apkBytes: 9_876_543,
+  signingCertificateSha256: candidate.signingCertificateSha256,
+};
 const evaluationTime = Date.parse("2026-08-25T03:00:00.000Z");
 const releaseEvidenceCli = fileURLToPath(new URL("../scripts/android-release-evidence.ts", import.meta.url));
 
@@ -62,14 +70,16 @@ test("release evidence binds functional and all three low-load gates to one cand
     canonicalJson(passingObservations()),
     passingAndroidTexts(),
     passingProviderGradeTexts(),
+    rollbackArtifact,
     source,
     evaluationTime,
   );
 
   assert.equal(report.gate.passed, true);
-  assert.equal(report.schemaVersion, 2);
+  assert.equal(report.schemaVersion, 3);
   assert.equal(report.gate.outcome, "passed");
   assert.deepEqual(report.candidate, candidate);
+  assert.deepEqual(report.rollbackArtifact, rollbackArtifact);
   assert.equal(report.functional.passedScenarioCount, FUNCTIONAL_FIELD_SCENARIOS.length);
   assert.deepEqual(
     report.androidTransports.map((entry) => entry.transport),
@@ -101,6 +111,7 @@ test("release evidence binds exact protected coding grades and requires two upst
       canonicalJson(passingObservations(candidate, expectedGrades)),
       passingAndroidTexts(),
       mismatchedGrades,
+      rollbackArtifact,
       source,
       evaluationTime,
     ),
@@ -116,6 +127,7 @@ test("release evidence binds exact protected coding grades and requires two upst
     canonicalJson(passingObservations(candidate, sameFamilyGrades)),
     passingAndroidTexts(),
     sameFamilyGrades,
+    rollbackArtifact,
     source,
     evaluationTime,
   );
@@ -140,6 +152,7 @@ test("release evidence binds exact protected coding grades and requires two upst
     canonicalJson(passingObservations(candidate, failedCodingGrades)),
     passingAndroidTexts(),
     failedCodingGrades,
+    rollbackArtifact,
     source,
     evaluationTime,
   );
@@ -156,6 +169,7 @@ test("release evidence binds exact protected coding grades and requires two upst
     canonicalJson(passingObservations(candidate, lateGrades)),
     passingAndroidTexts(),
     lateGrades,
+    rollbackArtifact,
     source,
     evaluationTime,
   );
@@ -163,6 +177,33 @@ test("release evidence binds exact protected coding grades and requires two upst
   assert.ok(late.gate.checks.some((check) => (
     check.metric.endsWith("_valid_at_field_start") && check.outcome === "fail"
   )));
+});
+
+test("release evidence binds the verified rollback APK to the field observations", () => {
+  assert.throws(
+    () => evaluateReleaseEvidence(
+      manifest,
+      canonicalJson(passingObservations()),
+      passingAndroidTexts(),
+      passingProviderGradeTexts(),
+      { ...rollbackArtifact, apkSha256: "3".repeat(64) },
+      source,
+      evaluationTime,
+    ),
+    /does not match the functional observations/,
+  );
+  assert.throws(
+    () => evaluateReleaseEvidence(
+      manifest,
+      canonicalJson(passingObservations()),
+      passingAndroidTexts(),
+      passingProviderGradeTexts(),
+      { ...rollbackArtifact, note: "private field note" } as typeof rollbackArtifact,
+      source,
+      evaluationTime,
+    ),
+    /fields are invalid/,
+  );
 });
 
 test("release evidence rejects candidate drift and a report supplied for the wrong transport", () => {
@@ -181,6 +222,7 @@ test("release evidence rejects candidate drift and a report supplied for the wro
       canonicalJson(passingObservations()),
       reports,
       passingProviderGradeTexts(),
+      rollbackArtifact,
       source,
       evaluationTime,
     ),
@@ -231,6 +273,7 @@ test("release evidence fails closed for stale or observation-only low-load evide
     canonicalJson(passingObservations()),
     passingAndroidTexts(),
     passingProviderGradeTexts(),
+    rollbackArtifact,
     source,
     Date.parse("2026-10-01T00:00:00.000Z"),
   );
@@ -248,6 +291,7 @@ test("release evidence fails closed for stale or observation-only low-load evide
     canonicalJson(passingObservations()),
     reports,
     passingProviderGradeTexts(),
+    rollbackArtifact,
     source,
     evaluationTime,
   );
@@ -279,6 +323,7 @@ test("final release evidence is owner-only, bounded, and create-once", async (t)
     canonicalJson(passingObservations()),
     passingAndroidTexts(),
     passingProviderGradeTexts(),
+    rollbackArtifact,
     source,
     evaluationTime,
   );
@@ -290,7 +335,7 @@ test("final release evidence is owner-only, bounded, and create-once", async (t)
   await assert.rejects(writeReleaseEvidenceFile(path, report), /could not be written/);
 });
 
-test("final release evidence CLI cryptographically verifies the signed candidate before field evaluation", { timeout: 20_000 }, async (t) => {
+test("final release evidence CLI verifies the signed candidate and exact rollback APK before field evaluation", { timeout: 20_000 }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), "codex-pocket-release-candidate-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const bundleDirectory = join(root, "bundle");
@@ -308,8 +353,11 @@ test("final release evidence CLI cryptographically verifies the signed candidate
   const signaturePath = join(bundleDirectory, "update-manifest.sig");
   const certificatePath = join(root, "trusted-certificate.pem");
   const privateKeyPath = join(root, "private-key.pem");
+  const rollbackApkPath = join(fieldDirectory, "Codex-Pocket-Voice-v1.8.1-stable.apk");
+  const rollbackApkBytes = Buffer.from("signed rollback APK fixture\n");
   await writeFile(apkPath, "signed APK fixture\n", { mode: 0o600 });
   await writeFile(sbomPath, "{\"bomFormat\":\"CycloneDX\"}\n", { mode: 0o600 });
+  await writeFile(rollbackApkPath, rollbackApkBytes, { mode: 0o600 });
   execFileSync("openssl", [
     "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
     "-subj", "/CN=Codex Pocket Voice release evidence test",
@@ -349,6 +397,8 @@ test("final release evidence CLI cryptographically verifies the signed candidate
   const testStartedAt = testNow - 2 * 60 * 60_000;
   const providerGrades = passingProviderGradeTexts(new Date(testStartedAt - 5 * 60_000).toISOString());
   const observations = passingObservations(signedCandidate, providerGrades);
+  observations.environment.rollback.apkSha256 = createHash("sha256").update(rollbackApkBytes).digest("hex");
+  observations.environment.rollback.apkBytes = rollbackApkBytes.length;
   observations.testWindow = {
     startedAt: new Date(testStartedAt).toISOString(),
     completedAt: new Date(testNow - 5 * 60_000).toISOString(),
@@ -385,6 +435,13 @@ test("final release evidence CLI cryptographically verifies the signed candidate
     { mode: 0o700 },
   );
   await chmod(fakeApkSigner, 0o700);
+  const fakeAapt = join(binaryDirectory, "aapt");
+  await writeFile(fakeAapt, [
+    "#!/bin/sh",
+    "printf '%s\\n' \"package: name='io.github.jaemanlee.codexpocketvoice.stable' versionCode='10801' versionName='1.8.1'\"",
+    "",
+  ].join("\n"), { mode: 0o700 });
+  await chmod(fakeAapt, 0o700);
   const fakeGit = join(binaryDirectory, "git");
   await writeFile(fakeGit, [
     "#!/bin/sh",
@@ -401,6 +458,8 @@ test("final release evidence CLI cryptographically verifies the signed candidate
     "--certificate", certificatePath,
     "--expected-certificate-sha256", fingerprint,
     "--artifact-dir", bundleDirectory,
+    "--rollback-apk", rollbackApkPath,
+    "--aapt", fakeAapt,
     "--apksigner", fakeApkSigner,
     "--observations", observationPath,
     "--openai-grade-report", openaiGradePath,
@@ -417,7 +476,76 @@ test("final release evidence CLI cryptographically verifies the signed candidate
   assert.ifError(valid.error);
   assert.equal(valid.status, 0, valid.stderr);
   assert.match(valid.stdout, /Exact-candidate release evidence gate passed/);
-  assert.equal(JSON.parse(await readFile(reportPath, "utf8")).gate.passed, true);
+  const writtenReport = JSON.parse(await readFile(reportPath, "utf8")) as {
+    gate: { passed: boolean };
+    rollbackArtifact: { apkSha256: string; apkBytes: number };
+  };
+  assert.equal(writtenReport.gate.passed, true);
+  assert.equal(writtenReport.rollbackArtifact.apkSha256, observations.environment.rollback.apkSha256);
+  assert.equal(writtenReport.rollbackArtifact.apkBytes, rollbackApkBytes.length);
+
+  await writeFile(rollbackApkPath, "different signed rollback APK fixture\n", { mode: 0o600 });
+  const changedRollbackReportPath = join(fieldDirectory, "changed-rollback-release-evidence.json");
+  const changedRollback = spawnSync(process.execPath, [
+    "--import", "tsx", releaseEvidenceCli, ...cliArguments, "--report", changedRollbackReportPath,
+  ], { encoding: "utf8", env: environment, timeout: 15_000 });
+  assert.ifError(changedRollback.error);
+  assert.notEqual(changedRollback.status, 0);
+  assert.match(changedRollback.stderr, /Verified rollback APK does not match the functional observations/);
+  await assert.rejects(stat(changedRollbackReportPath), /ENOENT/);
+  await writeFile(rollbackApkPath, rollbackApkBytes, { mode: 0o600 });
+
+  const wrongAapt = join(binaryDirectory, "wrong-aapt");
+  await writeFile(wrongAapt, [
+    "#!/bin/sh",
+    "printf '%s\\n' \"package: name='io.github.jaemanlee.codexpocketvoice.stable' versionCode='10802' versionName='1.8.2'\"",
+    "",
+  ].join("\n"), { mode: 0o700 });
+  await chmod(wrongAapt, 0o700);
+  const wrongRollbackIdentityPath = join(fieldDirectory, "wrong-rollback-identity-release-evidence.json");
+  const wrongRollbackIdentity = spawnSync(process.execPath, [
+    "--import", "tsx", releaseEvidenceCli,
+    ...replaceArgument(cliArguments, "--aapt", wrongAapt),
+    "--report", wrongRollbackIdentityPath,
+  ], { encoding: "utf8", env: environment, timeout: 15_000 });
+  assert.ifError(wrongRollbackIdentity.error);
+  assert.notEqual(wrongRollbackIdentity.status, 0);
+  assert.match(wrongRollbackIdentity.stderr, /Rollback APK verification failed/);
+  await assert.rejects(stat(wrongRollbackIdentityPath), /ENOENT/);
+
+  const wrongRollbackSigner = join(binaryDirectory, "wrong-rollback-apksigner");
+  await writeFile(wrongRollbackSigner, [
+    "#!/bin/sh",
+    "target=$(readlink \"$3\")",
+    `expected='${fingerprint}'`,
+    `wrong='${"4".repeat(64)}'`,
+    "case \"$target\" in *v1.8.1*) digest=$wrong ;; *) digest=$expected ;; esac",
+    "printf '%s\\n' \"Signer #1 certificate SHA-256 digest: $digest\"",
+    "",
+  ].join("\n"), { mode: 0o700 });
+  await chmod(wrongRollbackSigner, 0o700);
+  const wrongRollbackSignerPath = join(fieldDirectory, "wrong-rollback-signer-release-evidence.json");
+  const rejectedRollbackSigner = spawnSync(process.execPath, [
+    "--import", "tsx", releaseEvidenceCli,
+    ...replaceArgument(cliArguments, "--apksigner", wrongRollbackSigner),
+    "--report", wrongRollbackSignerPath,
+  ], { encoding: "utf8", env: environment, timeout: 15_000 });
+  assert.ifError(rejectedRollbackSigner.error);
+  assert.notEqual(rejectedRollbackSigner.status, 0);
+  assert.match(rejectedRollbackSigner.stderr, /Rollback APK verification failed/);
+  await assert.rejects(stat(wrongRollbackSignerPath), /ENOENT/);
+
+  const rollbackHardlink = join(fieldDirectory, "rollback-hardlink.apk");
+  await link(rollbackApkPath, rollbackHardlink);
+  const linkedRollbackReportPath = join(fieldDirectory, "linked-rollback-release-evidence.json");
+  const linkedRollback = spawnSync(process.execPath, [
+    "--import", "tsx", releaseEvidenceCli, ...cliArguments, "--report", linkedRollbackReportPath,
+  ], { encoding: "utf8", env: environment, timeout: 15_000 });
+  assert.ifError(linkedRollback.error);
+  assert.notEqual(linkedRollback.status, 0);
+  assert.match(linkedRollback.stderr, /Rollback APK verification failed/);
+  await assert.rejects(stat(linkedRollbackReportPath), /ENOENT/);
+  await unlink(rollbackHardlink);
 
   await chmod(openaiGradePath, 0o644);
   const broadGradeReportPath = join(fieldDirectory, "broad-grade-release-evidence.json");
@@ -512,8 +640,12 @@ function passingObservations(
     androidClientCount: 2,
     openRouterUpstreamFamilyCount: 2,
     rollback: {
+      applicationId: forCandidate.applicationId,
       sourceVersion: "1.8.1",
       sourceVersionCode: 10_801,
+      apkSha256: rollbackArtifact.apkSha256,
+      apkBytes: rollbackArtifact.apkBytes,
+      signingCertificateSha256: forCandidate.signingCertificateSha256,
       mechanism: "android_rollback_manager",
       dataPolicy: "restore",
     },

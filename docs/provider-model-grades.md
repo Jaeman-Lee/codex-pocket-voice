@@ -85,7 +85,7 @@ Companion journal과 Android 기록을 읽거나 바꾸지 않는다.
 변경 → 검증, 앱 승인·복구와 비용 확인은 별도 현장 출시 gate로 계속 남는다. workflow는 자동 실행되지
 않으며 environment reviewer와 실행자의 명시적 선택 없이는 유료 요청을 보내지 않는다.
 
-v2 release에서는 기능 observation schema 3이 field에 사용한 OpenAI coding report 한 건과 서로 다른
+v2 release에서는 기능 observation schema 4가 field에 사용한 OpenAI coding report 한 건과 서로 다른
 OpenRouter upstream family coding report 두 건의 SHA-256을 고정한다. 최종 evidence CLI가 owner-only 원문을
 다시 읽어 exact protected coding evaluation·freshness·upstream/provider-family 분리를 확인하므로, smoke-only,
 read-only, 실패·만료 또는 observation과 digest가 다른 report는 release 권한을 주지 않는다.

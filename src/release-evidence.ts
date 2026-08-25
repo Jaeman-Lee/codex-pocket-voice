@@ -32,7 +32,7 @@ interface ReleaseEvidenceCheck {
 }
 
 export interface ReleaseEvidenceReport {
-  schemaVersion: 2;
+  schemaVersion: 3;
   kind: "codex_pocket_release_evidence";
   evidenceKind: "structured_aggregate_only";
   createdAt: string;
@@ -43,6 +43,7 @@ export interface ReleaseEvidenceReport {
     passedScenarioCount: number;
     requiredScenarioCount: number;
   };
+  rollbackArtifact: VerifiedRollbackArtifactIdentity;
   providerGrades: {
     openai: ProviderGradeEvidenceSummary;
     openrouter: [ProviderGradeEvidenceSummary, ProviderGradeEvidenceSummary];
@@ -81,6 +82,15 @@ export interface ReleaseProviderGradeTexts {
   openrouter: [string, string];
 }
 
+export interface VerifiedRollbackArtifactIdentity {
+  applicationId: string;
+  version: string;
+  versionCode: number;
+  apkSha256: string;
+  apkBytes: number;
+  signingCertificateSha256: string;
+}
+
 export class ReleaseEvidenceError extends Error {}
 
 export async function requireUnusedReleaseEvidenceFile(path: string): Promise<void> {
@@ -115,6 +125,7 @@ export function evaluateReleaseEvidence(
   functionalObservationText: string,
   androidReportTexts: Record<AndroidFieldTransport, string>,
   providerGradeTexts: ReleaseProviderGradeTexts,
+  rollbackArtifact: VerifiedRollbackArtifactIdentity,
   expectedSource: { version: string; versionCode: number; commit: string },
   now = Date.now(),
 ): ReleaseEvidenceReport {
@@ -137,6 +148,7 @@ export function evaluateReleaseEvidence(
     functional.testWindow.startedAt,
     now,
   );
+  const verifiedRollbackArtifact = requireVerifiedRollbackArtifact(functional, rollbackArtifact);
   const androidReports = ANDROID_FIELD_TRANSPORTS.map((transport) => {
     const text = androidReportTexts[transport];
     if (typeof text !== "string") throw new ReleaseEvidenceError("Every Android transport report is required");
@@ -149,6 +161,7 @@ export function evaluateReleaseEvidence(
 
   const checks: ReleaseEvidenceCheck[] = [
     booleanCheck("functional_gate", functional.gate.passed),
+    booleanCheck("rollback_artifact_verified", true),
     booleanCheck("provider_grade:openai_project_read", providerGrades.openai.projectRead === "pass"),
     booleanCheck("provider_grade:openai_coding", providerGrades.openai.coding === "pass"),
     booleanCheck("provider_grade:openai_valid_at_field_start", providerGrades.openai.validAtFieldStart),
@@ -181,7 +194,7 @@ export function evaluateReleaseEvidence(
   }
   const passed = checks.every((check) => check.outcome === "pass");
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "codex_pocket_release_evidence",
     evidenceKind: "structured_aggregate_only",
     createdAt,
@@ -192,6 +205,7 @@ export function evaluateReleaseEvidence(
       passedScenarioCount: functional.gate.passedScenarioCount,
       requiredScenarioCount: functional.gate.requiredScenarioCount,
     },
+    rollbackArtifact: verifiedRollbackArtifact,
     providerGrades,
     androidTransports: androidReports.map((report) => ({
       transport: report.transport,
@@ -212,6 +226,42 @@ export function evaluateReleaseEvidence(
       containsPromptOrResponse: false,
     },
   };
+}
+
+function requireVerifiedRollbackArtifact(
+  functional: ReturnType<typeof evaluateFunctionalFieldAcceptance>,
+  artifact: VerifiedRollbackArtifactIdentity,
+): VerifiedRollbackArtifactIdentity {
+  const record = exactRecord(artifact, [
+    "applicationId", "version", "versionCode", "apkSha256", "apkBytes", "signingCertificateSha256",
+  ], "Verified rollback APK");
+  if (record.applicationId !== functional.candidate.applicationId
+      || record.version !== "1.8.1"
+      || record.versionCode !== 10_801
+      || typeof record.apkSha256 !== "string" || !/^[a-f0-9]{64}$/.test(record.apkSha256)
+      || !Number.isSafeInteger(record.apkBytes) || (record.apkBytes as number) <= 0
+      || (record.apkBytes as number) > 1024 * 1024 * 1024
+      || record.signingCertificateSha256 !== functional.candidate.signingCertificateSha256) {
+    throw new ReleaseEvidenceError("Verified rollback APK identity is invalid");
+  }
+  const verified: VerifiedRollbackArtifactIdentity = {
+    applicationId: record.applicationId,
+    version: record.version,
+    versionCode: record.versionCode,
+    apkSha256: record.apkSha256,
+    apkBytes: record.apkBytes as number,
+    signingCertificateSha256: record.signingCertificateSha256,
+  } as VerifiedRollbackArtifactIdentity;
+  const observed = functional.environment.rollback;
+  if (observed.applicationId !== verified.applicationId
+      || observed.sourceVersion !== verified.version
+      || observed.sourceVersionCode !== verified.versionCode
+      || observed.apkSha256 !== verified.apkSha256
+      || observed.apkBytes !== verified.apkBytes
+      || observed.signingCertificateSha256 !== verified.signingCertificateSha256) {
+    throw new ReleaseEvidenceError("Verified rollback APK does not match the functional observations");
+  }
+  return verified;
 }
 
 function evaluateProviderGradeEvidence(

@@ -9,6 +9,7 @@ import type { AndroidFieldTransport } from "../src/android-field-metrics.js";
 import { readBoundedRegularFile } from "../src/bounded-file.js";
 import {
   FunctionalFieldError,
+  parseFunctionalCandidateManifest,
   requireFunctionalCandidateSource,
 } from "../src/functional-field-acceptance.js";
 import {
@@ -16,6 +17,7 @@ import {
   evaluateReleaseEvidence,
   requireUnusedReleaseEvidenceFile,
   writeReleaseEvidenceFile,
+  type VerifiedRollbackArtifactIdentity,
 } from "../src/release-evidence.js";
 import { readCleanSourceIdentity } from "../src/source-identity.js";
 
@@ -28,6 +30,8 @@ interface CliOptions {
   certificatePath: string;
   expectedCertificateSha256: string;
   artifactDirectory: string;
+  rollbackApkPath: string;
+  aaptPath: string;
   apkSignerPath: string;
   observationsPath: string;
   openaiGradePath: string;
@@ -44,6 +48,8 @@ function parseArguments(args: string[]): CliOptions | "help" {
     "--certificate",
     "--expected-certificate-sha256",
     "--artifact-dir",
+    "--rollback-apk",
+    "--aapt",
     "--apksigner",
     "--observations",
     "--openai-grade-report",
@@ -70,6 +76,8 @@ function parseArguments(args: string[]): CliOptions | "help" {
     "--certificate",
     "--expected-certificate-sha256",
     "--artifact-dir",
+    "--rollback-apk",
+    "--aapt",
     "--apksigner",
     "--observations",
     "--openai-grade-report",
@@ -89,6 +97,8 @@ function parseArguments(args: string[]): CliOptions | "help" {
     certificatePath: values.get("--certificate")!,
     expectedCertificateSha256: values.get("--expected-certificate-sha256")!,
     artifactDirectory: values.get("--artifact-dir")!,
+    rollbackApkPath: values.get("--rollback-apk")!,
+    aaptPath: values.get("--aapt")!,
     apkSignerPath: values.get("--apksigner")!,
     observationsPath: values.get("--observations")!,
     openaiGradePath: values.get("--openai-grade-report")!,
@@ -116,6 +126,8 @@ async function main(): Promise<void> {
       "    --certificate /trusted/update-manifest-cert.pem \\",
       "    --expected-certificate-sha256 PINNED_FINGERPRINT \\",
       "    --artifact-dir /private/update-bundle \\",
+      "    --rollback-apk /private/rollback/Codex-Pocket-Voice-v1.8.1-stable.apk \\",
+      "    --aapt /trusted/android-sdk/build-tools/36.0.0/aapt \\",
       "    --apksigner /trusted/android-sdk/build-tools/36.0.0/apksigner \\",
       "    --observations /private/functional-observations.json \\",
       "    --openai-grade-report /private/openai-coding-grade.json \\",
@@ -127,7 +139,7 @@ async function main(): Promise<void> {
       "    --report /private/release-evidence.json",
       "",
       "The pinned fingerprint must come from a previously trusted install or another independent trust path.",
-      "This command verifies the detached manifest signature, APK signer, APK/SBOM hashes, and exact source before evaluating field evidence.",
+      "This command verifies the detached manifest signature, candidate APK/SBOM, exact rollback APK, and source before evaluating field evidence.",
       "All private inputs must be owner-only regular files; observations bind the exact three protected grade reports.",
       "This command performs no ADB, device, network, Provider, installation, or Companion action.",
       "",
@@ -136,8 +148,15 @@ async function main(): Promise<void> {
   }
   await requireUnusedReleaseEvidenceFile(options.reportPath);
   const verifiedManifestSha256 = await verifySignedCandidateBundle(options);
+  const manifestText = await readBoundedFile(options.manifestPath, false, "Update manifest");
+  if (createHash("sha256").update(manifestText, "utf8").digest("hex") !== verifiedManifestSha256) {
+    throw new ReleaseEvidenceError("Update manifest changed after cryptographic verification");
+  }
+  const candidate = parseFunctionalCandidateManifest(manifestText);
+  const source = await cleanSourceIdentity();
+  requireFunctionalCandidateSource(candidate, source);
+  const rollbackArtifact = await verifyRollbackArtifact(options, candidate);
   const [
-    manifestText,
     observationsText,
     openaiGradeText,
     openrouterGradeText1,
@@ -145,9 +164,7 @@ async function main(): Promise<void> {
     directText,
     p2pText,
     relayText,
-    source,
   ] = await Promise.all([
-    readBoundedFile(options.manifestPath, false, "Update manifest"),
     readBoundedFile(options.observationsPath, true, "Functional observations"),
     readBoundedFile(options.openaiGradePath, true, "OpenAI grade report"),
     readBoundedFile(options.openrouterGradePaths[0], true, "OpenRouter grade report"),
@@ -155,11 +172,7 @@ async function main(): Promise<void> {
     readBoundedFile(options.androidReportPaths.direct_lan, true, "Direct LAN report"),
     readBoundedFile(options.androidReportPaths.p2p, true, "P2P report"),
     readBoundedFile(options.androidReportPaths.outbound_relay, true, "Outbound relay report"),
-    cleanSourceIdentity(),
   ]);
-  if (createHash("sha256").update(manifestText, "utf8").digest("hex") !== verifiedManifestSha256) {
-    throw new ReleaseEvidenceError("Update manifest changed after cryptographic verification");
-  }
   const report = evaluateReleaseEvidence(
     manifestText,
     observationsText,
@@ -172,6 +185,7 @@ async function main(): Promise<void> {
       openai: openaiGradeText,
       openrouter: [openrouterGradeText1, openrouterGradeText2],
     },
+    rollbackArtifact,
     source,
   );
   requireFunctionalCandidateSource(report.candidate, await cleanSourceIdentity());
@@ -181,6 +195,30 @@ async function main(): Promise<void> {
   } else {
     process.stderr.write("Release evidence gate failed; inspect the private aggregate report.\n");
     process.exitCode = 1;
+  }
+}
+
+async function verifyRollbackArtifact(
+  options: CliOptions,
+  candidate: ReturnType<typeof parseFunctionalCandidateManifest>,
+): Promise<VerifiedRollbackArtifactIdentity> {
+  const verifier = fileURLToPath(new URL("./verify-rollback-apk.mjs", import.meta.url));
+  try {
+    const result = await execFileAsync(process.execPath, [
+      verifier,
+      "--apk", options.rollbackApkPath,
+      "--aapt", options.aaptPath,
+      "--apksigner", options.apkSignerPath,
+      "--expected-application-id", candidate.applicationId,
+      "--expected-certificate-sha256", candidate.signingCertificateSha256,
+    ], {
+      encoding: "utf8",
+      timeout: 90_000,
+      maxBuffer: 64 * 1024,
+    });
+    return parseRollbackVerifierReceipt(result.stdout);
+  } catch {
+    throw new ReleaseEvidenceError("Rollback APK verification failed before release evidence evaluation");
   }
 }
 
@@ -227,6 +265,45 @@ function parseVerifierReceipt(text: string): string {
     throw new Error("Unexpected verifier output");
   }
   return receipt.manifestSha256;
+}
+
+function parseRollbackVerifierReceipt(text: string): VerifiedRollbackArtifactIdentity {
+  if (Buffer.byteLength(text, "utf8") > 4_096) throw new Error("Unexpected rollback verifier output");
+  let value: unknown;
+  try {
+    value = JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("Unexpected rollback verifier output");
+  }
+  if (text !== `${JSON.stringify(value)}\n` || typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Unexpected rollback verifier output");
+  }
+  const receipt = value as Record<string, unknown>;
+  const keys = Object.keys(receipt).sort();
+  const expected = [
+    "apkBytes", "apkSha256", "applicationId", "kind", "schemaVersion",
+    "signingCertificateSha256", "version", "versionCode",
+  ];
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])
+      || receipt.schemaVersion !== 1 || receipt.kind !== "verified_rollback_apk"
+      || typeof receipt.applicationId !== "string"
+      || !/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/.test(receipt.applicationId)
+      || receipt.version !== "1.8.1" || receipt.versionCode !== 10_801
+      || typeof receipt.apkSha256 !== "string" || !/^[a-f0-9]{64}$/.test(receipt.apkSha256)
+      || !Number.isSafeInteger(receipt.apkBytes) || (receipt.apkBytes as number) <= 0
+      || (receipt.apkBytes as number) > 1024 * 1024 * 1024
+      || typeof receipt.signingCertificateSha256 !== "string"
+      || !/^[a-f0-9]{64}$/.test(receipt.signingCertificateSha256)) {
+    throw new Error("Unexpected rollback verifier output");
+  }
+  return {
+    applicationId: receipt.applicationId,
+    version: receipt.version,
+    versionCode: receipt.versionCode,
+    apkSha256: receipt.apkSha256,
+    apkBytes: receipt.apkBytes,
+    signingCertificateSha256: receipt.signingCertificateSha256,
+  } as VerifiedRollbackArtifactIdentity;
 }
 
 async function readBoundedFile(path: string, privateFile: boolean, label: string): Promise<string> {

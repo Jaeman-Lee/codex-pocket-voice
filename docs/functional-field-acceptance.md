@@ -6,7 +6,7 @@
 
 결과는 `operator_attested_structured` 증거다. signed bundle 암호 검증,
 [Android 저부하 현장 검증](android-field-acceptance.md), 외부 edge 부하 검증을 대신하지 않는다. 보호된
-실제 Provider grade는 schema 3 observation이 exact report SHA-256만 고정하고, 최종 release evidence
+실제 Provider grade는 schema 4 observation이 exact report SHA-256만 고정하고, 최종 release evidence
 단계에서 owner-only 원문 세 건을 다시 검증한다.
 
 ## 사전 조건
@@ -15,7 +15,9 @@
 2. [Release process](release-process.md)의 `verify-update-manifest.mjs` 절차로 signature, pinned certificate,
    APK signer, artifact hash와 versionCode를 먼저 검증한다.
 3. manifest의 `commit`을 checkout하고 Git worktree가 clean인지 확인한다.
-4. v1.8.1 APK와 대응 무결성 파일을 rollback 위치에 별도로 보존하고 먼저 검증한다.
+4. v1.8.1 APK와 대응 무결성 파일을 rollback 위치에 별도로 보존한다. APK의 package/version,
+   SHA-256·byte count와 signer를 먼저 확인하고 observation에 기록한다. final gate가 같은 실제 파일을 다시
+   열어 이 identity를 독립적으로 대조한다.
 5. 보호된 workflow에서 OpenAI coding grade 한 건과 서로 다른 OpenRouter upstream family의 coding grade
    두 건을 발급받고 검토한다. 세 report 모두 field 시작 시점 기준 30일 이내여야 한다.
 6. observation/report와 grade report는 저장소 밖 owner-only private 디렉터리에 둔다. device ID·serial·model, IP·SSID·port,
@@ -39,7 +41,7 @@ template 또는 판정 report를 쓰기 직전에도 한 porcelain-v2 snapshot�
 확인하며, 입력 평가 중 source가 달라지면 출력하지 않는다.
 
 보호된 grade report 원문은 observation에 복사하지 않는다. 별도 신뢰 경로에서 받은 세 파일의 SHA-256을
-계산해 schema 3 `providerGradeReports.openaiCodingSha256`과
+계산해 schema 4 `providerGradeReports.openaiCodingSha256`과
 `providerGradeReports.openRouterCodingSha256` 두 슬롯에 기록한다. OpenRouter 두 digest는 서로 달라야 한다.
 
 ```sh
@@ -56,8 +58,9 @@ sha256sum \
 - `linuxCompanionCount`: 함께 검증한 Linux Companion 수; 최소 2
 - `androidClientCount`: 경쟁 pairing/claim에 사용한 Android client 수; 최소 2
 - `openRouterUpstreamFamilyCount`: 같은 Tool Broker 계약을 실제 통과한 서로 다른 upstream 계열 수; 최소 2
-- `rollback`: 별도 rollback client에서 확인한 source `1.8.1`/10801, mechanism
-  `android_rollback_manager`, data policy `restore`; template의 `not_run`은 통과하지 않음
+- `rollback`: 별도 rollback client에서 확인한 exact application ID와 source `1.8.1`/10801, APK
+  SHA-256·byte count·candidate와 같은 signing certificate SHA-256, mechanism
+  `android_rollback_manager`, data policy `restore`; artifact 값이 null이거나 template의 `not_run`이면 통과하지 않음
 - `providerGradeReports`: 위에서 계산한 OpenAI 1개·OpenRouter 2개의 exact SHA-256; 누락 또는 중복이면 실패
 - 일곱 attestation은 해당 사실을 직접 확인한 경우만 `true`. 특히
   `rollbackSnapshotAvailableBeforeCandidateRun`은 candidate 기능 시험을 시작하기 전에 exact package의
@@ -140,7 +143,8 @@ npm run android:functional-acceptance -- \
 ```
 
 report는 기존 파일을 덮어쓰지 않고 mode `0600`으로 생성된다. candidate version/commit, manifest·APK·signer
-digest, Provider grade report digest, API level과 장치/Companion/upstream 수, attestation, scenario별 pass/fail/not-run·횟수·시각·고정
+digest, rollback APK package/version/hash·byte count·signer, Provider grade report digest, API level과
+장치/Companion/upstream 수, attestation, scenario별 pass/fail/not-run·횟수·시각·고정
 reason, aggregate verdict만 포함한다. private identifier, network 값, credential과 자유 형식 note는 schema에
 없다. report는 저장소나 support bundle에 올리지 않고, deployment acceptance에는 candidate commit과
 aggregate verdict만 옮긴다.

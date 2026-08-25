@@ -59,7 +59,7 @@ async function main(): Promise<void> {
       "The signed update bundle must be verified separately before this command.",
       "This command never installs, starts, stops, pairs, revokes, or changes a device or network.",
       "It creates or validates owner-only structured operator observations for the exact clean source commit.",
-      "Before field use, bind one OpenAI and two distinct OpenRouter protected coding-grade SHA-256 values in the schema 2 template.",
+      "Before field use, bind the exact rollback APK identity plus one OpenAI and two distinct OpenRouter coding-grade SHA-256 values in the schema 4 template.",
       "",
     ].join("\n"));
     return;

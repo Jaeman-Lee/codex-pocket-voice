@@ -25,7 +25,7 @@
 | Phase B | 진행 중 | OpenAI streaming·이미지·사용량·중단, server-only systemd encrypted credential, 암호화 durable multi-turn, server-authored output/total token·비용 hard limit과 실제/추정 비용 accounting, model-grade 기반 read/coding tool gate, SHA-bound 단일·2~8개 교체·신규 생성·rename, crash recovery·bounded 수동 복구, 격리 npm 검증, 보호된 2-call smoke와 단계별 합성 프로젝트 grade harness 구현; 실제 모델 workflow 실행·현장 프로젝트 acceptance 잔여 |
 | Phase C | 진행 중 | strict ZDR model/endpoint catalog, 선택형 routing, 가장 비싼 승인 route 기준 사전 비용검사, 가격·성능·quota UI, router metadata 귀속, chat/tool SSE, 승인형 broker, 보호된 synthetic smoke와 단계별 합성 프로젝트 grade harness 및 exact model/upstream grade enforcement 구현; 실제 model/upstream workflow 실행·현장 acceptance 잔여 |
 | Phase D | 진행 중 | Android encrypted snapshot/rollback mirror와 schema 2 glossary, Companion encrypted event row, cursor replay·unknown 복구, multi-project dashboard·approval inbox, bounded syntax-highlighted old/new-line diff와 최대 8개 touch-decline same-run feedback, two-touch workspace 복구, 최대 8대의 redacted read-only Multi-Companion Fleet와 명시적 PC 전환, live branch/worktree identity와 exact normalized-cwd session scope, workspace export/protected delete, 목표 이름·pin/archive, 모바일 기본 Queue·명시적 Codex Steer, Provider 전환의 기본 빈 대화와 touch-reviewed bounded Fork, durable 기록, bounded retention 및 API 비용 정책 설정, touch-only 월 비용 확인, opt-in process-death native 알림·retained run 열기와 default-network-triggered bounded SSE reconnect, API 30 token-gated notification Intent·system-tray tap 계측, handoff의 exact idle/완료 thread unsubscribe와 bounded retry/fail-closed, run artifact 검토/download와 allowlist-only diagnostic support bundle 구현; 실기기 multi-PC/artifact/background/locked-screen/process-kill/voice acceptance 잔여 |
-| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, durable serialized pairing/revoke/key-rotation state, observed server-pin promotion, recoverable A/B client-key rotation, two-touch exact-client revocation→native key→local target removal, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer, exact candidate/transport-bound 기능·저부하 field harness, AOSP RollbackManager restore-bound 1.8.1 recovery와 최종 evidence gate 구현; 실제 multi-PC 해제·P2P group formation·external edge DDoS/실부하·locked-screen/reconnect/voice/rollback 실기기 release gate 잔여 |
+| Phase E | 진행 중 | opt-in LAN TLS listener, 10분 reviewed QR, bounded DNS-SD 주소 discovery, Android Keystore P-256 device certificate·server/client SPKI binding, durable serialized pairing/revoke/key-rotation state, observed server-pin promotion, recoverable A/B client-key rotation, two-touch exact-client revocation→native key→local target removal, opaque TLS relay broker와 Linux/Android outbound connector, Android Wi-Fi Direct bounded discovery/group-client 및 fail-closed LAN→P2P→relay 자동 우선순위·cooldown, 별도 Linux P2P GO/PBC·non-routing DHCP lifecycle, source별 relay admission/new-slot·pre-TLS deadline과 logless aggregate stats 및 합성 burst 회귀, signed update manifest·offline/native ZIP verifier, bounded official Latest discovery/download와 user-confirmed installer, exact candidate/transport-bound 기능·저부하 field harness, byte/package/version/signer-bound v1.8.1 APK와 AOSP RollbackManager restore recovery 및 최종 evidence gate 구현; 실제 multi-PC 해제·P2P group formation·external edge DDoS/실부하·locked-screen/reconnect/voice/rollback 실기기 release gate 잔여 |
 
 ## 2. 제품 정의
 
@@ -609,12 +609,13 @@ bytes가 candidate와 다르면 측정을 진행하거나 report를 만들지 �
 단말 수치는 아직 없다.
 
 기능 field harness는 먼저 별도 검증한 signed update manifest의 version/commit·manifest/APK/signer digest와
-clean checkout을 묶는다. pre-handoff schema 3은 보호된 OpenAI coding grade 한 건과 서로 다른 두
+clean checkout을 묶는다. pre-handoff schema 4는 보호된 OpenAI coding grade 한 건과 서로 다른 두
 OpenRouter coding grade 원문의 SHA-256도 고정한다. 모든 항목이 `not_run`인 owner-only 템플릿만 만들고, 실제 Android API 30+,
 Linux Companion 2대, Android client 2대, 서로 다른 OpenRouter upstream 계열 2개와 20개 고정 scenario,
 일곱 privacy/approval/rollback attestation을 모두 만족해야 aggregate report를 통과시킨다. functional
-schema 3은 별도 client의 rollback source `1.8.1`/10801, AOSP `android_rollback_manager`, `restore` data
-policy와 candidate 실행 전 available snapshot 확인도 요구한다. schema에는
+schema 4는 별도 client의 rollback source `1.8.1`/10801, exact APK SHA-256·byte count·stable signer,
+AOSP `android_rollback_manager`, `restore` data policy와 candidate 실행 전 available snapshot 확인도
+요구한다. schema에는
 device/network identifier, credential, prompt/response, 오류 원문과 자유 형식 note가 없고 결과가 30일보다
 오래되거나 후보가 다르면 거부한다. 이는 operator-attested evidence이며 실제 실행을 대신하지 않는다.
 
@@ -626,13 +627,15 @@ observation에 묶인 owner-only Provider grade 원문 세 건을 읽어 protect
 Tool Broker evidence·등급·field-start freshness를 다시 검증하고, OpenRouter exact upstream tag와 actual
 provider family가 각각 두 개임을 요구한다. 이어서
 independent trust path의 pinned certificate fingerprint로 detached manifest signature, APK signer와
-APK/SBOM 실제 hash·byte count를 검증한다. APK hash와 signer 검사는 `O_NOFOLLOW`로 연 같은 descriptor를
-Linux `apksigner` 자식까지 유지해 두 검사 사이 경로 교체를 차단한다. verifier가 반환한 exact manifest SHA-256 receipt와 field
+APK/SBOM 실제 hash·byte count를 검증한다. 별도 rollback APK도 `O_NOFOLLOW` single-link descriptor에서
+hash·byte count를 계산하고 같은 descriptor를 Linux `aapt`·`apksigner` 자식까지 유지해 exact
+application/version/signer와 observation을 대조한다. verifier가 반환한 exact manifest SHA-256 receipt와 field
 평가가 읽은 bytes를 대조하고 평가 전·후 exact clean source를 재검증하며, 검증 뒤 경로 교체나 source
 drift를 포함한 실패는 출력 없이 종료한다. 실제 field
 입력은 `O_NOFOLLOW` 단일 descriptor에서 regular/single-link, private report의 owner-only 조건,
 시작·종료 metadata와 byte 상한을 확인해 symlink/hardlink·읽는 중 교체도 거부한다. 실제 field evidence는 아직 없고
-signed/tampered/swapped/linked bundle과 합성 field fixture로만 검증했다.
+signed/tampered/swapped/linked candidate bundle, changed/wrong-identity/wrong-signer/linked rollback APK와
+합성 field fixture로만 검증했다.
 
 Android CI는 APK와 SBOM의 SHA-256·크기, package, SemVer/versionCode, commit을 담은 canonical
 `update-manifest.json`을 생성한다. official signed build는 APK release key로 manifest 원문에 RSA/ECDSA

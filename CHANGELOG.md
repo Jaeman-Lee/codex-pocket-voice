@@ -10,6 +10,20 @@ Update decision: Provider 실행 계약, Gateway 프로토콜과 이후 작업 �
 1.8.2를 current v1 후보, 1.8.1을 검증된 rollback 세트로 유지한다. 최초 2.0 candidate를 설치할
 때도 1.8.1 rollback을 보존한다.
 
+- Rollback APK byte-binding fix는 기능 observation이 source `1.8.1`/10801과 artifact 사전 검증을
+  attestation해도 final gate가 실제 rollback APK bytes·package·version·signer를 다시 읽지 않아 다른 파일이나
+  잘못된 설치본을 구조적으로 배제하지 못하던 release validation 공백을 고치는 internal compatibility
+  `patch`다. 아직 전달하지 않은 incompatible v2 범위 안에서 `2.0.0`/Android `versionCode 20000`,
+  `feature/v2-control-plane`을 유지하고 pre-handoff functional schema 3, final evidence schema 2와 이전
+  CI-only candidate를 교체한다. 실제 APK 전달·설치·rollback, Provider/field 호출과 Companion 재시작은
+  하지 않으며 current v1 후보 1.8.2, staged v1.8.4, 검증된 1.8.1 rollback과 배포 중인 v1.8.3
+  Companion을 보존한다.
+- functional schema 4는 rollback APK의 exact application ID, SHA-256·byte count와 candidate와 같은 stable
+  signer를 고정한다. final evidence schema 3은 실제 single-link rollback APK를 `O_NOFOLLOW`로 열고 같은
+  descriptor에서 hash·size, `aapt` package/version과 `apksigner` certificate를 검사해 observation 및 exact
+  `1.8.1`/10801과 대조한다. 바이트 변경, 잘못된 source identity·signer, hardlink와 이전 schema는
+  fail-closed다. `release:check`의 단위 검사 323개와 실제 app-server 통합 3개, production build·schema
+  일치·SBOM이 통과했다.
 - RollbackManager-bound field evidence fix는 Android의 일반 package installer가 `2.0.0`/20000에서
   `1.8.1`/10801로의 downgrade를 허용하지 않는데도 기존 기능 observation이 rollback artifact 보존과
   시나리오 pass만으로 복구 메커니즘·data snapshot을 구조적으로 증명하지 못하던 release gate 공백을
