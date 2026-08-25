@@ -51,7 +51,12 @@ Model inference can still require internet access, but project files and executi
 
 ## Phase 3 — durable local work journal
 
-Implementation status: v1.6 introduces the versioned `WorkJournal` boundary, IndexedDB persistence with a localStorage fallback, offline conversation restore, and target-bound prompt queue recovery. Native Android SQLite, full event/diff journaling, retention controls, and reconciliation migrations remain in progress.
+Implementation status: v1.6 introduced the versioned `WorkJournal` boundary, IndexedDB persistence with a
+localStorage fallback, offline conversation restore, and target-bound prompt queue recovery. The v2 branch now
+mirrors encrypted snapshots into app-owned Android SQLite and stores Companion run/events plus bounded OpenAI and
+OpenRouter replay state in an encrypted SQLite journal. Provider/workspace conversation selection, cursor replay,
+unknown-run acknowledgement, bounded export and protected deletion are implemented; user-configurable retention,
+pin/archive flows and full diff/event reconciliation remain in progress.
 
 - Add an app-owned SQLite work journal for conversations, queued prompts, command events, diffs, attachments, and target metadata.
 - Make project history and completed results readable while the PC or network connectivity is unavailable.
@@ -89,6 +94,34 @@ Replace the remaining Termux transport dependency without embedding a developmen
 - The Android service must enforce a small memory/CPU budget and must never download or execute Codex, Node.js, Git, ffmpeg, Ollama, or model weights.
 
 The implementation may reuse appropriately licensed open-source components, but must not copy Termux or Tailscale credentials, identity, or configuration into the application.
+
+Implementation checkpoint: the v2 branch now has an opt-in Companion TLS 1.2/1.3 LAN listener and an Android
+`connectedDevice` foreground service. The service keeps encrypted host/port/SPKI-pin configuration in Android
+Keystore-backed AES-GCM storage, listens only on loopback, verifies certificate validity plus HTTPS hostname and
+primary/backup SPKI pins, and never silently downgrades to Termux. The first non-exportable Android P-256 device
+identity, pairing-bound mTLS proof and reviewed 10-minute QR bootstrap are implemented. Server-certificate rotation
+can stage a backup pin, requires an observed successful backup-pin handshake, and uses a two-touch promotion that
+retires the prior pin. Android client-device identity rotation now uses a reviewed five-minute approval, durable
+Keystore A/B slots and actual new-key mTLS proof before the prior alias is retired; uncertain responses preserve both
+slots for recovery. Device removal now uses a separate touch review and revokes the exact authenticated Companion
+client before deleting Android transport config, both identity slots, or the local target. Offline, malformed,
+missing-token, and mTLS-mismatch results retain retry state; exact `INVALID_TOKEN` recovers an already-completed
+revocation without touching another Companion. User-triggered same-LAN DNS-SD address discovery is implemented with bounded private-address
+candidates and separate manual SPKI-pin review. A bounded TLS relay broker and Linux Companion outbound connector
+now carry an inner end-to-end PocketLink mTLS stream without exposing Gateway plaintext. Android relay enrollment
+stores the endpoint, slot and secret in Keystore-encrypted config and the native connector verifies public CA,
+hostname and relay SPKI before starting the existing Companion mTLS inside it. Android Wi-Fi Direct now has
+user-triggered bounded discovery, opaque reviewed candidate IDs, encrypted peer configuration, group-client-only
+connection enforcement and a fail-closed LAN→P2P→relay automatic mode. Only transport reachability failures advance
+to the next route; LAN/P2P retries use bounded cooldowns, while TLS/SPKI/mTLS failures never trigger a fallback.
+A standalone, explicit Linux group-owner controller now accepts one bounded PBC peer, requires the GO role, starts
+interface-only non-routing DHCP without a lease file, verifies the existing Companion listener, and cleans every
+resource in reverse. Public relay pre-TLS deadlines and aggregate-only load regression are implemented. A
+SystemUI-capable API 30 AOSP managed device now executes the token-gated notification Intent capture/consume
+boundary and an AndroidX UI Automator system-tray tap through MainActivity to one-time operation consumption.
+Physical locked-screen/process-kill taps, actual P2P formation, privacy-safe 60-minute CPU/PSS/battery/background-wake
+measurement results and external relay load remain open. The read-only ADB collector, fixed release thresholds and
+fixture/privacy regression are implemented; synthetic output does not satisfy the physical measurement gate.
 
 ## Final definition of done
 

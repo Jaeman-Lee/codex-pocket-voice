@@ -50,6 +50,34 @@ export class PathPolicy {
     return canonical;
   }
 
+  async resolveExistingPath(cwd: string, requested = "."): Promise<string> {
+    const workspace = await this.resolveWorkspace(cwd);
+    if (path.isAbsolute(requested)) {
+      throw new Error("Workspace paths must be relative to the selected project");
+    }
+    const candidate = path.resolve(workspace, requested);
+    if (!isWithin(workspace, candidate)) {
+      throw new Error("Workspace path escapes the selected project");
+    }
+    const canonical = await realpath(candidate);
+    if (!isWithin(workspace, canonical)) {
+      throw new Error("Workspace path resolves outside the selected project");
+    }
+    return canonical;
+  }
+
+  async resolveRelativePath(cwd: string, requested = "."): Promise<string> {
+    const workspace = await this.resolveWorkspace(cwd);
+    if (path.isAbsolute(requested)) {
+      throw new Error("Workspace paths must be relative to the selected project");
+    }
+    const candidate = path.resolve(workspace, requested);
+    if (!isWithin(workspace, candidate)) {
+      throw new Error("Workspace path escapes the selected project");
+    }
+    return candidate;
+  }
+
   assertAllowed(cwd: string): void {
     const resolved = path.resolve(cwd);
     if (!this.isAllowed(resolved)) {
@@ -63,4 +91,8 @@ export class PathPolicy {
       (root) => resolved === root || resolved.startsWith(`${root}${path.sep}`),
     );
   }
+}
+
+function isWithin(root: string, candidate: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
 }

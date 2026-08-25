@@ -1,0 +1,862 @@
+import { createHash, randomUUID } from "node:crypto";
+import type {
+  ProviderEvent,
+  ProviderResumeState,
+  ProviderRun,
+  ProviderRunInput,
+  ProviderRoutingSelection,
+  ProviderRunStatus,
+  ProviderSteerInput,
+} from "./providers/types.js";
+import { ProviderRunEventGate } from "./provider-event-contract.js";
+import type { WorkspaceIdentity } from "./workspace-identity.js";
+import {
+  RunPolicyError,
+  type CostAndPolicyGuard,
+  type RunPolicySnapshot,
+} from "./run-policy.js";
+
+const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60_000;
+const DEFAULT_MAX_OPERATIONS = 500;
+const MAX_PINNED_OPERATIONS = 50;
+const MAX_GOAL_NAME_LENGTH = 120;
+const MAX_STEERS_PER_OPERATION = 32;
+const MAX_STEER_PROMPT_LENGTH = 100_000;
+const MAX_STEER_PROMPT_TOTAL = 1_000_000;
+
+export type RunOperationStatus = "running" | "unknown" | ProviderRunStatus;
+
+export interface RunSteerRecord {
+  requestId: string;
+  requestFingerprint: string;
+  prompt: string;
+  attachmentCount: number;
+  requestedAt: string;
+  acceptedAt: string;
+}
+
+export interface RunForkProvenance {
+  schema: 1;
+  sourceOperationId: string;
+  sourceProviderId: string;
+  sourceModel?: string;
+  targetProviderId: string;
+  contextDigest: string;
+  importedCharacters: number;
+  transferredCharacters: number;
+  estimatedInputTokens: number;
+  truncated: boolean;
+  attachmentCount: number;
+  previewedAt: string;
+  confirmedAt: string;
+}
+
+export interface RunOperation {
+  id: string;
+  providerId: string;
+  conversationId: string;
+  runId: string;
+  cwd: string;
+  prompt: string;
+  steers?: RunSteerRecord[];
+  fork?: RunForkProvenance;
+  accountId?: string;
+  model?: string;
+  effort?: string;
+  networkAccess?: boolean;
+  routing?: ProviderRoutingSelection;
+  runPolicy?: RunPolicySnapshot;
+  workspaceIdentity?: WorkspaceIdentity;
+  status: RunOperationStatus;
+  startedAt: string;
+  completedAt?: string;
+  acknowledgedAt?: string;
+  goalName?: string;
+  pinnedAt?: string;
+  archivedAt?: string;
+  result?: Record<string, unknown>;
+  resumeState?: ProviderResumeState;
+  error?: string;
+}
+
+export interface StartRunCommand {
+  providerId: string;
+  accountId?: string;
+  prompt: string;
+  input: ProviderRunInput;
+  workspaceIdentity?: WorkspaceIdentity;
+  idempotencyKey?: string;
+  policyConfirmation?: string;
+  fork?: RunForkProvenance;
+}
+
+export interface SteerRunCommand {
+  requestId: string;
+  prompt: string;
+  input: ProviderSteerInput;
+}
+
+export interface RunListFilter {
+  status?: string;
+  workspace?: string;
+}
+
+export interface RunIdempotencyRecord {
+  key: string;
+  fingerprint: string;
+  operationId: string;
+}
+
+export interface RunOperationMetadataPatch {
+  goalName?: string | null;
+  pinned?: boolean;
+  archived?: boolean;
+}
+
+export interface RestoredRunState {
+  operations: readonly RunOperation[];
+  idempotency: readonly RunIdempotencyRecord[];
+}
+
+export interface RunStateStore {
+  load(): RestoredRunState;
+  saveOperation(operation: RunOperation, idempotency?: RunIdempotencyRecord): void;
+  deleteOperation(operationId: string): void;
+  deleteOperations(operationIds: readonly string[]): void;
+}
+
+export type RunCoordinatorEvent =
+  | {
+      type: "operation";
+      action: "started" | "steered" | "completed" | "failed" | "acknowledged" | "metadata_updated";
+      operation: RunOperation;
+    }
+  | {
+      type: "provider";
+      operationId: string;
+      cwd: string;
+      event: ProviderEvent;
+    };
+
+export interface RunProviderRegistry {
+  startRun(providerId: unknown, accountId: unknown, input: ProviderRunInput): Promise<ProviderRun>;
+  steerRun(
+    providerId: unknown,
+    conversationId: string,
+    runId: string,
+    input: ProviderSteerInput,
+  ): Promise<void>;
+  cancelRun(providerId: unknown, conversationId: string, runId: string): Promise<void>;
+  subscribe(listener: (event: ProviderEvent) => void): () => void;
+}
+
+export interface RunCoordinatorOptions {
+  now?: () => number;
+  createId?: () => string;
+  retentionMs?: number;
+  maxOperations?: number;
+  assertWorkspace?: (cwd: string) => void;
+  stateStore?: RunStateStore;
+  policyGuard?: CostAndPolicyGuard;
+  finalizeResult?: (
+    operation: Readonly<RunOperation>,
+    result: Record<string, unknown>,
+  ) => Promise<Record<string, unknown>>;
+}
+
+interface IdempotencyEntry {
+  fingerprint: string;
+  operationId?: string;
+  pending?: Promise<RunOperation>;
+}
+
+interface SteerIdempotencyEntry {
+  fingerprint: string;
+  operationId: string;
+  pending?: Promise<RunOperation>;
+  persisted: boolean;
+}
+
+export class RunCoordinatorError extends Error {
+  constructor(readonly statusCode: number, message: string) {
+    super(message);
+  }
+}
+
+export class RunCoordinator {
+  private readonly operations = new Map<string, RunOperation>();
+  private readonly activeByConversation = new Map<string, string>();
+  private readonly pendingConversations = new Set<string>();
+  private readonly idempotency = new Map<string, IdempotencyEntry>();
+  private readonly idempotencyByOperation = new Map<string, RunIdempotencyRecord>();
+  private readonly steerIdempotency = new Map<string, SteerIdempotencyEntry>();
+  private readonly providerEventGates = new Map<string, ProviderRunEventGate>();
+  private readonly listeners = new Set<(event: RunCoordinatorEvent) => void>();
+  private readonly now: () => number;
+  private readonly createId: () => string;
+  private retentionMs: number;
+  private maxOperations: number;
+  private readonly assertWorkspace: (cwd: string) => void;
+  private readonly stateStore?: RunStateStore;
+  private readonly policyGuard?: CostAndPolicyGuard;
+  private readonly finalizeResult?: RunCoordinatorOptions["finalizeResult"];
+  private readonly unsubscribeProvider: () => void;
+  private closed = false;
+
+  constructor(
+    private readonly providers: RunProviderRegistry,
+    options: RunCoordinatorOptions = {},
+  ) {
+    this.now = options.now ?? Date.now;
+    this.createId = options.createId ?? randomUUID;
+    this.retentionMs = options.retentionMs ?? DEFAULT_RETENTION_MS;
+    this.maxOperations = options.maxOperations ?? DEFAULT_MAX_OPERATIONS;
+    this.assertWorkspace = options.assertWorkspace ?? (() => undefined);
+    this.stateStore = options.stateStore;
+    this.policyGuard = options.policyGuard;
+    this.finalizeResult = options.finalizeResult;
+    const restored = this.stateStore?.load();
+    for (const operation of restored?.operations ?? []) {
+      this.assertWorkspace(operation.cwd);
+      this.operations.set(operation.id, cloneOperation(operation));
+    }
+    for (const entry of restored?.idempotency ?? []) {
+      if (this.operations.has(entry.operationId)) {
+        this.idempotencyByOperation.set(entry.operationId, { ...entry });
+        this.idempotency.set(entry.key, {
+          fingerprint: entry.fingerprint,
+          operationId: entry.operationId,
+        });
+      }
+    }
+    for (const operation of this.operations.values()) {
+      for (const steer of operation.steers ?? []) {
+        this.steerIdempotency.set(steerKey(operation.id, steer.requestId), {
+          fingerprint: steer.requestFingerprint,
+          operationId: operation.id,
+          persisted: true,
+        });
+      }
+    }
+    this.cleanup();
+    this.unsubscribeProvider = providers.subscribe((event) => this.forwardProviderEvent(event));
+  }
+
+  subscribe(listener: (event: RunCoordinatorEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  updateRetentionPolicy(policy: Pick<RunCoordinatorOptions, "retentionMs" | "maxOperations">): void {
+    if (!Number.isSafeInteger(policy.retentionMs) || policy.retentionMs! <= 0
+      || !Number.isSafeInteger(policy.maxOperations) || policy.maxOperations! <= 0) {
+      throw new RunCoordinatorError(400, "Operation retention policy is invalid");
+    }
+    this.retentionMs = policy.retentionMs!;
+    this.maxOperations = policy.maxOperations!;
+    this.cleanup();
+  }
+
+  async start(command: StartRunCommand): Promise<RunOperation> {
+    this.cleanup();
+    const fingerprint = fingerprintCommand(command);
+    const key = command.idempotencyKey;
+    if (!key) return cloneOperation(await this.startNew(command));
+
+    const existing = this.idempotency.get(key);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        throw new RunCoordinatorError(409, "같은 requestId를 다른 실행 요청에 다시 사용할 수 없습니다.");
+      }
+      if (existing.operationId) {
+        const operation = this.operations.get(existing.operationId);
+        if (operation) return cloneOperation(operation);
+        this.idempotency.delete(key);
+      } else if (existing.pending) {
+        return cloneOperation(await existing.pending);
+      }
+    }
+
+    const pending = this.startNew(command, { key, fingerprint, operationId: "" });
+    const entry: IdempotencyEntry = { fingerprint, pending };
+    this.idempotency.set(key, entry);
+    try {
+      const operation = await pending;
+      entry.operationId = operation.id;
+      entry.pending = undefined;
+      return cloneOperation(operation);
+    } catch (error) {
+      if (this.idempotency.get(key) === entry) this.idempotency.delete(key);
+      throw error;
+    }
+  }
+
+  get(operationId: string): RunOperation | undefined {
+    this.cleanup();
+    const operation = this.operations.get(operationId);
+    return operation ? cloneOperation(operation) : undefined;
+  }
+
+  findByProviderRun(providerId: string, conversationId: string, runId: string): RunOperation | undefined {
+    this.cleanup();
+    const operation = [...this.operations.values()].find((item) => item.providerId === providerId
+      && item.conversationId === conversationId && item.runId === runId);
+    return operation ? cloneOperation(operation) : undefined;
+  }
+
+  list(filter: RunListFilter = {}): RunOperation[] {
+    this.cleanup();
+    return [...this.operations.values()]
+      .filter((operation) => (!filter.status || operation.status === filter.status)
+        && (!filter.workspace || operation.cwd === filter.workspace))
+      .sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt))
+      .map(cloneOperation);
+  }
+
+  async cancel(operationId: string): Promise<{ operation: RunOperation; interruptRequested: boolean }> {
+    const operation = this.operations.get(operationId);
+    if (!operation) throw new RunCoordinatorError(404, "Operation not found");
+    const interruptRequested = operation.status === "running";
+    if (interruptRequested) {
+      await this.providers.cancelRun(operation.providerId, operation.conversationId, operation.runId);
+    }
+    return { operation: cloneOperation(operation), interruptRequested };
+  }
+
+  async steer(operationId: string, command: SteerRunCommand): Promise<RunOperation> {
+    this.cleanup();
+    const operation = this.operations.get(operationId);
+    if (!operation) throw new RunCoordinatorError(404, "Operation not found");
+    assertSteerCommand(command);
+    const key = steerKey(operationId, command.requestId);
+    const fingerprint = steerFingerprint(command.input);
+    const existing = this.steerIdempotency.get(key);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        throw new RunCoordinatorError(409, "같은 requestId를 다른 방향 수정 요청에 다시 사용할 수 없습니다.");
+      }
+      if (existing.pending) return cloneOperation(await existing.pending);
+      const retained = this.operations.get(existing.operationId);
+      if (retained) {
+        if (!existing.persisted) {
+          this.stateStore?.saveOperation(retained, this.idempotencyForOperation(retained.id));
+          existing.persisted = true;
+          const recovered = cloneOperation(retained);
+          this.emit({ type: "operation", action: "steered", operation: recovered });
+          return recovered;
+        }
+        return cloneOperation(retained);
+      }
+      this.steerIdempotency.delete(key);
+    }
+    if ([...this.steerIdempotency.values()].some((entry) => (
+      entry.operationId === operationId && entry.pending !== undefined
+    ))) {
+      throw new RunCoordinatorError(409, "다른 방향 수정 요청을 처리 중입니다. 완료 후 다시 시도해 주세요.");
+    }
+    const steers = operation.steers ?? [];
+    if (steers.length >= MAX_STEERS_PER_OPERATION
+        || steers.reduce((total, item) => total + item.prompt.length, 0) + command.prompt.length > MAX_STEER_PROMPT_TOTAL) {
+      throw new RunCoordinatorError(409, "한 작업의 방향 수정 기록 한도를 초과했습니다. 다음 요청은 대기열에 추가해 주세요.");
+    }
+    const pending = this.steerNew(operation, command, fingerprint);
+    this.steerIdempotency.set(key, { fingerprint, operationId, pending, persisted: false });
+    try {
+      const updated = await pending;
+      const entry = this.steerIdempotency.get(key);
+      if (entry) {
+        entry.pending = undefined;
+        entry.persisted = true;
+      }
+      return cloneOperation(updated);
+    } catch (error) {
+      const entry = this.steerIdempotency.get(key);
+      if (entry?.pending === pending) {
+        const accepted = operation.steers?.some((item) => (
+          item.requestId === command.requestId && item.requestFingerprint === fingerprint
+        ));
+        if (accepted) entry.pending = undefined;
+        else this.steerIdempotency.delete(key);
+      }
+      throw error;
+    }
+  }
+
+  acknowledge(operationId: string): RunOperation {
+    const operation = this.operations.get(operationId);
+    if (!operation) throw new RunCoordinatorError(404, "Operation not found");
+    if (operation.status !== "unknown") {
+      throw new RunCoordinatorError(409, "최종 상태를 확인할 수 없는 작업만 확인 처리할 수 있습니다.");
+    }
+    if (operation.acknowledgedAt) return cloneOperation(operation);
+    operation.acknowledgedAt = new Date(this.now()).toISOString();
+    try {
+      this.stateStore?.saveOperation(operation, this.idempotencyForOperation(operation.id));
+    } catch (error) {
+      delete operation.acknowledgedAt;
+      throw error;
+    }
+    this.emit({ type: "operation", action: "acknowledged", operation: cloneOperation(operation) });
+    return cloneOperation(operation);
+  }
+
+  updateMetadata(operationId: string, patch: RunOperationMetadataPatch): RunOperation {
+    this.cleanup();
+    const operation = this.operations.get(operationId);
+    if (!operation) throw new RunCoordinatorError(404, "Operation not found");
+    if (patch.goalName === undefined && patch.pinned === undefined && patch.archived === undefined) {
+      throw new RunCoordinatorError(400, "At least one operation metadata field is required");
+    }
+    const previous = {
+      goalName: operation.goalName,
+      pinnedAt: operation.pinnedAt,
+      archivedAt: operation.archivedAt,
+    };
+    const now = new Date(this.now()).toISOString();
+    if (patch.goalName !== undefined) {
+      if (patch.goalName === null) delete operation.goalName;
+      else {
+        const goalName = patch.goalName.trim();
+        if (!goalName || goalName.length > MAX_GOAL_NAME_LENGTH || /[\u0000-\u001f\u007f\u2028\u2029]/.test(goalName)) {
+          throw new RunCoordinatorError(400, `Goal name must be one line up to ${MAX_GOAL_NAME_LENGTH} characters`);
+        }
+        operation.goalName = goalName;
+      }
+    }
+    if (patch.pinned !== undefined) {
+      if (patch.pinned) {
+        if (!operation.pinnedAt) {
+          const pinnedCount = [...this.operations.values()].filter((item) => item.pinnedAt).length;
+          if (pinnedCount >= MAX_PINNED_OPERATIONS) {
+            throw new RunCoordinatorError(409, `At most ${MAX_PINNED_OPERATIONS} operations can be pinned`);
+          }
+          operation.pinnedAt = now;
+        }
+        delete operation.archivedAt;
+      } else {
+        delete operation.pinnedAt;
+      }
+    }
+    if (patch.archived !== undefined) {
+      if (patch.archived) {
+        if (operation.status === "running" || (operation.status === "unknown" && !operation.acknowledgedAt)) {
+          restoreMetadata(operation, previous);
+          throw new RunCoordinatorError(409, "Active or unacknowledged operations cannot be archived");
+        }
+        operation.archivedAt ??= now;
+        delete operation.pinnedAt;
+      } else {
+        delete operation.archivedAt;
+      }
+    }
+    try {
+      this.stateStore?.saveOperation(operation, this.idempotencyForOperation(operation.id));
+    } catch (error) {
+      restoreMetadata(operation, previous);
+      throw error;
+    }
+    const updated = cloneOperation(operation);
+    this.emit({ type: "operation", action: "metadata_updated", operation: updated });
+    return updated;
+  }
+
+  deleteWorkspaceHistory(workspace: string): { deletedOperationIds: string[] } {
+    this.cleanup();
+    const matching = [...this.operations.values()].filter((operation) => operation.cwd === workspace);
+    const protectedOperation = matching.find((operation) => operation.status === "running"
+      || (operation.status === "unknown" && !operation.acknowledgedAt));
+    if (protectedOperation) {
+      throw new RunCoordinatorError(
+        409,
+        "실행 중이거나 아직 확인하지 않은 작업이 있어 이 프로젝트 기록을 삭제할 수 없습니다.",
+      );
+    }
+    const deletedOperationIds = matching.map((operation) => operation.id);
+    this.stateStore?.deleteOperations(deletedOperationIds);
+    for (const operationId of deletedOperationIds) this.removeOperation(operationId, false);
+    return { deletedOperationIds };
+  }
+
+  close(): void {
+    this.closed = true;
+    this.unsubscribeProvider();
+    this.listeners.clear();
+  }
+
+  private async startNew(
+    command: StartRunCommand,
+    idempotency?: RunIdempotencyRecord,
+  ): Promise<RunOperation> {
+    const resumed = this.resumeInput(command);
+    let providerInput = resumed.input;
+    const providerAccountId = resumed.accountId;
+    const requestedConversation = providerInput.conversationId
+      ? conversationKey(command.providerId, providerInput.conversationId)
+      : undefined;
+    if (requestedConversation) this.reserveConversation(requestedConversation);
+
+    let begun: ProviderRun;
+    let runPolicy: RunPolicySnapshot | undefined;
+    try {
+      if (this.policyGuard) {
+        try {
+          const authorized = await this.policyGuard.authorize({
+            providerId: command.providerId,
+            ...(providerAccountId ? { accountId: providerAccountId } : {}),
+            ...(providerInput.model ? { model: providerInput.model } : {}),
+            ...(providerInput.routing ? { routing: structuredClone(providerInput.routing) } : {}),
+            attachmentCount: providerInput.imagePaths?.length ?? 0,
+          }, [...this.operations.values()], command.policyConfirmation);
+          runPolicy = authorized.snapshot;
+          if (authorized.limits) providerInput = { ...providerInput, limits: authorized.limits };
+        } catch (error) {
+          if (error instanceof RunPolicyError) throw new RunCoordinatorError(error.statusCode, error.message);
+          throw error;
+        }
+      }
+      begun = await this.providers.startRun(command.providerId, providerAccountId, providerInput);
+    } finally {
+      if (requestedConversation) this.pendingConversations.delete(requestedConversation);
+    }
+
+    try {
+      this.assertWorkspace(begun.cwd);
+      if (providerInput.conversationId && begun.conversationId !== providerInput.conversationId) {
+        await this.providers.cancelRun(begun.providerId, begun.conversationId, begun.runId).catch(() => undefined);
+        throw new RunCoordinatorError(409, "Provider가 요청한 대화와 다른 대화를 시작했습니다.");
+      }
+      const actualConversation = conversationKey(begun.providerId, begun.conversationId);
+      if (this.activeByConversation.has(actualConversation)) {
+        await this.providers.cancelRun(begun.providerId, begun.conversationId, begun.runId).catch(() => undefined);
+        throw new RunCoordinatorError(409, "이 대화에는 이미 실행 중인 작업이 있습니다.");
+      }
+
+      const operation: RunOperation = {
+        id: this.createId(),
+        providerId: begun.providerId,
+        conversationId: begun.conversationId,
+        runId: begun.runId,
+        cwd: begun.cwd,
+        prompt: command.prompt,
+        accountId: providerAccountId,
+        model: providerInput.model,
+        effort: providerInput.effort,
+        networkAccess: providerInput.networkAccess === true,
+        ...(providerInput.routing ? { routing: structuredClone(providerInput.routing) } : {}),
+        ...(runPolicy ? { runPolicy: structuredClone(runPolicy) } : {}),
+        ...(command.workspaceIdentity ? { workspaceIdentity: structuredClone(command.workspaceIdentity) } : {}),
+        ...(command.fork ? { fork: structuredClone(command.fork) } : {}),
+        status: "running",
+        startedAt: new Date(this.now()).toISOString(),
+      };
+      this.operations.set(operation.id, operation);
+      this.activeByConversation.set(actualConversation, operation.id);
+      this.providerEventGates.set(operation.id, new ProviderRunEventGate(operation));
+      const operationIdempotency = idempotency ? { ...idempotency, operationId: operation.id } : undefined;
+      if (operationIdempotency) this.idempotencyByOperation.set(operation.id, operationIdempotency);
+      try {
+        this.stateStore?.saveOperation(operation, operationIdempotency);
+      } catch (error) {
+        this.operations.delete(operation.id);
+        this.activeByConversation.delete(actualConversation);
+        this.providerEventGates.delete(operation.id);
+        this.idempotencyByOperation.delete(operation.id);
+        throw error;
+      }
+      this.emit({ type: "operation", action: "started", operation: cloneOperation(operation) });
+      void this.settle(operation, begun);
+      return operation;
+    } catch (error) {
+      if (!(error instanceof RunCoordinatorError && error.statusCode === 409)) {
+        await this.providers.cancelRun(begun.providerId, begun.conversationId, begun.runId).catch(() => undefined);
+      }
+      throw error;
+    }
+  }
+
+  private async steerNew(
+    operation: RunOperation,
+    command: SteerRunCommand,
+    requestFingerprint: string,
+  ): Promise<RunOperation> {
+    if (operation.status !== "running") {
+      throw new RunCoordinatorError(409, "실행 중인 작업만 지금 방향을 수정할 수 있습니다.");
+    }
+    const requestedAt = new Date(this.now()).toISOString();
+    await this.providers.steerRun(
+      operation.providerId,
+      operation.conversationId,
+      operation.runId,
+      command.input,
+    );
+    const acceptedAt = new Date(this.now()).toISOString();
+    const record: RunSteerRecord = {
+      requestId: command.requestId,
+      requestFingerprint,
+      prompt: command.prompt,
+      attachmentCount: command.input.imagePaths?.length ?? 0,
+      requestedAt,
+      acceptedAt,
+    };
+    operation.steers = [...(operation.steers ?? []), record];
+    this.stateStore?.saveOperation(operation, this.idempotencyForOperation(operation.id));
+    const updated = cloneOperation(operation);
+    this.emit({ type: "operation", action: "steered", operation: updated });
+    return updated;
+  }
+
+  private reserveConversation(key: string): void {
+    if (this.activeByConversation.has(key) || this.pendingConversations.has(key)) {
+      throw new RunCoordinatorError(409, "이 대화에는 이미 실행 중인 작업이 있습니다.");
+    }
+    this.pendingConversations.add(key);
+  }
+
+  private resumeInput(command: StartRunCommand): { input: ProviderRunInput; accountId?: string } {
+    const conversationId = command.input.conversationId;
+    if (!conversationId || command.providerId === "codex") {
+      return { input: command.input, accountId: command.accountId };
+    }
+    const matching = [...this.operations.values()].filter((operation) => operation.providerId === command.providerId
+      && operation.conversationId === conversationId);
+    if (matching.length === 0) {
+      throw new RunCoordinatorError(409, "이어갈 API Provider 대화를 Companion journal에서 찾을 수 없습니다.");
+    }
+    if (matching.some((operation) => operation.cwd !== command.input.cwd)) {
+      throw new RunCoordinatorError(409, "API Provider 대화는 처음 시작한 프로젝트 밖에서 이어갈 수 없습니다.");
+    }
+    if (matching.some((operation) => operation.status === "unknown" && !operation.acknowledgedAt)) {
+      throw new RunCoordinatorError(409, "최종 상태를 확인하지 않은 작업이 있어 이 대화를 이어갈 수 없습니다.");
+    }
+    const latest = matching
+      .filter((operation) => operation.status === "completed" && operation.resumeState)
+      .sort((left, right) => operationTime(right) - operationTime(left))[0];
+    if (!latest?.resumeState) {
+      throw new RunCoordinatorError(409, "이 대화에는 안전하게 복구할 Provider context가 없습니다. 새 대화를 시작해 주세요.");
+    }
+    const state = latest.resumeState;
+    if (state.providerId !== command.providerId) {
+      throw new RunCoordinatorError(409, "저장된 대화 Provider가 현재 선택과 다릅니다.");
+    }
+    if (command.input.model && command.input.model !== state.model) {
+      throw new RunCoordinatorError(409, "기존 API Provider 대화의 모델은 중간에 변경할 수 없습니다.");
+    }
+    if (command.accountId && latest.accountId && command.accountId !== latest.accountId) {
+      throw new RunCoordinatorError(409, "기존 API Provider 대화의 계정은 중간에 변경할 수 없습니다.");
+    }
+    if (command.input.routing && latest.routing
+        && JSON.stringify(command.input.routing) !== JSON.stringify(latest.routing)) {
+      throw new RunCoordinatorError(409, "기존 API Provider 대화의 upstream routing은 중간에 변경할 수 없습니다.");
+    }
+    if (command.input.routing && !latest.routing) {
+      throw new RunCoordinatorError(409, "기존 API Provider 대화에 새 upstream routing을 중간에 추가할 수 없습니다.");
+    }
+    return {
+      input: {
+        ...command.input,
+        model: state.model,
+        ...(latest.routing ? { routing: structuredClone(latest.routing) } : {}),
+        resumeState: structuredClone(state),
+      },
+      accountId: command.accountId ?? latest.accountId,
+    };
+  }
+
+  private async settle(operation: RunOperation, begun: ProviderRun): Promise<void> {
+    try {
+      const completed = await begun.completion;
+      if (this.closed) return;
+      const completedAt = new Date(this.now()).toISOString();
+      const accountedResult = operation.runPolicy && this.policyGuard
+        ? this.policyGuard.accountResult(operation.runPolicy, completed.result)
+        : completed.result;
+      const finalizingOperation = cloneOperation({
+        ...operation,
+        status: completed.status,
+        completedAt,
+      });
+      const finalizedResult = this.finalizeResult
+        ? await this.finalizeResult(finalizingOperation, accountedResult)
+        : accountedResult;
+      if (this.closed) return;
+      operation.status = completed.status;
+      operation.completedAt = completedAt;
+      operation.result = finalizedResult;
+      if (completed.status === "failed") operation.error = providerFailureMessage(completed.result);
+      else delete operation.error;
+      if (completed.status === "completed" && completed.resumeState) {
+        if (completed.resumeState.providerId !== operation.providerId) {
+          throw new Error("Provider resume state does not belong to the completed operation");
+        }
+        if (operation.model && completed.resumeState.model !== operation.model) {
+          throw new Error("Provider resume state model does not match the completed operation");
+        }
+        operation.model = completed.resumeState.model;
+        operation.resumeState = structuredClone(completed.resumeState);
+      }
+      this.stateStore?.saveOperation(operation, this.idempotencyForOperation(operation.id));
+      if (completed.status === "completed") this.retirePreviousResumeStates(operation);
+      this.emit({
+        type: "operation",
+        action: completed.status === "failed" ? "failed" : "completed",
+        operation: cloneOperation(operation),
+      });
+    } catch (error) {
+      if (this.closed) return;
+      operation.status = "failed";
+      operation.completedAt = new Date(this.now()).toISOString();
+      delete operation.resumeState;
+      operation.error = error instanceof Error ? error.message : String(error);
+      try {
+        this.stateStore?.saveOperation(operation, this.idempotencyForOperation(operation.id));
+      } catch (journalError) {
+        operation.error = `작업 상태와 event journal을 저장하지 못했습니다: ${safeError(journalError)}`;
+      }
+      this.emit({ type: "operation", action: "failed", operation: cloneOperation(operation) });
+    } finally {
+      const key = conversationKey(operation.providerId, operation.conversationId);
+      if (this.activeByConversation.get(key) === operation.id) this.activeByConversation.delete(key);
+      this.providerEventGates.delete(operation.id);
+    }
+  }
+
+  private retirePreviousResumeStates(current: RunOperation): void {
+    for (const operation of this.operations.values()) {
+      if (operation.id === current.id || operation.providerId !== current.providerId
+          || operation.conversationId !== current.conversationId || !operation.resumeState) continue;
+      const previous = operation.resumeState;
+      delete operation.resumeState;
+      try {
+        this.stateStore?.saveOperation(operation, this.idempotencyForOperation(operation.id));
+      } catch {
+        operation.resumeState = previous;
+      }
+    }
+  }
+
+  private forwardProviderEvent(event: ProviderEvent): void {
+    if (!event.conversationId) return;
+    const key = conversationKey(event.providerId, event.conversationId);
+    const operationId = this.activeByConversation.get(key);
+    const operation = operationId ? this.operations.get(operationId) : undefined;
+    if (!operationId || !operation) return;
+    const gate = this.providerEventGates.get(operationId);
+    if (!gate?.accept(event)) return;
+    this.emit({ type: "provider", operationId, cwd: operation.cwd, event });
+  }
+
+  private emit(event: RunCoordinatorEvent): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        process.stderr.write(`[codex-run-coordinator] Listener failed: ${String(error)}\n`);
+      }
+    }
+  }
+
+  private cleanup(): void {
+    const cutoff = this.now() - this.retentionMs;
+    for (const [id, operation] of this.operations) {
+      if (operation.status !== "running" && Date.parse(operation.completedAt ?? operation.startedAt) < cutoff) {
+        this.removeOperation(id);
+      }
+    }
+    while (this.operations.size > this.maxOperations) {
+      const removable = [...this.operations.entries()].find(([, item]) => item.status !== "running");
+      if (!removable) break;
+      this.removeOperation(removable[0]);
+    }
+  }
+
+  private removeOperation(operationId: string, persist = true): void {
+    this.operations.delete(operationId);
+    this.providerEventGates.delete(operationId);
+    this.idempotencyByOperation.delete(operationId);
+    if (persist) this.stateStore?.deleteOperation(operationId);
+    for (const [key, entry] of this.idempotency) {
+      if (entry.operationId === operationId) this.idempotency.delete(key);
+    }
+    for (const [key, entry] of this.steerIdempotency) {
+      if (entry.operationId === operationId) this.steerIdempotency.delete(key);
+    }
+  }
+
+  private idempotencyForOperation(operationId: string): RunIdempotencyRecord | undefined {
+    const entry = this.idempotencyByOperation.get(operationId);
+    return entry ? { ...entry } : undefined;
+  }
+}
+
+function conversationKey(providerId: string, conversationId: string): string {
+  return JSON.stringify([providerId, conversationId]);
+}
+
+function fingerprintCommand(command: StartRunCommand): string {
+  return createHash("sha256")
+    .update(JSON.stringify({
+      providerId: command.providerId,
+      accountId: command.accountId ?? null,
+      prompt: command.prompt,
+      input: command.input,
+      fork: command.fork ?? null,
+    }))
+    .digest("hex");
+}
+
+function assertSteerCommand(command: SteerRunCommand): void {
+  if (!command.requestId || command.requestId.length > 200 || /[\u0000-\u001f\u007f]/.test(command.requestId)) {
+    throw new RunCoordinatorError(400, "방향 수정 requestId가 올바르지 않습니다.");
+  }
+  if (!command.prompt.trim() || command.prompt.length > MAX_STEER_PROMPT_LENGTH
+      || command.input.prompt.length > MAX_STEER_PROMPT_LENGTH + 50_000) {
+    throw new RunCoordinatorError(400, "방향 수정 요청이 비어 있거나 크기 제한을 초과했습니다.");
+  }
+  if (command.input.imagePaths && command.input.imagePaths.length > 4) {
+    throw new RunCoordinatorError(400, "방향 수정에는 첨부를 최대 4개까지 보낼 수 있습니다.");
+  }
+}
+
+function steerKey(operationId: string, requestId: string): string {
+  return JSON.stringify([operationId, requestId]);
+}
+
+function steerFingerprint(input: ProviderSteerInput): string {
+  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
+}
+
+function cloneOperation(operation: RunOperation): RunOperation {
+  return structuredClone(operation);
+}
+
+function operationTime(operation: RunOperation): number {
+  return Date.parse(operation.completedAt ?? operation.startedAt);
+}
+
+function restoreMetadata(
+  operation: RunOperation,
+  previous: Pick<RunOperation, "goalName" | "pinnedAt" | "archivedAt">,
+): void {
+  for (const key of ["goalName", "pinnedAt", "archivedAt"] as const) {
+    if (previous[key] === undefined) delete operation[key];
+    else operation[key] = previous[key];
+  }
+}
+
+function safeError(error: unknown): string {
+  return error instanceof Error && error.message
+    ? error.message.slice(0, 500)
+    : "알 수 없는 저장 오류";
+}
+
+function providerFailureMessage(result: Record<string, unknown>): string {
+  const error = result.error;
+  const message = typeof error === "string"
+    ? error
+    : typeof error === "object" && error !== null && !Array.isArray(error)
+      && typeof (error as Record<string, unknown>).message === "string"
+      ? (error as Record<string, unknown>).message as string
+      : "Provider 실행이 실패했습니다.";
+  const normalized = message.replace(/[\r\n]+/g, " ").trim();
+  return (normalized || "Provider 실행이 실패했습니다.").slice(0, 500);
+}

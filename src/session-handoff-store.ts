@@ -2,8 +2,9 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;
 const DEFAULT_LIFETIME_MS = 7 * 24 * 60 * 60_000;
+const MAX_HANDOFFS = 50;
 
 export interface SessionHandoff {
   id: string;
@@ -16,9 +17,16 @@ export interface SessionHandoff {
 }
 
 interface StoredHandoffState {
-  version: number;
+  version: 2;
+  handoffs: SessionHandoff[];
+}
+
+interface LegacyStoredHandoffState {
+  version: 1;
   handoff: SessionHandoff | null;
 }
+
+type StateWriter = (stateFile: string, state: StoredHandoffState) => Promise<void>;
 
 export interface CreateSessionHandoff {
   workspace: string;
@@ -29,60 +37,110 @@ export interface CreateSessionHandoff {
 
 export class SessionHandoffStore {
   private state: StoredHandoffState;
+  private mutationTail: Promise<void> = Promise.resolve();
 
   private constructor(
     readonly stateFile: string,
     state: StoredHandoffState,
     private readonly now: () => number,
     private readonly lifetimeMs: number,
+    private readonly writeState: StateWriter,
   ) {
     this.state = state;
   }
 
   static async create(
     stateFile: string,
-    options: { now?: () => number; lifetimeMs?: number } = {},
+    options: { now?: () => number; lifetimeMs?: number; writeState?: StateWriter } = {},
   ): Promise<SessionHandoffStore> {
-    const state = await readState(stateFile) ?? { version: STATE_VERSION, handoff: null };
+    const state = await readState(stateFile) ?? { version: STATE_VERSION, handoffs: [] };
     const store = new SessionHandoffStore(
       stateFile,
       state,
       options.now ?? Date.now,
       options.lifetimeMs ?? DEFAULT_LIFETIME_MS,
+      options.writeState ?? writeStateFile,
     );
-    await store.persist();
+    await store.persist(state);
     return store;
   }
 
-  current(): SessionHandoff | null {
-    const handoff = this.state.handoff;
-    if (!handoff || Date.parse(handoff.expiresAt) <= this.now()) return null;
-    return structuredClone(handoff);
+  current(filter: { workspace?: string; threadId?: string } = {}): SessionHandoff | null {
+    return this.list(filter)[0] ?? null;
+  }
+
+  list(filter: { workspace?: string; threadId?: string } = {}): SessionHandoff[] {
+    const now = this.now();
+    return this.state.handoffs
+      .filter((handoff) => Date.parse(handoff.expiresAt) > now)
+      .filter((handoff) => !filter.workspace || handoff.workspace === filter.workspace)
+      .filter((handoff) => !filter.threadId || handoff.threadId === filter.threadId)
+      .sort((left, right) => Date.parse(right.releasedAt) - Date.parse(left.releasedAt))
+      .map((handoff) => structuredClone(handoff));
   }
 
   async release(input: CreateSessionHandoff): Promise<SessionHandoff> {
-    const releasedAt = new Date(this.now()).toISOString();
-    const handoff: SessionHandoff = {
-      id: randomUUID(),
-      workspace: input.workspace,
-      threadId: input.threadId,
-      ...(input.operationId ? { operationId: input.operationId } : {}),
-      releasedBy: { ...input.releasedBy },
-      releasedAt,
-      expiresAt: new Date(this.now() + this.lifetimeMs).toISOString(),
-    };
-    this.state.handoff = handoff;
-    await this.persist();
-    return structuredClone(handoff);
+    return this.enqueueMutation(async () => {
+      const now = this.now();
+      const releasedAt = new Date(now).toISOString();
+      const handoff: SessionHandoff = {
+        id: randomUUID(),
+        workspace: input.workspace,
+        threadId: input.threadId,
+        ...(input.operationId ? { operationId: input.operationId } : {}),
+        releasedBy: { ...input.releasedBy },
+        releasedAt,
+        expiresAt: new Date(now + this.lifetimeMs).toISOString(),
+      };
+      const nextState: StoredHandoffState = {
+        version: STATE_VERSION,
+        handoffs: [
+          handoff,
+          ...this.state.handoffs
+            .filter((item) => Date.parse(item.expiresAt) > now)
+            .filter((item) => item.workspace !== handoff.workspace || item.threadId !== handoff.threadId),
+        ].slice(0, MAX_HANDOFFS),
+      };
+      await this.persist(nextState);
+      this.state = nextState;
+      return structuredClone(handoff);
+    });
   }
 
-  private async persist(): Promise<void> {
-    const directory = dirname(this.stateFile);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    const temporary = `${this.stateFile}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(this.state, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-    await rename(temporary, this.stateFile);
+  async claim(handoffId: string): Promise<SessionHandoff | null> {
+    return this.enqueueMutation(async () => {
+      const now = this.now();
+      const handoff = this.state.handoffs.find(
+        (item) => item.id === handoffId && Date.parse(item.expiresAt) > now,
+      ) ?? null;
+      if (!handoff) return null;
+      const nextState: StoredHandoffState = {
+        version: STATE_VERSION,
+        handoffs: this.state.handoffs.filter((item) => item.id !== handoffId),
+      };
+      await this.persist(nextState);
+      this.state = nextState;
+      return structuredClone(handoff);
+    });
   }
+
+  private enqueueMutation<T>(mutation: () => Promise<T>): Promise<T> {
+    const result = this.mutationTail.then(mutation);
+    this.mutationTail = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private async persist(state: StoredHandoffState): Promise<void> {
+    await this.writeState(this.stateFile, structuredClone(state));
+  }
+}
+
+async function writeStateFile(stateFile: string, state: StoredHandoffState): Promise<void> {
+  const directory = dirname(stateFile);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const temporary = `${stateFile}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+  await rename(temporary, stateFile);
 }
 
 async function readState(path: string): Promise<StoredHandoffState | undefined> {
@@ -99,14 +157,29 @@ async function readState(path: string): Promise<StoredHandoffState | undefined> 
   } catch {
     throw new Error(`Session handoff state is not valid JSON: ${path}`);
   }
-  if (!isStoredState(value)) throw new Error(`Session handoff state has an unsupported format: ${path}`);
-  return value;
+  if (isStoredState(value)) return value;
+  if (isLegacyStoredState(value)) {
+    return {
+      version: STATE_VERSION,
+      handoffs: value.handoff ? [value.handoff] : [],
+    };
+  }
+  throw new Error(`Session handoff state has an unsupported format: ${path}`);
 }
 
 function isStoredState(value: unknown): value is StoredHandoffState {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
-  return record.version === STATE_VERSION && (record.handoff === null || isHandoff(record.handoff));
+  return record.version === STATE_VERSION
+    && Array.isArray(record.handoffs)
+    && record.handoffs.length <= MAX_HANDOFFS
+    && record.handoffs.every(isHandoff);
+}
+
+function isLegacyStoredState(value: unknown): value is LegacyStoredHandoffState {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return record.version === 1 && (record.handoff === null || isHandoff(record.handoff));
 }
 
 function isHandoff(value: unknown): value is SessionHandoff {

@@ -1,0 +1,132 @@
+name: OpenAI protected smoke
+
+on:
+  workflow_call:
+    inputs:
+      model:
+        required: true
+        type: string
+      input_usd_per_mtok:
+        required: true
+        type: string
+      output_usd_per_mtok:
+        required: true
+        type: string
+      project_scope:
+        required: true
+        type: string
+      coding_confirmation:
+        required: false
+        default: ""
+        type: string
+      execution_confirmation:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Exact allowlisted OpenAI model ID
+        required: true
+        type: string
+      input_usd_per_mtok:
+        description: Operator-reviewed input price in USD per million tokens
+        required: true
+        type: string
+      output_usd_per_mtok:
+        description: Operator-reviewed output price in USD per million tokens
+        required: true
+        type: string
+      project_scope:
+        description: Optional protected synthetic project grade
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - read
+          - coding
+      coding_confirmation:
+        description: For coding only, enter APPROVE_SYNTHETIC_CODING_EVAL
+        required: false
+        type: string
+      execution_confirmation:
+        description: Enter RUN_BOUNDED_PROVIDER_SMOKE
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openai-protected-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    environment: provider-smoke
+    timeout-minutes: 5
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_SMOKE_MODELS: ${{ vars.OPENAI_SMOKE_MODELS }}
+      OPENAI_SMOKE_MODEL: ${{ inputs.model }}
+      OPENAI_SMOKE_MAX_USD: "0.02"
+      OPENAI_SMOKE_INPUT_USD_PER_MTOK: ${{ inputs.input_usd_per_mtok }}
+      OPENAI_SMOKE_OUTPUT_USD_PER_MTOK: ${{ inputs.output_usd_per_mtok }}
+      PROVIDER_SMOKE_ENVIRONMENT_READY: ${{ vars.PROVIDER_SMOKE_ENVIRONMENT_READY }}
+    steps:
+      - name: Verify protected execution gate
+        env:
+          PROVIDER_SMOKE_EXECUTION_CONFIRMATION: ${{ inputs.execution_confirmation }}
+        run: |
+          test "$PROVIDER_SMOKE_ENVIRONMENT_READY" = "PROTECTED_PROVIDER_SMOKE_V1"
+          test "$PROVIDER_SMOKE_EXECUTION_CONFIRMATION" = "RUN_BOUNDED_PROVIDER_SMOKE"
+
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install SDK without package lifecycle scripts
+        run: npm ci --ignore-scripts
+
+      - name: Run bounded synthetic smoke
+        env:
+          OPENAI_SMOKE_REPORT: ${{ runner.temp }}/openai-smoke-report.json
+        run: node scripts/openai-smoke.mjs
+
+      - name: Run protected synthetic project grade
+        if: inputs.project_scope != 'none'
+        env:
+          PROVIDER_PROJECT_EVAL_PROVIDER: openai
+          PROVIDER_PROJECT_EVAL_SCOPE: ${{ inputs.project_scope }}
+          PROVIDER_PROJECT_EVAL_MODEL: ${{ inputs.model }}
+          PROVIDER_PROJECT_EVAL_SMOKE_REPORT: ${{ runner.temp }}/openai-smoke-report.json
+          PROVIDER_PROJECT_EVAL_REPORT: ${{ runner.temp }}/openai-project-grade-report.json
+          PROVIDER_PROJECT_EVAL_MAX_USD: "0.05"
+          PROVIDER_PROJECT_EVAL_INPUT_USD_PER_MTOK: ${{ inputs.input_usd_per_mtok }}
+          PROVIDER_PROJECT_EVAL_OUTPUT_USD_PER_MTOK: ${{ inputs.output_usd_per_mtok }}
+          PROVIDER_PROJECT_EVAL_CODING_CONFIRMATION: ${{ inputs.coding_confirmation }}
+        run: node --import tsx scripts/provider-project-eval.ts
+
+      - name: Upload redacted grade report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: openai-smoke-${{ github.run_id }}
+          path: ${{ runner.temp }}/openai-smoke-report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload redacted project grade report
+        if: ${{ always() && inputs.project_scope != 'none' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: openai-project-grade-${{ github.run_id }}
+          path: ${{ runner.temp }}/openai-project-grade-report.json
+          if-no-files-found: warn
+          retention-days: 14

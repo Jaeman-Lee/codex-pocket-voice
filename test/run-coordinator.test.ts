@@ -1,0 +1,786 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  RunCoordinator,
+  RunCoordinatorError,
+  type RunCoordinatorEvent,
+  type RunOperation,
+  type RunProviderRegistry,
+} from "../src/run-coordinator.js";
+import type {
+  ProviderEvent,
+  ProviderRun,
+  ProviderRunCompletion,
+  ProviderRunInput,
+  ProviderSteerInput,
+} from "../src/providers/types.js";
+import { CostAndPolicyGuard, DEFAULT_RUN_POLICY_CONFIG } from "../src/run-policy.js";
+
+test("RunCoordinator owns lifecycle state and forwards only active provider events", async () => {
+  const providers = new FakeRunProviders();
+  const coordinator = new RunCoordinator(providers, { createId: () => "operation-1" });
+  const events: RunCoordinatorEvent[] = [];
+  coordinator.subscribe((event) => events.push(event));
+
+  const operation = await coordinator.start({
+    providerId: "fake",
+    accountId: "account-1",
+    prompt: "inspect",
+    input: { cwd: process.cwd(), prompt: "inspect" },
+  });
+  assert.equal(operation.id, "operation-1");
+  assert.equal(operation.status, "running");
+  assert.equal(events[0]?.type, "operation");
+
+  providers.emit({
+    providerId: "fake",
+    conversationId: "conversation-1",
+    runId: "run-1",
+    kind: "output.delta",
+    delta: "working",
+  });
+  providers.emit({
+    providerId: "fake",
+    conversationId: "another-conversation",
+    kind: "output.delta",
+    delta: "ignored",
+  });
+  assert.equal(events.filter((event) => event.type === "provider").length, 1);
+
+  providers.complete(0, { status: "completed", result: { finalResponse: "done" } });
+  await waitFor(() => coordinator.get(operation.id)?.status === "completed");
+  assert.equal(coordinator.get(operation.id)?.result?.finalResponse, "done");
+
+  providers.emit({
+    providerId: "fake",
+    conversationId: "conversation-1",
+    kind: "output.delta",
+    delta: "too late",
+  });
+  assert.equal(events.filter((event) => event.type === "provider").length, 1);
+  coordinator.close();
+});
+
+test("RunCoordinator deduplicates retried requests and rejects conflicting reuse", async () => {
+  const providers = new FakeRunProviders();
+  const coordinator = new RunCoordinator(providers, { createId: () => "operation-idempotent" });
+  const command = {
+    providerId: "fake",
+    accountId: "account-1",
+    prompt: "retry safely",
+    input: { cwd: process.cwd(), prompt: "retry safely" },
+    idempotencyKey: "client-1:queued-1",
+  };
+
+  const first = await coordinator.start(command);
+  const retry = await coordinator.start(command);
+  assert.equal(first.id, retry.id);
+  assert.equal(providers.starts.length, 1);
+
+  await assert.rejects(
+    coordinator.start({ ...command, prompt: "different payload" }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  assert.equal(providers.starts.length, 1);
+  coordinator.close();
+});
+
+test("RunCoordinator persists Provider fork provenance and binds it to idempotency", async () => {
+  const providers = new FakeRunProviders();
+  const saved: RunOperation[] = [];
+  const coordinator = new RunCoordinator(providers, {
+    createId: () => "operation-forked",
+    stateStore: {
+      load: () => ({ operations: [], idempotency: [] }),
+      saveOperation: (operation) => saved.push(structuredClone(operation)),
+      deleteOperation: () => undefined,
+      deleteOperations: () => undefined,
+    },
+  });
+  const fork = {
+    schema: 1 as const,
+    sourceOperationId: "source-operation",
+    sourceProviderId: "codex",
+    sourceModel: "gpt-source",
+    targetProviderId: "openai",
+    contextDigest: "b".repeat(64),
+    importedCharacters: 500,
+    transferredCharacters: 800,
+    estimatedInputTokens: 200,
+    truncated: false,
+    attachmentCount: 0,
+    previewedAt: "2026-08-24T10:00:00.000Z",
+    confirmedAt: "2026-08-24T10:01:00.000Z",
+  };
+  const command = {
+    providerId: "openai",
+    prompt: "continue independently",
+    input: { cwd: process.cwd(), prompt: "reviewed imported context" },
+    idempotencyKey: "client:fork-request",
+    fork,
+  };
+
+  const started = await coordinator.start(command);
+  assert.deepEqual(started.fork, fork);
+  assert.deepEqual(saved[0]?.fork, fork);
+  assert.equal((await coordinator.start(command)).id, started.id);
+  await assert.rejects(
+    coordinator.start({ ...command, fork: { ...fork, sourceOperationId: "different-source" } }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  assert.equal(providers.starts.length, 1);
+  coordinator.close();
+});
+
+test("RunCoordinator steers only the exact active run and durably deduplicates retries", async () => {
+  const providers = new FakeRunProviders();
+  const coordinator = new RunCoordinator(providers, { createId: () => "operation-steer" });
+  const events: RunCoordinatorEvent[] = [];
+  coordinator.subscribe((event) => events.push(event));
+  const started = await coordinator.start({
+    providerId: "fake",
+    prompt: "initial direction",
+    input: { cwd: process.cwd(), prompt: "initial direction" },
+  });
+  const command = {
+    requestId: "steer-request-1",
+    prompt: "focus on the mobile overflow",
+    input: { prompt: "focus on the mobile overflow", imagePaths: ["review.png"] },
+  };
+
+  const steered = await coordinator.steer(started.id, command);
+  assert.equal(providers.steers.length, 1);
+  assert.deepEqual(providers.steers[0], {
+    providerId: "fake",
+    conversationId: "conversation-1",
+    runId: "run-1",
+    input: command.input,
+  });
+  assert.equal(steered.steers?.[0]?.prompt, command.prompt);
+  assert.equal(steered.steers?.[0]?.attachmentCount, 1);
+  assert.match(steered.steers?.[0]?.requestFingerprint ?? "", /^[a-f0-9]{64}$/);
+  assert.equal(events.filter((event) => event.type === "operation" && event.action === "steered").length, 1);
+
+  const retried = await coordinator.steer(started.id, command);
+  assert.equal(retried.steers?.length, 1);
+  assert.equal(providers.steers.length, 1);
+  await assert.rejects(
+    coordinator.steer(started.id, { ...command, input: { prompt: "different direction" } }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+
+  providers.complete(0, { status: "completed", result: { finalResponse: "done" } });
+  await waitFor(() => coordinator.get(started.id)?.status === "completed");
+  await assert.rejects(
+    coordinator.steer(started.id, { requestId: "late-steer", prompt: "too late", input: { prompt: "too late" } }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  coordinator.close();
+});
+
+test("RunCoordinator rejects a second distinct steer while one is still pending", async () => {
+  const providers = new FakeRunProviders();
+  let releaseSteer: () => void = () => undefined;
+  providers.steerGate = new Promise<void>((resolve) => {
+    releaseSteer = resolve;
+  });
+  const coordinator = new RunCoordinator(providers, { createId: () => "operation-pending-steer" });
+  const started = await coordinator.start({
+    providerId: "fake",
+    prompt: "initial direction",
+    input: { cwd: process.cwd(), prompt: "initial direction" },
+  });
+
+  const first = coordinator.steer(started.id, {
+    requestId: "steer-pending-1",
+    prompt: "first direction change",
+    input: { prompt: "first direction change" },
+  });
+  await waitFor(() => providers.steers.length === 1);
+  await assert.rejects(
+    coordinator.steer(started.id, {
+      requestId: "steer-pending-2",
+      prompt: "second direction change",
+      input: { prompt: "second direction change" },
+    }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  assert.equal(providers.steers.length, 1);
+
+  releaseSteer();
+  await first;
+  coordinator.close();
+});
+
+test("RunCoordinator retries journal persistence without steering the Provider twice", async () => {
+  const providers = new FakeRunProviders();
+  let failSteerSave = true;
+  const coordinator = new RunCoordinator(providers, {
+    createId: () => "operation-steer-save-retry",
+    stateStore: {
+      load: () => ({ operations: [], idempotency: [] }),
+      saveOperation: (operation) => {
+        if (operation.steers?.length && failSteerSave) {
+          failSteerSave = false;
+          throw new Error("synthetic journal failure");
+        }
+      },
+      deleteOperation: () => undefined,
+      deleteOperations: () => undefined,
+    },
+  });
+  const events: RunCoordinatorEvent[] = [];
+  coordinator.subscribe((event) => events.push(event));
+  const started = await coordinator.start({
+    providerId: "fake",
+    prompt: "initial direction",
+    input: { cwd: process.cwd(), prompt: "initial direction" },
+  });
+  const command = {
+    requestId: "steer-save-retry-1",
+    prompt: "persist this accepted direction",
+    input: { prompt: "persist this accepted direction" },
+  };
+
+  await assert.rejects(coordinator.steer(started.id, command), /synthetic journal failure/);
+  assert.equal(providers.steers.length, 1);
+  assert.equal(coordinator.get(started.id)?.steers?.length, 1);
+
+  const recovered = await coordinator.steer(started.id, command);
+  assert.equal(recovered.steers?.length, 1);
+  assert.equal(providers.steers.length, 1);
+  assert.equal(events.filter((event) => event.type === "operation" && event.action === "steered").length, 1);
+  coordinator.close();
+});
+
+test("RunCoordinator injects server policy limits, preserves the snapshot, and accounts actual usage", async () => {
+  const providers = new FakeRunProviders();
+  const now = Date.parse("2026-08-24T02:00:00.000Z");
+  const guard = new CostAndPolicyGuard({
+    async models() {
+      return [{
+        id: "gpt-priced",
+        displayName: "Priced fixture",
+        description: "fixture",
+        isDefault: true,
+        defaultEffort: "",
+        efforts: [],
+        pricing: {
+          inputPerMillionUsd: 1,
+          outputPerMillionUsd: 2,
+          requestUsd: 0.001,
+          imageUsd: 0.002,
+        },
+      }];
+    },
+  }, { runPolicy: () => ({ ...DEFAULT_RUN_POLICY_CONFIG }) }, () => now);
+  const coordinator = new RunCoordinator(providers, {
+    createId: () => "operation-policy",
+    now: () => now,
+    policyGuard: guard,
+  });
+  const command = {
+    providerId: "openai",
+    accountId: "api-default",
+    prompt: "bounded request",
+    input: {
+      cwd: process.cwd(),
+      prompt: "bounded request",
+      model: "gpt-priced",
+      imagePaths: ["frame.png"],
+    },
+    idempotencyKey: "client:policy-run",
+  };
+  const started = await coordinator.start(command);
+  assert.deepEqual(providers.starts[0]?.input.limits, { maxOutputTokens: 4_096, maxTotalTokens: 50_000 });
+  assert.equal(started.runPolicy?.attachmentCount, 1);
+  assert.equal(started.runPolicy?.pricing.status, "known");
+  assert.equal((await coordinator.start(command)).id, started.id);
+  assert.equal(providers.starts.length, 1);
+
+  providers.complete(0, {
+    status: "completed",
+    result: { usage: { requestCount: 1, inputTokens: 100, outputTokens: 20 } },
+  });
+  await waitFor(() => coordinator.get(started.id)?.status === "completed");
+  assert.deepEqual(coordinator.get(started.id)?.result?.policyUsage, {
+    status: "catalog-estimate",
+    currency: "USD",
+    requestCount: 1,
+    costMicrosUsd: 3_140,
+  });
+  coordinator.close();
+});
+
+test("RunCoordinator blocks simultaneous work in one provider conversation", async () => {
+  const providers = new FakeRunProviders();
+  const coordinator = new RunCoordinator(providers);
+  await coordinator.start({
+    providerId: "fake",
+    prompt: "first",
+    input: { cwd: process.cwd(), prompt: "first" },
+  });
+
+  await assert.rejects(
+    coordinator.start({
+      providerId: "fake",
+      prompt: "second",
+      input: { conversationId: "conversation-1", cwd: process.cwd(), prompt: "second" },
+    }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  assert.equal(providers.starts.length, 1);
+  coordinator.close();
+});
+
+test("RunCoordinator resumes only journal-owned API conversations and transfers the latest state", async () => {
+  const providers = new FakeRunProviders();
+  const coordinator = new RunCoordinator(providers, {
+    createId: sequentialIds("operation-first", "operation-second"),
+  });
+  const first = await coordinator.start({
+    providerId: "fake",
+    accountId: "account-1",
+    prompt: "first",
+    input: { cwd: process.cwd(), prompt: "first", model: "model-a" },
+  });
+  providers.complete(0, {
+    status: "completed",
+    result: { finalResponse: "one" },
+    resumeState: resumeState("first-state"),
+  });
+  await waitFor(() => coordinator.get(first.id)?.status === "completed");
+
+  await assert.rejects(
+    coordinator.start({
+      providerId: "fake",
+      accountId: "account-1",
+      prompt: "wrong model",
+      input: { cwd: process.cwd(), prompt: "wrong model", model: "model-b", conversationId: first.conversationId },
+    }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  await assert.rejects(
+    coordinator.start({
+      providerId: "fake",
+      accountId: "account-2",
+      prompt: "wrong account",
+      input: { cwd: process.cwd(), prompt: "wrong account", conversationId: first.conversationId },
+    }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  await assert.rejects(
+    coordinator.start({
+      providerId: "fake",
+      accountId: "account-1",
+      prompt: "wrong workspace",
+      input: { cwd: "/another/workspace", prompt: "wrong workspace", conversationId: first.conversationId },
+    }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+
+  const second = await coordinator.start({
+    providerId: "fake",
+    accountId: "account-1",
+    prompt: "second",
+    input: { cwd: process.cwd(), prompt: "second", conversationId: first.conversationId },
+  });
+  assert.equal(second.conversationId, first.conversationId);
+  assert.equal(providers.starts[1]?.accountId, "account-1");
+  assert.equal(providers.starts[1]?.input.model, "model-a");
+  assert.deepEqual(providers.starts[1]?.input.resumeState, resumeState("first-state"));
+
+  providers.complete(1, {
+    status: "completed",
+    result: { finalResponse: "two" },
+    resumeState: resumeState("second-state"),
+  });
+  await waitFor(() => coordinator.get(second.id)?.status === "completed");
+  assert.equal(coordinator.get(first.id)?.resumeState, undefined);
+  assert.deepEqual(coordinator.get(second.id)?.resumeState, resumeState("second-state"));
+  coordinator.close();
+});
+
+test("RunCoordinator refuses API resume when the latest state is unresolved", async () => {
+  const restored = {
+    id: "operation-unknown",
+    providerId: "fake",
+    conversationId: "conversation-unknown",
+    runId: "run-unknown",
+    cwd: process.cwd(),
+    prompt: "uncertain",
+    accountId: "account-1",
+    model: "model-a",
+    status: "unknown" as const,
+    startedAt: "2026-08-24T00:00:00.000Z",
+    completedAt: "2026-08-24T00:00:01.000Z",
+    resumeState: resumeState("unresolved-state"),
+  };
+  const coordinator = new RunCoordinator(new FakeRunProviders(), {
+    stateStore: {
+      load: () => ({ operations: [restored], idempotency: [] }),
+      saveOperation: () => undefined,
+      deleteOperation: () => undefined,
+      deleteOperations: () => undefined,
+    },
+  });
+  await assert.rejects(
+    coordinator.start({
+      providerId: "fake",
+      accountId: "account-1",
+      prompt: "continue",
+      input: {
+        cwd: process.cwd(),
+        prompt: "continue",
+        conversationId: restored.conversationId,
+      },
+    }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  coordinator.close();
+});
+
+test("RunCoordinator converts provider stream failures into terminal failed operations", async () => {
+  const providers = new FakeRunProviders();
+  const coordinator = new RunCoordinator(providers, { createId: () => "operation-failed" });
+  const operation = await coordinator.start({
+    providerId: "fake",
+    prompt: "stream",
+    input: { cwd: process.cwd(), prompt: "stream" },
+  });
+
+  providers.fail(0, new Error("provider stream ended before completion"));
+  await waitFor(() => coordinator.get(operation.id)?.status === "failed");
+  assert.match(coordinator.get(operation.id)?.error ?? "", /stream ended/);
+  coordinator.close();
+});
+
+test("RunCoordinator never attributes stale, duplicate, or post-terminal provider events to a resumed run", async () => {
+  const providers = new FakeRunProviders();
+  const coordinator = new RunCoordinator(providers, {
+    createId: sequentialIds("operation-first-events", "operation-second-events"),
+  });
+  const forwarded: ProviderEvent[] = [];
+  coordinator.subscribe((event) => {
+    if (event.type === "provider") forwarded.push(event.event);
+  });
+  const first = await coordinator.start({
+    providerId: "fake",
+    accountId: "account-1",
+    prompt: "first",
+    input: { cwd: process.cwd(), prompt: "first", model: "model-a" },
+  });
+  providers.complete(0, {
+    status: "completed",
+    result: { finalResponse: "first" },
+    resumeState: resumeState("event-state"),
+  });
+  await waitFor(() => coordinator.get(first.id)?.status === "completed");
+  const second = await coordinator.start({
+    providerId: "fake",
+    accountId: "account-1",
+    prompt: "second",
+    input: { cwd: process.cwd(), prompt: "second", conversationId: first.conversationId },
+  });
+
+  providers.emit(providerDelta(first.conversationId, "run-1", 1, "late old run"));
+  providers.emit(providerDelta(second.conversationId, second.runId, 1, "current"));
+  providers.emit(providerDelta(second.conversationId, second.runId, 1, "duplicate"));
+  providers.emit(providerDelta(second.conversationId, second.runId, 3, "newest"));
+  providers.emit(providerDelta(second.conversationId, second.runId, 2, "out of order"));
+  providers.emit({
+    providerId: "fake",
+    conversationId: second.conversationId,
+    runId: second.runId,
+    eventId: `${second.runId}:4`,
+    sequence: 4,
+    kind: "run.completed",
+    status: "completed",
+  });
+  providers.emit(providerDelta(second.conversationId, second.runId, 5, "after terminal"));
+
+  assert.deepEqual(
+    forwarded.filter((event) => event.kind === "output.delta").map((event) => event.delta),
+    ["current", "newest"],
+  );
+  assert.equal(forwarded.filter((event) => event.kind === "run.completed").length, 1);
+  providers.complete(1, { status: "completed", result: { finalResponse: "second" } });
+  await waitFor(() => coordinator.get(second.id)?.status === "completed");
+  coordinator.close();
+});
+
+test("RunCoordinator exposes a safe error for failed ProviderRun completions", async () => {
+  const providers = new FakeRunProviders();
+  const coordinator = new RunCoordinator(providers, { createId: () => "operation-failed-result" });
+  const operation = await coordinator.start({
+    providerId: "fake",
+    prompt: "fail safely",
+    input: { cwd: process.cwd(), prompt: "fail safely" },
+  });
+  providers.complete(0, {
+    status: "failed",
+    result: { error: { message: "provider failed\nwithout raw transport details" } },
+  });
+  await waitFor(() => coordinator.get(operation.id)?.status === "failed");
+  assert.equal(coordinator.get(operation.id)?.error, "provider failed without raw transport details");
+  coordinator.close();
+});
+
+test("RunCoordinator cancels a provider run that escapes the allowed workspace", async () => {
+  const providers = new FakeRunProviders();
+  providers.cwd = "/outside/allowed/root";
+  const coordinator = new RunCoordinator(providers, {
+    assertWorkspace: () => {
+      throw new Error("workspace blocked");
+    },
+  });
+
+  await assert.rejects(
+    coordinator.start({
+      providerId: "fake",
+      prompt: "escape",
+      input: { cwd: process.cwd(), prompt: "escape" },
+    }),
+    /workspace blocked/,
+  );
+  assert.deepEqual(providers.cancellations, [["fake", "conversation-1", "run-1"]]);
+  assert.deepEqual(coordinator.list(), []);
+  coordinator.close();
+});
+
+test("RunCoordinator deletes only terminal workspace history and protects active or unknown work", async () => {
+  const providers = new FakeRunProviders();
+  const coordinator = new RunCoordinator(providers, { createId: () => "operation-delete" });
+  const running = await coordinator.start({
+    providerId: "fake",
+    prompt: "keep while active",
+    input: { cwd: process.cwd(), prompt: "keep while active" },
+  });
+  assert.throws(
+    () => coordinator.deleteWorkspaceHistory(process.cwd()),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  providers.complete(0, { status: "completed", result: { finalResponse: "done" } });
+  await waitFor(() => coordinator.get(running.id)?.status === "completed");
+  assert.deepEqual(coordinator.deleteWorkspaceHistory(process.cwd()), {
+    deletedOperationIds: [running.id],
+  });
+  assert.deepEqual(coordinator.list(), []);
+  coordinator.close();
+
+  const deleted: string[] = [];
+  const unknown = {
+    ...running,
+    id: "operation-unknown",
+    status: "unknown" as const,
+    completedAt: new Date().toISOString(),
+  };
+  const otherWorkspace = {
+    ...unknown,
+    id: "operation-other-workspace",
+    cwd: "/another/workspace",
+    status: "completed" as const,
+  };
+  const restoredCoordinator = new RunCoordinator(new FakeRunProviders(), {
+    stateStore: {
+      load: () => ({ operations: [unknown, otherWorkspace], idempotency: [] }),
+      saveOperation: () => undefined,
+      deleteOperation: (operationId) => deleted.push(operationId),
+      deleteOperations: (operationIds) => deleted.push(...operationIds),
+    },
+  });
+  assert.throws(
+    () => restoredCoordinator.deleteWorkspaceHistory(process.cwd()),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  restoredCoordinator.acknowledge(unknown.id);
+  assert.deepEqual(restoredCoordinator.deleteWorkspaceHistory(process.cwd()), {
+    deletedOperationIds: [unknown.id],
+  });
+  assert.deepEqual(deleted, [unknown.id]);
+  assert.deepEqual(restoredCoordinator.list().map((operation) => operation.id), [otherWorkspace.id]);
+  restoredCoordinator.close();
+});
+
+test("RunCoordinator validates and persists operation names, pins, and archives", async () => {
+  const providers = new FakeRunProviders();
+  const saved: Array<{ goalName?: string; pinnedAt?: string; archivedAt?: string }> = [];
+  const events: RunCoordinatorEvent[] = [];
+  let now = Date.parse("2026-08-24T03:00:00.000Z");
+  const coordinator = new RunCoordinator(providers, {
+    now: () => now,
+    createId: () => "operation-organized",
+    stateStore: {
+      load: () => ({ operations: [], idempotency: [] }),
+      saveOperation: (operation) => saved.push(structuredClone(operation)),
+      deleteOperation: () => undefined,
+      deleteOperations: () => undefined,
+    },
+  });
+  coordinator.subscribe((event) => events.push(event));
+  const running = await coordinator.start({
+    providerId: "fake",
+    prompt: "audit the project",
+    input: { cwd: process.cwd(), prompt: "audit the project" },
+  });
+
+  const named = coordinator.updateMetadata(running.id, { goalName: "  Release audit  ", pinned: true });
+  assert.equal(named.goalName, "Release audit");
+  assert.equal(named.pinnedAt, "2026-08-24T03:00:00.000Z");
+  assert.throws(
+    () => coordinator.updateMetadata(running.id, { goalName: "should roll back", archived: true }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 409,
+  );
+  assert.equal(coordinator.get(running.id)?.goalName, "Release audit");
+  assert.throws(
+    () => coordinator.updateMetadata(running.id, { goalName: "line one\nline two" }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 400,
+  );
+
+  providers.complete(0, { status: "completed", result: { finalResponse: "done" } });
+  await waitFor(() => coordinator.get(running.id)?.status === "completed");
+  now += 1_000;
+  const archived = coordinator.updateMetadata(running.id, { archived: true });
+  assert.equal(archived.archivedAt, "2026-08-24T03:00:01.000Z");
+  assert.equal(archived.pinnedAt, undefined);
+  now += 1_000;
+  const repinned = coordinator.updateMetadata(running.id, { pinned: true });
+  assert.equal(repinned.archivedAt, undefined);
+  assert.equal(repinned.pinnedAt, "2026-08-24T03:00:02.000Z");
+  assert.equal(saved.at(-1)?.goalName, "Release audit");
+  const lastEvent = events.at(-1);
+  assert.equal(lastEvent?.type, "operation");
+  assert.equal(lastEvent?.type === "operation" ? lastEvent.action : undefined, "metadata_updated");
+  coordinator.close();
+});
+
+test("RunCoordinator applies a changed retention policy to its in-memory snapshot", () => {
+  const removed: string[] = [];
+  const old = {
+    id: "operation-old",
+    providerId: "fake",
+    conversationId: "conversation-old",
+    runId: "run-old",
+    cwd: process.cwd(),
+    prompt: "old",
+    status: "completed" as const,
+    startedAt: "2026-08-20T00:00:00.000Z",
+    completedAt: "2026-08-20T00:01:00.000Z",
+  };
+  const coordinator = new RunCoordinator(new FakeRunProviders(), {
+    now: () => Date.parse("2026-08-24T05:00:00.000Z"),
+    retentionMs: 7 * 24 * 60 * 60_000,
+    stateStore: {
+      load: () => ({ operations: [old], idempotency: [] }),
+      saveOperation: () => undefined,
+      deleteOperation: (operationId) => removed.push(operationId),
+      deleteOperations: () => undefined,
+    },
+  });
+  assert.equal(coordinator.list().length, 1);
+  coordinator.updateRetentionPolicy({ retentionMs: 24 * 60 * 60_000, maxOperations: 50 });
+  assert.deepEqual(coordinator.list(), []);
+  assert.deepEqual(removed, [old.id]);
+  assert.throws(
+    () => coordinator.updateRetentionPolicy({ retentionMs: 0, maxOperations: 50 }),
+    (error: unknown) => error instanceof RunCoordinatorError && error.statusCode === 400,
+  );
+  coordinator.close();
+});
+
+class FakeRunProviders implements RunProviderRegistry {
+  readonly starts: Array<{ providerId: unknown; accountId: unknown; input: ProviderRunInput }> = [];
+  readonly cancellations: Array<[unknown, string, string]> = [];
+  readonly steers: Array<{
+    providerId: unknown;
+    conversationId: string;
+    runId: string;
+    input: ProviderSteerInput;
+  }> = [];
+  cwd = process.cwd();
+  steerGate?: Promise<void>;
+  private readonly listeners = new Set<(event: ProviderEvent) => void>();
+  private readonly deferred: Array<{
+    resolve(value: ProviderRunCompletion): void;
+    reject(error: Error): void;
+  }> = [];
+
+  async startRun(providerId: unknown, accountId: unknown, input: ProviderRunInput): Promise<ProviderRun> {
+    this.starts.push({ providerId, accountId, input });
+    const index = this.starts.length;
+    const completion = new Promise<ProviderRunCompletion>((resolve, reject) => {
+      this.deferred.push({ resolve, reject });
+    });
+    return {
+      providerId: String(providerId),
+      conversationId: input.conversationId ?? `conversation-${index}`,
+      runId: `run-${index}`,
+      cwd: this.cwd,
+      completion,
+    };
+  }
+
+  async cancelRun(providerId: unknown, conversationId: string, runId: string): Promise<void> {
+    this.cancellations.push([providerId, conversationId, runId]);
+  }
+
+  async steerRun(
+    providerId: unknown,
+    conversationId: string,
+    runId: string,
+    input: ProviderSteerInput,
+  ): Promise<void> {
+    this.steers.push({ providerId, conversationId, runId, input });
+    await this.steerGate;
+  }
+
+  subscribe(listener: (event: ProviderEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  emit(event: ProviderEvent): void {
+    for (const listener of this.listeners) listener(event);
+  }
+
+  complete(index: number, completion: ProviderRunCompletion): void {
+    this.deferred[index]?.resolve(completion);
+  }
+
+  fail(index: number, error: Error): void {
+    this.deferred[index]?.reject(error);
+  }
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error("condition was not met");
+}
+
+function resumeState(value: string) {
+  return {
+    version: 1 as const,
+    providerId: "fake",
+    model: "model-a",
+    data: { value },
+  };
+}
+
+function providerDelta(conversationId: string, runId: string, sequence: number, delta: string): ProviderEvent {
+  return {
+    providerId: "fake",
+    conversationId,
+    runId,
+    eventId: `${runId}:${sequence}`,
+    sequence,
+    kind: "output.delta",
+    delta,
+  };
+}
+
+function sequentialIds(...values: string[]): () => string {
+  return () => values.shift() ?? "unexpected-id";
+}

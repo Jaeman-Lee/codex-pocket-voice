@@ -1,10 +1,33 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { APP_VERSION } from "../src/version.js";
+import {
+  APP_VERSION,
+  GATEWAY_CAPABILITIES,
+  GATEWAY_PROTOCOL_MINIMUM,
+  GATEWAY_PROTOCOL_VERSION,
+} from "../src/version.js";
 
 test("application version has one package source of truth", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
   assert.equal(APP_VERSION, packageJson.version);
   assert.match(APP_VERSION, /^\d+\.\d+\.\d+$/);
+  assert.equal(GATEWAY_PROTOCOL_VERSION, 3);
+  assert.equal(GATEWAY_PROTOCOL_MINIMUM, 2);
+  assert.equal(GATEWAY_CAPABILITIES.providerRuntime, true);
+  assert.equal(GATEWAY_CAPABILITIES.eventReplay, true);
+  assert.equal(GATEWAY_CAPABILITIES.approvalBroker, true);
+  assert.equal(GATEWAY_CAPABILITIES.usageAccounting, true);
+  assert.equal(GATEWAY_CAPABILITIES.journalManagement, true);
+  assert.equal(GATEWAY_CAPABILITIES.pocketLinkTls, true);
+  assert.equal(GATEWAY_CAPABILITIES.pocketLinkMtls, true);
+  assert.equal(GATEWAY_CAPABILITIES.pocketLinkQr, true);
+  assert.equal(GATEWAY_CAPABILITIES.pocketLinkPinRotation, true);
+  assert.equal(GATEWAY_CAPABILITIES.pocketLinkIdentityRotation, true);
+  assert.equal(GATEWAY_CAPABILITIES.pocketLinkLanDiscovery, true);
+  assert.equal(GATEWAY_CAPABILITIES.pocketLinkOutboundRelay, true);
+  assert.equal(GATEWAY_CAPABILITIES.fleetSummary, true);
+  assert.equal(GATEWAY_CAPABILITIES.runSteering, true);
+  assert.equal(GATEWAY_CAPABILITIES.runForks, true);
+  assert.equal(GATEWAY_CAPABILITIES.diagnosticSupportBundle, true);
 });

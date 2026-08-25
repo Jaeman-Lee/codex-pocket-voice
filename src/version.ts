@@ -1,5 +1,5 @@
-export const APP_VERSION = "1.8.1";
-export const GATEWAY_PROTOCOL_VERSION = 2;
+export const APP_VERSION = "2.0.0";
+export const GATEWAY_PROTOCOL_VERSION = 3;
 export const GATEWAY_PROTOCOL_MINIMUM = 2;
 
 export const GATEWAY_CAPABILITIES = {
@@ -9,4 +9,21 @@ export const GATEWAY_CAPABILITIES = {
   providerRegistry: true,
   mediaPersistence: false,
   sessionHandoff: true,
+  providerRuntime: true,
+  eventReplay: true,
+  approvalBroker: true,
+  usageAccounting: true,
+  journalManagement: true,
+  pocketLinkTls: true,
+  pocketLinkMtls: true,
+  pocketLinkQr: true,
+  pocketLinkPinRotation: true,
+  pocketLinkIdentityRotation: true,
+  pocketLinkLanDiscovery: true,
+  pocketLinkOutboundRelay: true,
+  backgroundWorkNotifications: true,
+  fleetSummary: true,
+  runSteering: true,
+  runForks: true,
+  diagnosticSupportBundle: true,
 } as const;

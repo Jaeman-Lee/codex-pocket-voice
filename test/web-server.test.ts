@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
+import type { TLSSocket } from "node:tls";
 import test from "node:test";
 import type { Thread } from "../generated/app-server/v2/Thread";
 import type { ModelListResponse } from "../generated/app-server/v2/ModelListResponse";
@@ -12,6 +14,11 @@ import { MediaManager } from "../src/media-manager.js";
 import { ProjectManager } from "../src/project-manager.js";
 import { startWebServer, type WebCodexClient } from "../src/web-server.js";
 import { GatewayAuth } from "../src/gateway-auth.js";
+import { EventJournal } from "../src/event-journal.js";
+import { InMemoryApprovalBroker } from "../src/approval-broker.js";
+import { StaticProviderModelGradeSource } from "../src/providers/model-grades.js";
+import { loadPocketLinkTlsConfig, publicKeyPin } from "../src/pocket-link.js";
+import { createTestCertificate } from "./helpers/tls-certificate.js";
 
 const cwd = process.cwd();
 
@@ -21,15 +28,44 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const mediaDir = await mkdtemp(join(tmpdir(), "codex-pocket-media-test-"));
   const projectHome = await mkdtemp(join(tmpdir(), "codex-pocket-projects-test-"));
   const authHome = await mkdtemp(join(tmpdir(), "codex-pocket-auth-test-"));
+  const tlsHome = await mkdtemp(join(tmpdir(), "codex-pocket-tls-test-"));
+  const workspaceTransactionDirectory = join(authHome, "workspace-transactions");
+  const unsafeManifest = join(workspaceTransactionDirectory, "00000000-0000-4000-8000-000000000001.json");
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
   t.after(() => rm(projectHome, { recursive: true, force: true }));
   t.after(() => rm(authHome, { recursive: true, force: true }));
+  t.after(() => rm(tlsHome, { recursive: true, force: true }));
+  await mkdir(workspaceTransactionDirectory, { mode: 0o700 });
+  await writeFile(unsafeManifest, "not-json", { mode: 0o600, flag: "wx" });
+  const tlsFiles = await createTestCertificate(tlsHome, "127.0.0.1");
+  const clientFiles = await createTestCertificate(tlsHome, "pocket-client.test", "client");
+  const otherClientFiles = await createTestCertificate(tlsHome, "other-client.test", "other-client");
+  const clientIdentity = {
+    certificate: await readFile(clientFiles.certificateFile),
+    privateKey: await readFile(clientFiles.privateKeyFile),
+  };
+  const otherClientIdentity = {
+    certificate: await readFile(otherClientFiles.certificateFile),
+    privateKey: await readFile(otherClientFiles.privateKeyFile),
+  };
+  const pocketLink = await loadPocketLinkTlsConfig({
+    CODEX_POCKET_LINK_HOST: "127.0.0.1",
+    CODEX_POCKET_LINK_PORT: "8789",
+    CODEX_POCKET_LINK_ADVERTISE_HOST: "127.0.0.1",
+    CODEX_POCKET_LINK_CERT_FILE: tlsFiles.certificateFile,
+    CODEX_POCKET_LINK_KEY_FILE: tlsFiles.privateKeyFile,
+  });
+  assert.ok(pocketLink);
   const projects = await ProjectManager.fromEnvironment(paths, projectHome);
   const auth = await GatewayAuth.create({
     stateFile: join(authHome, "auth.json"),
     pairingCode: "12345678",
     deviceKind: "linux",
     deviceName: "Test PC",
+  });
+  let nextApprovalId = 0;
+  const approvals = new InMemoryApprovalBroker({
+    createId: () => nextApprovalId++ === 0 ? "approval-web" : `approval-web-${nextApprovalId}`,
   });
   const running = await startWebServer({
     client: fake,
@@ -38,15 +74,157 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
     media: new MediaManager({ rootDir: mediaDir }),
     projects,
     auth,
+    approvals,
+    modelGrades: new StaticProviderModelGradeSource([]),
+    pocketLink: { ...pocketLink, port: 0 },
+    workspaceTransactionDirectory,
     port: 0,
   });
   t.after(() => running.close());
   const base = `http://127.0.0.1:${running.port}`;
+  assert.equal(running.pocketLink?.publicKeyPin, pocketLink.publicKeyPin);
+  const missingDeviceProof = await secureJson(running.pocketLink!.port, `127.0.0.1:${running.port}`);
+  assert.equal(missingDeviceProof.status, 401);
+  assert.equal(missingDeviceProof.body.code, "TLS_DEVICE_PROOF_REQUIRED");
+  const secureStatus = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    clientIdentity,
+  );
+  assert.equal(secureStatus.status, 200);
+  assert.equal(secureStatus.body.appVersion, "2.0.0");
+  assert.equal(secureStatus.peerPin, running.pocketLink?.publicKeyPin);
+  const blockedDirectHost = await secureJson(running.pocketLink!.port, "example.test", clientIdentity);
+  assert.equal(blockedDirectHost.status, 400);
+  const tlsPaired = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    clientIdentity,
+    {
+      path: "/api/pairing/claim",
+      method: "POST",
+      headers: { Origin: "http://localhost", "Content-Type": "application/json" },
+      body: JSON.stringify({ code: "12345678", label: "Pocket test app" }),
+    },
+  );
+  assert.equal(tlsPaired.status, 201);
+  assert.equal(tlsPaired.body.client.tlsBound, true);
+  const tlsHealth = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    clientIdentity,
+    { path: "/api/health", headers: { Authorization: `Bearer ${tlsPaired.body.token}` } },
+  );
+  assert.equal(tlsHealth.status, 200);
+  assert.equal(tlsHealth.body.client.tlsBound, true);
+  const wrongTlsIdentity = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    otherClientIdentity,
+    { path: "/api/health", headers: { Authorization: `Bearer ${tlsPaired.body.token}` } },
+  );
+  assert.equal(wrongTlsIdentity.status, 401);
+  assert.equal(wrongTlsIdentity.body.code, "TLS_DEVICE_MISMATCH");
+  const nonTlsRotationStart = await fetch(`${base}/api/pairing/tls-key-rotation/start`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${tlsPaired.body.token}`,
+      Origin: "http://localhost",
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+  assert.equal(nonTlsRotationStart.status, 401);
+  assert.equal(((await nonTlsRotationStart.json()) as { code?: string }).code, "TLS_DEVICE_PROOF_REQUIRED");
+  const rotationStart = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    clientIdentity,
+    {
+      path: "/api/pairing/tls-key-rotation/start",
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tlsPaired.body.token}`,
+        Origin: "http://localhost",
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    },
+  );
+  assert.equal(rotationStart.status, 201);
+  assert.match(rotationStart.body.rotationToken, /^[A-Za-z0-9_-]{43}$/);
+  const rotationPending = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    otherClientIdentity,
+    {
+      path: "/api/pairing/tls-key-rotation/status",
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tlsPaired.body.token}`,
+        Origin: "http://localhost",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ rotationToken: rotationStart.body.rotationToken }),
+    },
+  );
+  assert.equal(rotationPending.status, 200);
+  assert.equal(rotationPending.body.status, "pending");
+  const rotationCompleted = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    otherClientIdentity,
+    {
+      path: "/api/pairing/tls-key-rotation/complete",
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tlsPaired.body.token}`,
+        Origin: "http://localhost",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ rotationToken: rotationStart.body.rotationToken }),
+    },
+  );
+  assert.equal(rotationCompleted.status, 200);
+  assert.equal(rotationCompleted.body.previousKeyRetired, true);
+  const retiredTlsIdentity = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    clientIdentity,
+    { path: "/api/health", headers: { Authorization: `Bearer ${tlsPaired.body.token}` } },
+  );
+  assert.equal(retiredTlsIdentity.status, 401);
+  assert.equal(retiredTlsIdentity.body.code, "TLS_DEVICE_MISMATCH");
+  const rotatedTlsHealth = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    otherClientIdentity,
+    { path: "/api/health", headers: { Authorization: `Bearer ${tlsPaired.body.token}` } },
+  );
+  assert.equal(rotatedTlsHealth.status, 200);
+  const rotationFinalized = await secureJson(
+    running.pocketLink!.port,
+    `127.0.0.1:${running.port}`,
+    otherClientIdentity,
+    {
+      path: "/api/pairing/tls-key-rotation/finalize",
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tlsPaired.body.token}`,
+        Origin: "http://localhost",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ rotationToken: rotationStart.body.rotationToken }),
+    },
+  );
+  assert.equal(rotationFinalized.status, 200);
+  assert.equal(rotationFinalized.body.finalized, true);
 
   const page = await fetch(`${base}/`);
   assert.equal(page.status, 200);
   assert.match(await page.text(), /Codex Pocket/);
   assert.match(page.headers.get("content-security-policy") ?? "", /default-src 'self'/);
+  assert.match(page.headers.get("content-security-policy") ?? "", /connect-src 'self' http:\/\/127\.0\.0\.1:\*/);
   assert.match(page.headers.get("permissions-policy") ?? "", /microphone=\(self\)/);
 
   const unauthenticated = await fetch(`${base}/api/health`);
@@ -68,6 +246,97 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const health = await jsonFetch(`${base}/api/health`, { headers: authorized() });
   assert.equal(health.ok, true);
   assert.deepEqual(health.allowedWorkspaceRoots, [cwd]);
+  assert.equal(health.gateway.capabilities.diagnosticSupportBundle, true);
+
+  const disposablePairing = await jsonFetch(`${base}/api/pairing/claim`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: "http://localhost" },
+    body: JSON.stringify({ code: "12345678", label: "Disposable app" }),
+  });
+  const disposableHeaders = {
+    Authorization: `Bearer ${disposablePairing.token}`,
+    Origin: "http://localhost",
+    "Content-Type": "application/json",
+  };
+  const expandedRevocation = await fetch(`${base}/api/pairing/revoke`, {
+    method: "POST",
+    headers: disposableHeaders,
+    body: JSON.stringify({ unexpected: true }),
+  });
+  assert.equal(expandedRevocation.status, 400);
+  assert.equal((await jsonFetch(`${base}/api/health`, {
+    headers: { Authorization: `Bearer ${disposablePairing.token}` },
+  })).ok, true);
+  const revocation = await fetch(`${base}/api/pairing/revoke`, {
+    method: "POST",
+    headers: disposableHeaders,
+    body: "{}",
+  });
+  assert.equal(revocation.status, 200);
+  assert.deepEqual(await revocation.json(), { revoked: true });
+  const revokedHealth = await fetch(`${base}/api/health`, {
+    headers: { Authorization: `Bearer ${disposablePairing.token}` },
+  });
+  assert.equal(revokedHealth.status, 401);
+  assert.equal(((await revokedHealth.json()) as { code?: string }).code, "INVALID_TOKEN");
+  assert.equal((await jsonFetch(`${base}/api/health`, { headers: authorized() })).ok, true);
+
+  const unauthenticatedSupportBundle = await fetch(`${base}/api/diagnostics/support-bundle`);
+  assert.equal(unauthenticatedSupportBundle.status, 401);
+  const supportBundleResponse = await fetch(`${base}/api/diagnostics/support-bundle`, { headers: authorized() });
+  assert.equal(supportBundleResponse.status, 200);
+  assert.equal(supportBundleResponse.headers.get("cache-control"), "no-store");
+  assert.equal(supportBundleResponse.headers.get("x-content-type-options"), "nosniff");
+  assert.match(supportBundleResponse.headers.get("content-disposition") ?? "", /^attachment; filename="codex-pocket-support-/);
+  const supportBundleText = await supportBundleResponse.text();
+  const supportBundle = JSON.parse(supportBundleText);
+  assert.equal(supportBundle.schemaVersion, 1);
+  assert.equal(supportBundle.companion.appVersion, "2.0.0");
+  assert.equal(supportBundle.companion.protocol.capabilities.diagnosticSupportBundle, true);
+  assert.equal(supportBundle.privacy.mode, "allowlist-only");
+  assert.equal(supportBundle.system.workspaceCount, 1);
+  assert.doesNotMatch(supportBundleText, new RegExp(cwd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(supportBundleText, new RegExp(authHome.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(supportBundleText, new RegExp(paired.token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+  const startupRecovery = await jsonFetch(`${base}/api/workspace-changes/recovery`, { headers: authorized() });
+  assert.equal(startupRecovery.supported, true);
+  assert.equal(startupRecovery.status.blocked, true);
+  assert.equal(startupRecovery.status.pendingCountKnown, false);
+  const crossOriginRecovery = await fetch(`${base}/api/workspace-changes/recovery/retry`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "https://evil.example" }),
+    body: JSON.stringify({ confirm: "retry-safe-workspace-recovery" }),
+  });
+  assert.equal(crossOriginRecovery.status, 403);
+  const missingRecoveryConfirmation = await fetch(`${base}/api/workspace-changes/recovery/retry`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: "{}",
+  });
+  assert.equal(missingRecoveryConfirmation.status, 400);
+  const expandedRecoveryRequest = await fetch(`${base}/api/workspace-changes/recovery/retry`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ confirm: "retry-safe-workspace-recovery", discardJournal: true }),
+  });
+  assert.equal(expandedRecoveryRequest.status, 400);
+  const blockedRecovery = await jsonFetch(`${base}/api/workspace-changes/recovery/retry`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ confirm: "retry-safe-workspace-recovery" }),
+  });
+  assert.equal(blockedRecovery.status.blocked, true);
+  assert.equal(blockedRecovery.status.pendingCountKnown, false);
+  assert.doesNotMatch(blockedRecovery.status.error, new RegExp(authHome.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  await unlink(unsafeManifest);
+  const recovered = await jsonFetch(`${base}/api/workspace-changes/recovery/retry`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ confirm: "retry-safe-workspace-recovery" }),
+  });
+  assert.equal(recovered.status.blocked, false);
+  assert.deepEqual(recovered.status.pendingTransactions, []);
 
   const models = await jsonFetch(`${base}/api/models`, { headers: authorized() });
   assert.equal(models.models[0].id, "test-codex");
@@ -77,6 +346,73 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(providerData.providers[0].status, "connected");
   assert.equal(providerData.providers[0].installed, true);
   assert.equal(providerData.providers[0].canLogin, true);
+  assert.equal(providerData.providers[0].capabilities.streaming, true);
+  assert.equal(providerData.providers[0].capabilities.approvals, false);
+  assert.equal(providerData.providers[0].capabilities.steering, true);
+  const openAIProvider = providerData.providers.find((item: any) => item.id === "openai");
+  const openRouterProvider = providerData.providers.find((item: any) => item.id === "openrouter");
+  assert.equal(openAIProvider.capabilities.approvals, false);
+  assert.equal(openAIProvider.capabilities.workspaceWrite, false);
+  assert.equal(openAIProvider.capabilities.steering, false);
+  assert.equal(typeof openAIProvider.capabilities.commandExecution, "boolean");
+  assert.equal(openRouterProvider.capabilities.approvals, false);
+  assert.equal(openRouterProvider.capabilities.workspaceWrite, false);
+  const unauthenticatedRunPolicy = await fetch(`${base}/api/run-policy`);
+  assert.equal(unauthenticatedRunPolicy.status, 401);
+  const initialRunPolicy = await jsonFetch(`${base}/api/run-policy`, { headers: authorized() });
+  assert.equal(initialRunPolicy.policy.emergencyStop, false);
+  assert.equal(initialRunPolicy.policy.maxOutputTokens, 4_096);
+  assert.deepEqual(initialRunPolicy.limits.maxOutputTokens, { minimum: 64, maximum: 32_768 });
+  const unconfirmedRunPolicy = await fetch(`${base}/api/run-policy`, {
+    method: "PUT",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ ...initialRunPolicy.policy }),
+  });
+  assert.equal(unconfirmedRunPolicy.status, 400);
+  const expandedRunPolicy = await fetch(`${base}/api/run-policy`, {
+    method: "PUT",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ ...initialRunPolicy.policy, confirm: "apply-run-policy", hiddenOverride: true }),
+  });
+  assert.equal(expandedRunPolicy.status, 400);
+  const emergencyPolicy = {
+    emergencyStop: true,
+    maxOutputTokens: 1_024,
+    maxTotalTokens: 10_000,
+    maxRunCostMicrosUsd: 500_000,
+    dailyTokenWarning: 5_000,
+    monthlyCostSoftLimitMicrosUsd: 2_000_000,
+  };
+  const updatedRunPolicy = await jsonFetch(`${base}/api/run-policy`, {
+    method: "PUT",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ ...emergencyPolicy, confirm: "apply-run-policy" }),
+  });
+  assert.deepEqual(updatedRunPolicy.policy, emergencyPolicy);
+  assert.deepEqual(
+    (await jsonFetch(`${base}/api/run-policy`, { headers: authorized() })).policy,
+    emergencyPolicy,
+  );
+  const codexPolicyPreflight = await jsonFetch(`${base}/api/run-policy/preflight`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ provider: "codex", accountId: "cli-default", model: "test-codex" }),
+  });
+  assert.equal(codexPolicyPreflight.preflight.snapshot.privacyProfile, "codex-managed");
+  assert.equal(codexPolicyPreflight.preflight.snapshot.limits, undefined);
+  assert.equal(codexPolicyPreflight.preflight.confirmationToken, undefined);
+  const emergencyApiPreflight = await fetch(`${base}/api/run-policy/preflight`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ provider: "openai", accountId: "default", model: "gpt-test" }),
+  });
+  assert.equal(emergencyApiPreflight.status, 423);
+  assert.match((await emergencyApiPreflight.json() as any).error, /긴급 중단/);
+  await jsonFetch(`${base}/api/run-policy`, {
+    method: "PUT",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ ...emergencyPolicy, emergencyStop: false, confirm: "apply-run-policy" }),
+  });
   const providerTest = await jsonFetch(`${base}/api/providers/codex/test`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
@@ -90,6 +426,13 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
 
   const workspaceData = await jsonFetch(`${base}/api/workspaces`, { headers: authorized() });
   assert.equal(workspaceData.creationLocations[0].path, projectHome);
+  assert.equal(workspaceData.workspaces[0].identity.kind, "git");
+  assert.equal(
+    typeof workspaceData.workspaces[0].identity.branch === "string"
+      || (workspaceData.workspaces[0].identity.detached === true
+        && typeof workspaceData.workspaces[0].identity.head === "string"),
+    true,
+  );
   const created = await jsonFetch(`${base}/api/projects`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
@@ -97,11 +440,29 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   });
   assert.equal(created.project.name, "new-mobile-project");
   assert.equal(paths.isAllowed(created.project.path), true);
+  assert.equal(created.project.identity.kind, "git");
+  assert.equal(created.project.identity.branch, "main");
 
   const listed = await jsonFetch(`${base}/api/threads`, { headers: authorized() });
   assert.equal(listed.threads[0].id, "thread-web");
   const read = await jsonFetch(`${base}/api/threads/thread-web`, { headers: authorized() });
   assert.equal(read.thread.turns[0].items[0].text, "hello");
+
+  const nestedProjectRun = await fetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ prompt: "wrong nested project", cwd, threadId: "thread-nested" }),
+  });
+  assert.equal(nestedProjectRun.status, 409);
+  assert.match((await nestedProjectRun.json() as any).error, /selected workspace/);
+
+  const crossProjectRun = await fetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ prompt: "wrong project", cwd: created.project.path, threadId: "thread-web" }),
+  });
+  assert.equal(crossProjectRun.status, 409);
+  assert.match((await crossProjectRun.json() as any).error, /selected workspace/);
 
   const blocked = await fetch(`${base}/api/runs`, {
     method: "POST",
@@ -116,6 +477,17 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   });
   assert.equal(nativePreflight.status, 204);
   assert.equal(nativePreflight.headers.get("access-control-allow-origin"), "http://localhost");
+  assert.match(nativePreflight.headers.get("access-control-allow-headers") ?? "", /Last-Event-ID/);
+  assert.match(nativePreflight.headers.get("access-control-allow-methods") ?? "", /PATCH/);
+  assert.match(nativePreflight.headers.get("access-control-allow-methods") ?? "", /PUT/);
+  const fleetOrigin = "http://127.0.0.1:43210";
+  const fleetPreflight = await fetch(`${base}/api/fleet-summary`, {
+    method: "OPTIONS",
+    headers: { Origin: fleetOrigin, "Access-Control-Request-Method": "GET" },
+  });
+  assert.equal(fleetPreflight.status, 204);
+  assert.equal(fleetPreflight.headers.get("access-control-allow-origin"), fleetOrigin);
+  assert.equal(fleetPreflight.headers.get("access-control-allow-methods"), "GET, OPTIONS");
 
   const streamAbort = new AbortController();
   const stream = await fetch(`${base}/api/events`, { signal: streamAbort.signal, headers: authorized() });
@@ -124,6 +496,8 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const initial = await reader.read();
   assert.match(new TextDecoder().decode(initial.value), /connected/);
   streamAbort.abort();
+  const unauthenticatedNotificationStream = await fetch(`${base}/api/events/notifications`);
+  assert.equal(unauthenticatedNotificationStream.status, 401);
 
   const uploadedResponse = await fetch(`${base}/api/media?name=screen.png`, {
     method: "POST",
@@ -137,34 +511,296 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   await reloadedMedia.initialize();
   assert.equal(reloadedMedia.get(uploaded.media.id).name, "screen.png");
 
+  const runRequest = {
+    requestId: "queued-web-1",
+    prompt: "change a file",
+    cwd,
+    provider: "codex",
+    accountId: "cli-default",
+    model: "test-codex",
+    effort: "high",
+    attachments: [uploaded.media.id],
+  };
   const started = await jsonFetch(`${base}/api/runs`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
-    body: JSON.stringify({
-      prompt: "change a file",
-      cwd,
-      provider: "codex",
-      accountId: "cli-default",
-      model: "test-codex",
-      effort: "high",
-      attachments: [uploaded.media.id],
-    }),
+    body: JSON.stringify(runRequest),
   });
   assert.equal(started.operation.status, "running");
+  assert.equal(started.operation.providerId, "codex");
+  assert.equal(started.operation.runPolicy.providerId, "codex");
+  assert.equal(started.operation.runPolicy.model, "test-codex");
+  assert.equal(started.operation.runPolicy.privacyProfile, "codex-managed");
+  assert.equal(started.operation.runPolicy.limits, undefined);
+  assert.equal(started.operation.workspaceIdentity.kind, "git");
+  assert.equal(
+    typeof started.operation.workspaceIdentity.branch === "string"
+      || (started.operation.workspaceIdentity.detached === true
+        && typeof started.operation.workspaceIdentity.head === "string"),
+    true,
+  );
   assert.equal(fake.lastRun?.cwd, cwd);
   assert.equal(fake.lastRun?.networkAccess, false);
   assert.equal(fake.lastRun?.model, "test-codex");
   assert.equal(fake.lastRun?.effort, "high");
   assert.equal(fake.lastRun?.imagePaths?.length, 1);
+  const retried = await jsonFetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify(runRequest),
+  });
+  assert.equal(retried.operation.id, started.operation.id);
+  assert.equal(fake.runsStarted, 1);
+
+  const approvalHandle = approvals.requestApproval({
+    providerId: "codex",
+    conversationId: "thread-web",
+    runId: "turn-web",
+    toolCallId: "tool-call-web",
+    risk: "high_risk",
+    redactedSummary: "검증된 명령 한 건 실행",
+    redactedDetails: { command: "npm test", paths: ["package.json"] },
+  });
+  const approvalList = await jsonFetch(`${base}/api/approvals`, { headers: authorized() });
+  assert.equal(approvalList.approvals.length, 1);
+  assert.equal(approvalList.approvals[0].operationId, started.operation.id);
+  assert.equal(approvalList.approvals[0].requiresTouch, true);
+  const fleetSummary = await jsonFetch(`${base}/api/fleet-summary`, { headers: authorized() });
+  assert.deepEqual(fleetSummary, {
+    summary: {
+      schema: 1,
+      running: 0,
+      waitingForApproval: 1,
+      unknown: 0,
+      failed: 0,
+      retainedOperations: 1,
+      recoveryBlocked: false,
+    },
+  });
+  assert.doesNotMatch(JSON.stringify(fleetSummary), /change a file|thread-web|tool-call-web|workspace/);
+  assert.equal((await fetch(`${base}/api/fleet-summary`)).status, 401);
+  const crossLoopbackFleet = await fetch(`${base}/api/fleet-summary`, {
+    headers: authorized({ Origin: fleetOrigin }),
+  });
+  assert.equal(crossLoopbackFleet.status, 200);
+  assert.equal(crossLoopbackFleet.headers.get("access-control-allow-origin"), fleetOrigin);
+  const crossLoopbackWrite = await fetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: fleetOrigin }),
+    body: JSON.stringify({ prompt: "must remain blocked", cwd }),
+  });
+  assert.equal(crossLoopbackWrite.status, 403);
+  const crossOriginApproval = await fetch(`${base}/api/approvals/approval-web/decision`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "https://evil.example" }),
+    body: JSON.stringify({ decision: "approved" }),
+  });
+  assert.equal(crossOriginApproval.status, 403);
+  const feedbackOnApprove = await fetch(`${base}/api/approvals/approval-web/decision`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({
+      decision: "approved",
+      feedback: { lines: [{ path: "package.json", newLine: 1, code: "{}", comment: "승인에는 허용 안 됨" }] },
+    }),
+  });
+  assert.equal(feedbackOnApprove.status, 400);
+  assert.equal(approvals.get("approval-web")?.status, "pending");
+  const approvalDecision = await jsonFetch(`${base}/api/approvals/approval-web/decision`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ decision: "approved" }),
+  });
+  assert.equal(approvalDecision.resolution.source, "touch");
+  assert.equal((await approvalHandle.decision).decision, "approved");
+  assert.deepEqual((await jsonFetch(`${base}/api/approvals`, { headers: authorized() })).approvals, []);
+  const declinedHandle = approvals.requestApproval({
+    providerId: "codex",
+    conversationId: "thread-web",
+    runId: "turn-web",
+    toolCallId: "tool-call-declined",
+    risk: "change",
+    redactedSummary: "한 파일 변경",
+    redactedDetails: { paths: ["package.json"] },
+  });
+  const declinedDecision = await jsonFetch(`${base}/api/approvals/approval-web-2/decision`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({
+      decision: "declined",
+      source: "voice",
+      feedback: {
+        lines: [{
+          path: "package.json",
+          newLine: 2,
+          code: "\"scripts\": {},",
+          comment: "기존 검사 명령을 유지해 주세요.",
+        }],
+      },
+    }),
+  });
+  assert.equal(declinedDecision.resolution.decision, "declined");
+  assert.equal(declinedDecision.resolution.source, "touch");
+  assert.equal(declinedDecision.resolution.feedback.lines[0].path, "package.json");
+  assert.deepEqual(await declinedHandle.decision, declinedDecision.resolution);
+  const conflictingRetry = await fetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ ...runRequest, prompt: "different request" }),
+  });
+  assert.equal(conflictingRetry.status, 409);
+  assert.equal(fake.runsStarted, 1);
 
   const nativeHealth = await fetch(`${base}/api/health`, { headers: authorized({ Origin: "http://localhost" }) });
   assert.equal(nativeHealth.status, 200);
   assert.equal(nativeHealth.headers.get("access-control-allow-origin"), "http://localhost");
 
   const operationId = started.operation.id;
+  const crossOriginSteer = await fetch(`${base}/api/runs/${operationId}/steer`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "https://evil.example" }),
+    body: JSON.stringify({ requestId: "steer-web-1", prompt: "focus on mobile containment" }),
+  });
+  assert.equal(crossOriginSteer.status, 403);
+  const steerRequest = {
+    requestId: "steer-web-1",
+    prompt: "focus on mobile containment",
+    attachments: [uploaded.media.id],
+  };
+  const steered = await jsonFetch(`${base}/api/runs/${operationId}/steer`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify(steerRequest),
+  });
+  assert.equal(steered.operation.steers.length, 1);
+  assert.equal(steered.operation.steers[0].prompt, steerRequest.prompt);
+  assert.equal(steered.operation.steers[0].attachmentCount, 1);
+  assert.equal(steered.operation.steers[0].requestId, undefined);
+  assert.equal(steered.operation.steers[0].requestFingerprint, undefined);
+  assert.equal(fake.steers.length, 1);
+  assert.equal(fake.steers[0]?.threadId, "thread-web");
+  assert.equal(fake.steers[0]?.turnId, "turn-web");
+  assert.match(fake.steers[0]?.prompt ?? "", /^focus on mobile containment/);
+  assert.equal(fake.steers[0]?.imagePaths?.length, 1);
+  const retriedSteer = await jsonFetch(`${base}/api/runs/${operationId}/steer`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify(steerRequest),
+  });
+  assert.equal(retriedSteer.operation.steers.length, 1);
+  assert.equal(fake.steers.length, 1);
+  const conflictingSteer = await fetch(`${base}/api/runs/${operationId}/steer`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ ...steerRequest, prompt: "conflicting direction" }),
+  });
+  assert.equal(conflictingSteer.status, 409);
+  const crossOriginMetadata = await fetch(`${base}/api/runs/${operationId}/metadata`, {
+    method: "PATCH",
+    headers: authorized({ "Content-Type": "application/json", Origin: "https://evil.example" }),
+    body: JSON.stringify({ pinned: true }),
+  });
+  assert.equal(crossOriginMetadata.status, 403);
+  const organized = await jsonFetch(`${base}/api/runs/${operationId}/metadata`, {
+    method: "PATCH",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ goalName: "Mobile release audit", pinned: true }),
+  });
+  assert.equal(organized.operation.goalName, "Mobile release audit");
+  assert.equal(typeof organized.operation.pinnedAt, "string");
+  const activeArchive = await fetch(`${base}/api/runs/${operationId}/metadata`, {
+    method: "PATCH",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ archived: true }),
+  });
+  assert.equal(activeArchive.status, 409);
   const activeRuns = await jsonFetch(`${base}/api/runs?status=running`, { headers: authorized() });
   assert.equal(activeRuns.operations.length, 1);
   assert.equal(activeRuns.operations[0].id, operationId);
+  assert.equal(activeRuns.operations[0].accountId, "cli-default");
+  assert.equal(activeRuns.operations[0].model, "test-codex");
+  assert.equal(activeRuns.operations[0].effort, "high");
+  assert.equal(activeRuns.operations[0].networkAccess, false);
+  const journalPolicy = await jsonFetch(
+    `${base}/api/journal/policy?workspace=${encodeURIComponent(cwd)}`,
+    { headers: authorized() },
+  );
+  assert.equal(journalPolicy.policy.retentionMs, 7 * 24 * 60 * 60_000);
+  assert.equal(journalPolicy.limits.retentionMs.minimum, 24 * 60 * 60_000);
+  assert.equal(journalPolicy.summary.operationCount, 1);
+  const policyStreamAbort = new AbortController();
+  const policyStream = await fetch(`${base}/api/events`, {
+    headers: authorized(),
+    signal: policyStreamAbort.signal,
+  });
+  const policyReader = policyStream.body!.getReader();
+  await readUntil(policyReader, (text) => text.includes('"action":"replay_complete"'));
+  const crossOriginPolicy = await fetch(`${base}/api/journal/policy`, {
+    method: "PUT",
+    headers: authorized({ "Content-Type": "application/json", Origin: "https://evil.example" }),
+    body: JSON.stringify({
+      retentionMs: 24 * 60 * 60_000,
+      maxOperations: 50,
+      maxEvents: 200,
+      confirm: "apply-retention-policy",
+    }),
+  });
+  assert.equal(crossOriginPolicy.status, 403);
+  const missingPolicyConfirmation = await fetch(`${base}/api/journal/policy`, {
+    method: "PUT",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ retentionMs: 24 * 60 * 60_000, maxOperations: 50, maxEvents: 200 }),
+  });
+  assert.equal(missingPolicyConfirmation.status, 400);
+  const updatedPolicy = await jsonFetch(`${base}/api/journal/policy`, {
+    method: "PUT",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({
+      retentionMs: 24 * 60 * 60_000,
+      maxOperations: 50,
+      maxEvents: 200,
+      confirm: "apply-retention-policy",
+    }),
+  });
+  assert.equal(updatedPolicy.policy.retentionMs, 24 * 60 * 60_000);
+  assert.equal(updatedPolicy.policy.maxOperations, 50);
+  const policyEvent = await readUntil(policyReader, (text) => text.includes('"action":"policy_updated"'));
+  assert.match(policyEvent, /"maxEvents":200/);
+  policyStreamAbort.abort();
+  const journalExportResponse = await fetch(
+    `${base}/api/journal/export?workspace=${encodeURIComponent(cwd)}`,
+    { headers: authorized() },
+  );
+  assert.equal(journalExportResponse.status, 200);
+  assert.match(journalExportResponse.headers.get("content-disposition") ?? "", /attachment/);
+  assert.equal(journalExportResponse.headers.get("cache-control"), "no-store");
+  assert.equal(journalExportResponse.headers.get("x-content-type-options"), "nosniff");
+  const journalExport = await journalExportResponse.json() as any;
+  assert.equal(journalExport.workspace, cwd);
+  assert.equal(journalExport.operations[0].id, operationId);
+  assert.equal(journalExport.operations[0].goalName, "Mobile release audit");
+  assert.equal(journalExport.operations[0].pinnedAt, organized.operation.pinnedAt);
+  const activeDelete = await fetch(`${base}/api/journal/workspace`, {
+    method: "DELETE",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ workspace: cwd, confirm: "delete-companion-history" }),
+  });
+  assert.equal(activeDelete.status, 409);
+  const mismatchedHandoff = await fetch(`${base}/api/session/handoff`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ workspace: created.project.path, threadId: "thread-web" }),
+  });
+  assert.equal(mismatchedHandoff.status, 409);
+  assert.match((await mismatchedHandoff.json() as any).error, /selected workspace/);
+  const nestedHandoff = await fetch(`${base}/api/session/handoff`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ workspace: cwd, threadId: "thread-nested" }),
+  });
+  assert.equal(nestedHandoff.status, 409);
+  assert.match((await nestedHandoff.json() as any).error, /selected workspace/);
+  assert.deepEqual(fake.unsubscribeAttempts, []);
   const released = await jsonFetch(`${base}/api/session/handoff`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
@@ -173,11 +809,16 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(released.handoff.threadId, "thread-web");
   assert.equal(released.handoff.operationId, operationId);
   assert.equal(released.operation.status, "running");
+  assert.equal(released.threadUnsubscribeStatus, null);
   assert.equal(fake.interrupted, undefined);
   const availableHandoff = await jsonFetch(`${base}/api/session/handoff`, { headers: authorized() });
   assert.equal(availableHandoff.handoff.id, released.handoff.id);
   assert.equal(availableHandoff.operation.id, operationId);
-
+  const unrelatedHandoff = await jsonFetch(
+    `${base}/api/session/handoff?workspace=${encodeURIComponent(created.project.path)}`,
+    { headers: authorized() },
+  );
+  assert.equal(unrelatedHandoff.handoff, null);
   const interrupted = await jsonFetch(`${base}/api/runs/${operationId}/interrupt`, {
     method: "POST",
     headers: authorized({ "Content-Type": "application/json", Origin: base }),
@@ -186,16 +827,364 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   assert.equal(interrupted.interruptRequested, true);
   assert.deepEqual(fake.interrupted, ["thread-web", "turn-web"]);
 
-  fake.finish("interrupted");
+  const liveNotificationAbort = new AbortController();
+  const liveNotificationResponse = await fetch(`${base}/api/events/notifications`, {
+    headers: authorized(),
+    signal: liveNotificationAbort.signal,
+  });
+  assert.equal(liveNotificationResponse.status, 200);
+  const liveNotificationReader = liveNotificationResponse.body!.getReader();
+  const liveNotificationInitial = await readUntil(
+    liveNotificationReader,
+    (text) => text.includes('"action":"replay_complete"'),
+  );
+  assert.doesNotMatch(liveNotificationInitial, /"type":"work_notification"/);
+
+  fake.unsubscribeFailures = 1;
+  fake.finish("interrupted", true);
   await waitFor(async () => {
     const operation = await jsonFetch(`${base}/api/runs/${operationId}`, { headers: authorized() });
     return operation.operation.status === "interrupted";
   });
+  const artifactOperation = await jsonFetch(`${base}/api/runs/${operationId}`, { headers: authorized() });
+  assert.equal(artifactOperation.operation.result.artifacts.length, 1);
+  assert.equal(artifactOperation.operation.result.artifacts[0].kind, "log");
+  assert.match(artifactOperation.operation.result.artifacts[0].preview, /synthetic command output/);
+  assert.equal(artifactOperation.operation.result.commands[0].output, undefined);
+  const artifactId = artifactOperation.operation.result.artifacts[0].id;
+  const unauthenticatedArtifact = await fetch(`${base}/api/runs/${operationId}/artifacts/${artifactId}`);
+  assert.equal(unauthenticatedArtifact.status, 401);
+  const downloadedArtifact = await fetch(`${base}/api/runs/${operationId}/artifacts/${artifactId}`, {
+    headers: authorized(),
+  });
+  assert.equal(downloadedArtifact.status, 200);
+  assert.match(downloadedArtifact.headers.get("content-disposition") ?? "", /attachment/);
+  assert.equal(downloadedArtifact.headers.get("x-artifact-sha256"), artifactOperation.operation.result.artifacts[0].sha256);
+  assert.match(await downloadedArtifact.text(), /synthetic command output/);
+  await waitFor(async () => fake.unsubscribed.length === 1);
+  assert.deepEqual(fake.unsubscribed, ["thread-web"]);
+  assert.deepEqual(fake.unsubscribeAttempts, ["thread-web", "thread-web"]);
+  const liveNotification = await readUntil(
+    liveNotificationReader,
+    (text) => text.includes('"type":"work_notification"'),
+  );
+  liveNotificationAbort.abort();
+  assert.match(liveNotification, /"schema":1/);
+  assert.match(liveNotification, /"kind":"completed"/);
+  assert.match(liveNotification, new RegExp(`"operationId":"${operationId}"`));
+  assert.doesNotMatch(liveNotification, /change a file|Mobile release audit|package\.json|workspace|cwd|result/);
+  const claimed = await jsonFetch(`${base}/api/session/handoffs/${released.handoff.id}/claim`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: "{}",
+  });
+  assert.equal(claimed.claimed.id, released.handoff.id);
+  const clearedHandoff = await jsonFetch(
+    `${base}/api/session/handoff?workspace=${encodeURIComponent(cwd)}`,
+    { headers: authorized() },
+  );
+  assert.equal(clearedHandoff.handoff, null);
+
+  fake.unsubscribeFailures = 3;
+  const failedWriterRelease = await fetch(`${base}/api/session/handoff`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ workspace: cwd, threadId: "thread-web" }),
+  });
+  assert.equal(failedWriterRelease.status, 500);
+  assert.deepEqual(fake.unsubscribeAttempts, Array(5).fill("thread-web"));
+  assert.deepEqual(fake.unsubscribed, ["thread-web"]);
+  const handoffAfterFailedRelease = await jsonFetch(
+    `${base}/api/session/handoff?workspace=${encodeURIComponent(cwd)}`,
+    { headers: authorized() },
+  );
+  assert.equal(handoffAfterFailedRelease.handoff, null);
+
+  const idleRelease = await jsonFetch(`${base}/api/session/handoff`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ workspace: cwd, threadId: "thread-web" }),
+  });
+  assert.equal(idleRelease.threadUnsubscribeStatus, "unsubscribed");
+  assert.deepEqual(fake.unsubscribed, ["thread-web", "thread-web"]);
+  assert.deepEqual(fake.unsubscribeAttempts, Array(6).fill("thread-web"));
+  const competingClaims = await Promise.all([0, 1].map(() => fetch(
+    `${base}/api/session/handoffs/${idleRelease.handoff.id}/claim`,
+    {
+      method: "POST",
+      headers: authorized({ "Content-Type": "application/json", Origin: base }),
+      body: "{}",
+    },
+  )));
+  const successfulClaims = competingClaims.filter((response) => response.status === 200);
+  const rejectedClaims = competingClaims.filter((response) => response.status === 404 || response.status === 409);
+  assert.equal(successfulClaims.length, 1);
+  assert.equal(rejectedClaims.length, 1);
+  assert.equal((await successfulClaims[0]!.json() as any).claimed.id, idleRelease.handoff.id);
+  const archived = await jsonFetch(`${base}/api/runs/${operationId}/metadata`, {
+    method: "PATCH",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ archived: true }),
+  });
+  assert.equal(typeof archived.operation.archivedAt, "string");
+  assert.equal(archived.operation.pinnedAt, undefined);
+
+  const failedRun = await jsonFetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({
+      requestId: "failed-notification-run",
+      prompt: "private failed notification prompt",
+      cwd,
+      provider: "codex",
+      accountId: "cli-default",
+      model: "test-codex",
+    }),
+  });
+  fake.finish("failed");
+  await waitFor(async () => {
+    const current = await jsonFetch(`${base}/api/runs/${failedRun.operation.id}`, { headers: authorized() });
+    return current.operation.status === "failed";
+  });
+
+  const invalidCursor = await fetch(`${base}/api/events`, {
+    headers: authorized({ "Last-Event-ID": "not-a-cursor" }),
+  });
+  assert.equal(invalidCursor.status, 400);
+  const invalidNotificationCursor = await fetch(`${base}/api/events/notifications`, {
+    headers: authorized({ "Last-Event-ID": "not-a-cursor" }),
+  });
+  assert.equal(invalidNotificationCursor.status, 400);
+
+  const replayAbort = new AbortController();
+  const replayResponse = await fetch(`${base}/api/events`, {
+    headers: authorized({ "Last-Event-ID": "0" }),
+    signal: replayAbort.signal,
+  });
+  assert.equal(replayResponse.status, 200);
+  const replayText = await readUntil(
+    replayResponse.body!.getReader(),
+    (text) => text.includes(operationId)
+      && text.includes('"status":"interrupted"')
+      && text.includes('"action":"replay_complete"'),
+  );
+  replayAbort.abort();
+  assert.match(replayText, /id: \d+/);
+  assert.match(replayText, /"action":"started"/);
+  assert.match(replayText, /"action":"completed"/);
+  assert.match(replayText, /"action":"metadata_updated"/);
+  assert.match(replayText, /"goalName":"Mobile release audit"/);
+  assert.match(replayText, /"type":"approval"/);
+  assert.match(replayText, /"action":"resolved"/);
+  assert.match(replayText, /"latestCursor":\d+/);
+
+  const notificationReplayAbort = new AbortController();
+  const notificationReplayResponse = await fetch(`${base}/api/events/notifications`, {
+    headers: authorized({ "Last-Event-ID": "0" }),
+    signal: notificationReplayAbort.signal,
+  });
+  assert.equal(notificationReplayResponse.status, 200);
+  const notificationReplayText = await readUntil(
+    notificationReplayResponse.body!.getReader(),
+    (text) => text.includes('"action":"replay_complete"'),
+  );
+  notificationReplayAbort.abort();
+  assert.match(notificationReplayText, /id: \d+/);
+  assert.match(notificationReplayText, /"type":"notification_stream","action":"connected"/);
+  assert.match(notificationReplayText, /"schema":1,"type":"work_notification","kind":"approval"/);
+  assert.match(notificationReplayText, /"kind":"completed"/);
+  assert.match(notificationReplayText, /"kind":"failed"/);
+  assert.match(notificationReplayText, /"occurredAt":"[^"]+"/);
+  assert.match(notificationReplayText, /"expiresAt":"[^"]+"/);
+  assert.match(notificationReplayText, /"action":"replay_complete","latestCursor":\d+/);
+  assert.doesNotMatch(
+    notificationReplayText,
+    /change a file|different request|private failed notification prompt|Mobile release audit|검증된 명령|package\.json|workspace|cwd|prompt|result|redacted/,
+  );
+
+  const missingDeleteConfirmation = await fetch(`${base}/api/journal/workspace`, {
+    method: "DELETE",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ workspace: cwd }),
+  });
+  assert.equal(missingDeleteConfirmation.status, 400);
+  const deletedHistory = await jsonFetch(`${base}/api/journal/workspace`, {
+    method: "DELETE",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: JSON.stringify({ workspace: cwd, confirm: "delete-companion-history" }),
+  });
+  assert.equal(deletedHistory.deletedOperations, 2);
+  assert.ok(deletedHistory.deletedEvents >= 1);
+  assert.deepEqual((await jsonFetch(`${base}/api/runs`, { headers: authorized() })).operations, []);
+  const emptyJournal = await jsonFetch(
+    `${base}/api/journal/policy?workspace=${encodeURIComponent(cwd)}`,
+    { headers: authorized() },
+  );
+  assert.deepEqual(emptyJournal.summary, { operationCount: 0, eventCount: 0 });
+});
+
+test("gateway restart persists unknown-operation acknowledgement and replays it", async (t) => {
+  const paths = await PathPolicy.fromEnvironment(cwd);
+  const mediaDir = await mkdtemp(join(tmpdir(), "codex-pocket-ack-media-"));
+  const projectHome = await mkdtemp(join(tmpdir(), "codex-pocket-ack-projects-"));
+  const authHome = await mkdtemp(join(tmpdir(), "codex-pocket-ack-auth-"));
+  t.after(() => rm(mediaDir, { recursive: true, force: true }));
+  t.after(() => rm(projectHome, { recursive: true, force: true }));
+  t.after(() => rm(authHome, { recursive: true, force: true }));
+  const projects = await ProjectManager.fromEnvironment(paths, projectHome);
+  const auth = await GatewayAuth.create({
+    stateFile: join(authHome, "auth.json"),
+    pairingCode: "87654321",
+    deviceKind: "linux",
+    deviceName: "Restart PC",
+  });
+  let running: Awaited<ReturnType<typeof startWebServer>> | undefined = await startWebServer({
+    client: new FakeWebClient(),
+    paths,
+    staticDir: resolve(cwd, "client/dist"),
+    media: new MediaManager({ rootDir: mediaDir }),
+    projects,
+    auth,
+    port: 0,
+  });
+  let base = `http://127.0.0.1:${running.port}`;
+  const paired = await jsonFetch(`${base}/api/pairing/claim`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: "http://localhost" },
+    body: JSON.stringify({ code: "87654321", label: "Restart test" }),
+  });
+  const headers = (extra: Record<string, string> = {}) => ({
+    Authorization: `Bearer ${paired.token}`,
+    ...extra,
+  });
+  const started = await jsonFetch(`${base}/api/runs`, {
+    method: "POST",
+    headers: headers({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: JSON.stringify({ requestId: "restart-run", prompt: "stay durable", cwd }),
+  });
+  await running.close();
+
+  running = await startWebServer({
+    client: new FakeWebClient(),
+    paths,
+    staticDir: resolve(cwd, "client/dist"),
+    media: new MediaManager({ rootDir: mediaDir }),
+    projects,
+    auth,
+    port: 0,
+  });
+  t.after(() => running?.close().catch(() => undefined));
+  base = `http://127.0.0.1:${running.port}`;
+  const restored = await jsonFetch(`${base}/api/runs/${started.operation.id}`, { headers: headers() });
+  assert.equal(restored.operation.status, "unknown");
+  assert.equal(restored.operation.acknowledgedAt, undefined);
+
+  const acknowledged = await jsonFetch(`${base}/api/runs/${started.operation.id}/acknowledge`, {
+    method: "POST",
+    headers: headers({ "Content-Type": "application/json", Origin: "http://localhost" }),
+    body: "{}",
+  });
+  assert.equal(acknowledged.operation.status, "unknown");
+  assert.equal(typeof acknowledged.operation.acknowledgedAt, "string");
+
+  const replayAbort = new AbortController();
+  const replay = await fetch(`${base}/api/events`, {
+    headers: headers({ "Last-Event-ID": "0" }),
+    signal: replayAbort.signal,
+  });
+  const replayText = await readUntil(
+    replay.body!.getReader(),
+    (text) => text.includes('"action":"acknowledged"')
+      && text.includes('"action":"replay_complete"'),
+  );
+  replayAbort.abort();
+  assert.match(replayText, /id: \d+/);
+
+  await running.close();
+  const journal = await EventJournal.create(join(authHome, "event-journal.sqlite3"));
+  const persisted = journal.load().operations.find((operation) => operation.id === started.operation.id);
+  assert.equal(persisted?.acknowledgedAt, acknowledged.operation.acknowledgedAt);
+  journal.close();
+  running = undefined;
+});
+
+test("notification replay keeps only the latest sixteen minimal events", async (t) => {
+  const paths = await PathPolicy.fromEnvironment(cwd);
+  const root = await mkdtemp(join(tmpdir(), "codex-pocket-notification-replay-"));
+  const auth = await GatewayAuth.create({
+    stateFile: join(root, "auth.json"),
+    pairingCode: "24681357",
+    deviceKind: "linux",
+    deviceName: "Notification replay PC",
+  });
+  const journal = await EventJournal.create(join(root, "events.sqlite3"));
+  for (let index = 0; index < 20; index += 1) {
+    const completedAt = `2026-08-24T00:00:${String(index).padStart(2, "0")}.000Z`;
+    journal.saveOperation({
+      id: `operation-${index}`,
+      providerId: "codex",
+      conversationId: `conversation-${index}`,
+      runId: `run-${index}`,
+      cwd,
+      prompt: `private prompt ${index}`,
+      status: "completed",
+      startedAt: completedAt,
+      completedAt,
+    });
+    journal.appendEvent(`operation-${index}`, cwd, {
+      type: "operation",
+      action: "completed",
+      operation: {
+        id: `operation-${index}`,
+        completedAt,
+        prompt: `private prompt ${index}`,
+        cwd,
+      },
+    });
+  }
+  const running = await startWebServer({
+    client: new FakeWebClient(),
+    paths,
+    staticDir: resolve(cwd, "client/dist"),
+    media: new MediaManager({ rootDir: join(root, "media") }),
+    projects: await ProjectManager.fromEnvironment(paths, root),
+    auth,
+    journal,
+    port: 0,
+  });
+  t.after(() => running.close().catch(() => undefined));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const base = `http://127.0.0.1:${running.port}`;
+  const paired = await jsonFetch(`${base}/api/pairing/claim`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: "http://localhost" },
+    body: JSON.stringify({ code: "24681357", label: "Replay test" }),
+  });
+  const abort = new AbortController();
+  const response = await fetch(`${base}/api/events/notifications`, {
+    headers: { Authorization: `Bearer ${paired.token}`, "Last-Event-ID": "0" },
+    signal: abort.signal,
+  });
+  const replay = await readUntil(
+    response.body!.getReader(),
+    (text) => text.includes('"action":"replay_complete"'),
+  );
+  abort.abort();
+  assert.match(replay, /"replayed":16/);
+  assert.equal(replay.match(/"type":"work_notification"/g)?.length, 16);
+  assert.match(replay, /"operationId":"operation-4"/);
+  assert.match(replay, /"operationId":"operation-19"/);
+  assert.doesNotMatch(replay, /operation-3|private prompt|workspace|cwd/);
 });
 
 class FakeWebClient implements WebCodexClient {
   lastRun?: RunTurnOptions;
   interrupted?: [string, string];
+  unsubscribed: string[] = [];
+  unsubscribeAttempts: string[] = [];
+  unsubscribeFailures = 0;
+  runsStarted = 0;
+  steers: Array<{ threadId: string; turnId: string; prompt: string; imagePaths?: string[] }> = [];
   private listeners = new Set<(notification: AppServerNotification) => void>();
   private resolveTurn?: (turn: Turn) => void;
 
@@ -237,11 +1226,18 @@ class FakeWebClient implements WebCodexClient {
     };
   }
 
-  async readThread() {
-    return { thread: thread(true) };
+  async readThread(threadId: string) {
+    return {
+      thread: thread(
+        true,
+        threadId === "thread-nested" ? resolve(cwd, "client") : cwd,
+        threadId,
+      ),
+    };
   }
 
   async beginTurn(options: RunTurnOptions) {
+    this.runsStarted += 1;
     this.lastRun = options;
     const completion = new Promise<Turn>((resolve) => {
       this.resolveTurn = resolve;
@@ -253,27 +1249,58 @@ class FakeWebClient implements WebCodexClient {
     this.interrupted = [threadId, turnId];
   }
 
+  async steerTurn(options: { threadId: string; turnId: string; prompt: string; imagePaths?: string[] }) {
+    this.steers.push(options);
+  }
+
+  async unsubscribeThread(threadId: string) {
+    this.unsubscribeAttempts.push(threadId);
+    if (this.unsubscribeFailures > 0) {
+      this.unsubscribeFailures -= 1;
+      throw new Error("synthetic thread writer release failure");
+    }
+    this.unsubscribed.push(threadId);
+    return { status: "unsubscribed" as const };
+  }
+
   subscribe(listener: (notification: AppServerNotification) => void) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  finish(status: Turn["status"]) {
-    this.resolveTurn?.(turn(status));
+  finish(status: Turn["status"], includeCommand = false) {
+    const completed = turn(status);
+    if (includeCommand) completed.items.push({
+      type: "commandExecution",
+      id: "command-web",
+      pluginId: null,
+      scriptPath: null,
+      command: "npm test",
+      cwd,
+      processId: null,
+      source: "agent",
+      status: "completed",
+      commandActions: [],
+      aggregatedOutput: "synthetic command output\n42 passed",
+      exitCode: 0,
+      durationMs: 25,
+    });
+    this.resolveTurn?.(completed);
   }
 }
 
-function thread(includeTurns = false): Thread {
+function thread(includeTurns = false, threadCwd = cwd, id = "thread-web"): Thread {
   return {
-    id: "thread-web",
+    id,
     extra: null,
-    sessionId: "session-web",
+    sessionId: `session-${id}`,
     forkedFromId: null,
     parentThreadId: null,
     preview: "web test",
     ephemeral: false,
     section: null,
     sectionEnteredAt: null,
+    projectId: null,
     historyMode: "legacy",
     modelProvider: "openai",
     createdAt: 1,
@@ -281,7 +1308,7 @@ function thread(includeTurns = false): Thread {
     recencyAt: 2,
     status: { type: "idle" },
     path: null,
-    cwd,
+    cwd: threadCwd,
     cliVersion: "test",
     source: "appServer",
     canAcceptDirectInput: true,
@@ -291,7 +1318,7 @@ function thread(includeTurns = false): Thread {
     gitInfo: null,
     name: "Web test",
     turns: includeTurns
-      ? [{ ...turn("completed"), items: [{ type: "agentMessage", id: "message-web", text: "hello", phase: "final_answer", memoryCitation: null }] }]
+      ? [{ ...turn("completed"), items: [{ type: "agentMessage", id: "message-web", text: "hello", phase: "final_answer", memoryCitation: null, delivery: null }] }]
       : [],
   };
 }
@@ -316,6 +1343,58 @@ async function jsonFetch(url: string, init?: RequestInit): Promise<any> {
   return value;
 }
 
+async function secureJson(
+  port: number,
+  hostHeader: string,
+  identity?: { certificate: Buffer; privateKey: Buffer },
+  options: {
+    path?: string;
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+  } = {},
+): Promise<{
+  status: number;
+  body: any;
+  peerPin: string;
+}> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const agent = new HttpsAgent({ maxCachedSessions: 0 });
+    const request = httpsRequest({
+      host: "127.0.0.1",
+      port,
+      path: options.path ?? "/api/status",
+      method: options.method ?? "GET",
+      rejectUnauthorized: false,
+      agent,
+      ...(identity ? { cert: identity.certificate, key: identity.privateKey } : {}),
+      headers: { Host: hostHeader, ...options.headers },
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      const peer = (response.socket as TLSSocket).getPeerX509Certificate();
+      response.on("data", (chunk: Buffer) => chunks.push(chunk));
+      response.on("end", () => {
+        agent.destroy();
+        try {
+          if (!peer) throw new Error("PocketLink TLS peer certificate is missing");
+          resolvePromise({
+            status: response.statusCode ?? 0,
+            body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+            peerPin: publicKeyPin(peer),
+          });
+        } catch (error) {
+          rejectPromise(error);
+        }
+      });
+    });
+    request.once("error", (error) => {
+      agent.destroy();
+      rejectPromise(error);
+    });
+    request.end(options.body);
+  });
+}
+
 async function waitFor(check: () => Promise<boolean>, timeoutMs = 1_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -323,4 +1402,23 @@ async function waitFor(check: () => Promise<boolean>, timeoutMs = 1_000): Promis
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error("Condition was not met in time");
+}
+
+async function readUntil(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  complete: (text: string) => boolean,
+): Promise<string> {
+  const decoder = new TextDecoder();
+  let text = "";
+  const deadline = Date.now() + 2_000;
+  while (!complete(text) && Date.now() < deadline) {
+    const next = await Promise.race([
+      reader.read(),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("SSE replay timed out")), 500)),
+    ]);
+    if (next.done) break;
+    text += decoder.decode(next.value, { stream: true });
+  }
+  if (!complete(text)) throw new Error("SSE replay did not include the terminal operation");
+  return text;
 }

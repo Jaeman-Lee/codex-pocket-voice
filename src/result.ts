@@ -9,7 +9,12 @@ export function summarizeTurn(thread: Thread, turn: Turn): Record<string, unknow
     .map((item) => item.text);
   const commands = turn.items
     .filter((item) => item.type === "commandExecution")
-    .map((item) => ({ command: item.command, status: item.status, exitCode: item.exitCode }));
+    .map((item) => ({
+      command: item.command,
+      status: item.status,
+      exitCode: item.exitCode,
+      output: truncate(item.aggregatedOutput ?? ""),
+    }));
   const fileChanges = turn.items
     .filter((item) => item.type === "fileChange")
     .map((item) => ({ status: item.status, changes: item.changes }));

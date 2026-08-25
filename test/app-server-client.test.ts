@@ -41,4 +41,38 @@ test("client initializes, lists threads, runs a sandboxed turn, and declines app
   });
   assert.equal(resumed.thread.id, "thread-1");
   assert.equal(resumed.turn.status, "completed");
+
+  const unsubscribed = await client.unsubscribeThread(resumed.thread.id);
+  assert.equal(unsubscribed.status, "unsubscribed");
+});
+
+test("client steers only the expected active Codex turn with bounded input", async (t) => {
+  const client = new CodexAppServerClient({
+    command: process.execPath,
+    args: [fixture],
+    env: {
+      ...process.env,
+      FAKE_CODEX_CWD: process.cwd(),
+      FAKE_REQUIRE_STEER: "1",
+      FAKE_EXPECT_STEER_IMAGE: "1",
+    },
+    requestTimeoutMs: 2_000,
+  });
+  t.after(() => client.close());
+  const notifications: string[] = [];
+  client.subscribe((notification) => notifications.push(notification.method));
+  const begun = await client.beginTurn({
+    cwd: process.cwd(),
+    prompt: "start before steering",
+    timeoutMs: 2_000,
+  });
+  await client.steerTurn({
+    threadId: begun.thread.id,
+    turnId: begun.turn.id,
+    prompt: "change direction safely",
+    imagePaths: [fixture],
+  });
+  const completed = await begun.completion;
+  assert.equal(completed.status, "completed");
+  assert.ok(notifications.includes("item/agentMessage/delta"));
 });

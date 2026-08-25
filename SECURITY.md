@@ -20,7 +20,14 @@ addresses, or project content in a report. Replace them with redacted examples.
 - Gateways bind only to loopback and require a paired bearer token.
 - Pairing codes expire and failed attempts are rate limited.
 - Android stores tokens and journal keys with Android Keystore encryption.
+- Opt-in Android background notifications connect only to registered loopback
+  ports. Their bearer tokens and replay cursors are AES-GCM protected by a
+  separate Android Keystore key; the native stream accepts only bounded generic
+  completion, failure, and approval records and rejects extra private fields.
 - Linux stores only token hashes in a mode `0600` state file.
+- Linux encrypts durable run/event journal payloads with AES-256-GCM using a
+  separate same-owner mode `0600` key file in a private directory; workspace
+  lookup uses a keyed index and plaintext lookup metadata is authenticated as AAD.
 - Project paths remain limited to configured workspace roots.
 - The app never grants elevated Codex approval requests.
 

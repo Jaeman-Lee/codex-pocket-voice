@@ -7,8 +7,10 @@ import type { ModelListResponse } from "../generated/app-server/v2/ModelListResp
 import type { ThreadReadResponse } from "../generated/app-server/v2/ThreadReadResponse";
 import type { ThreadResumeResponse } from "../generated/app-server/v2/ThreadResumeResponse";
 import type { ThreadStartResponse } from "../generated/app-server/v2/ThreadStartResponse";
+import type { ThreadUnsubscribeResponse } from "../generated/app-server/v2/ThreadUnsubscribeResponse";
 import type { Turn } from "../generated/app-server/v2/Turn";
 import type { TurnStartResponse } from "../generated/app-server/v2/TurnStartResponse";
+import type { TurnSteerResponse } from "../generated/app-server/v2/TurnSteerResponse";
 import type { UserInput } from "../generated/app-server/v2/UserInput";
 import { APP_VERSION } from "./version.js";
 
@@ -52,6 +54,13 @@ export interface BeginTurnResult {
   thread: Thread;
   turn: Turn;
   completion: Promise<Turn>;
+}
+
+export interface SteerTurnOptions {
+  threadId: string;
+  turnId: string;
+  prompt: string;
+  imagePaths?: string[];
 }
 
 export interface AppServerClientOptions {
@@ -168,6 +177,22 @@ export class CodexAppServerClient {
     return { thread, turn: started.turn, completion };
   }
 
+  async steerTurn(options: SteerTurnOptions): Promise<void> {
+    await this.start();
+    const input: UserInput[] = [
+      { type: "text", text: options.prompt, text_elements: [] },
+      ...(options.imagePaths ?? []).map((path): UserInput => ({ type: "localImage", path, detail: "auto" })),
+    ];
+    const steered = await this.request<TurnSteerResponse>("turn/steer", {
+      threadId: options.threadId,
+      expectedTurnId: options.turnId,
+      input,
+    });
+    if (steered.turnId !== options.turnId) {
+      throw new Error("Codex steered a different active turn than requested");
+    }
+  }
+
   subscribe(listener: (notification: AppServerNotification) => void): () => void {
     this.notificationListeners.add(listener);
     return () => this.notificationListeners.delete(listener);
@@ -176,6 +201,11 @@ export class CodexAppServerClient {
   async interrupt(threadId: string, turnId: string): Promise<void> {
     await this.start();
     await this.request("turn/interrupt", { threadId, turnId });
+  }
+
+  async unsubscribeThread(threadId: string): Promise<ThreadUnsubscribeResponse> {
+    await this.start();
+    return this.request<ThreadUnsubscribeResponse>("thread/unsubscribe", { threadId });
   }
 
   async close(): Promise<void> {
