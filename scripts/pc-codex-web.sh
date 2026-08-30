@@ -17,8 +17,13 @@ CONTROL="${PC_CODEX_WEB_CONTROL:-$HOME/.ssh/pc-codex-web-control}"
 REMOTE_APP="${PC_CODEX_WEB_APP:-}"
 TARGET="$PC_SSH_TARGET"
 URL="http://127.0.0.1:$LOCAL_PORT"
+STATE_DIR="${CODEX_POCKET_STATE_DIR:-$HOME/.local/state/codex-pocket-voice}"
+PID_FILE="$STATE_DIR/tunnel-supervisor.pid"
+LOG_FILE="$STATE_DIR/tunnel-supervisor.log"
+SCRIPT_PATH=$(readlink -f "${BASH_SOURCE[0]}")
 
 ssh_options=(
+    -q
     -o BatchMode=yes
     -o ServerAliveInterval=30
     -o ServerAliveCountMax=3
@@ -34,29 +39,17 @@ fi
 
 usage() {
     printf '사용법: pc-codex-web [open|start|stop|status]\n'
-    printf '  open    백그라운드 연결을 확인하고 Codex Pocket 열기 (기본값)\n'
-    printf '  start   백그라운드 연결만 시작\n'
-    printf '  stop    백그라운드 연결 종료\n'
-    printf '  status  연결 상태 확인\n'
+    printf '  open    자동 재연결 서비스를 시작하고 Codex Pocket 열기 (기본값)\n'
+    printf '  start   자동 재연결 서비스만 시작\n'
+    printf '  stop    자동 재연결 서비스와 SSH 터널 종료\n'
+    printf '  status  연결 또는 재연결 상태 확인\n'
     printf '\n필수 환경변수:\n'
     printf '  PC_SSH_TARGET       SSH 설정 별칭 또는 user@host\n'
     printf '  PC_CODEX_WEB_APP    PC에 clone한 저장소의 절대 경로\n'
     printf '\n선택 환경변수: PC_PORT, PC_CODEX_KEY\n'
 }
 
-control_running() {
-    ssh "${ssh_options[@]}" -S "$CONTROL" -O check "$TARGET" >/dev/null 2>&1
-}
-
-ensure_remote_app() {
-    local remote_command
-    printf -v remote_command \
-        'tmux has-session -t codex-pocket 2>/dev/null || tmux new-session -d -s codex-pocket %q' \
-        "env CODEX_WEB_PORT=$REMOTE_PORT $REMOTE_APP/scripts/start-web-pc.sh"
-    ssh "${ssh_options[@]}" -S "$CONTROL" "$TARGET" "$remote_command"
-}
-
-start_tunnel() {
+validate_configuration() {
     if [ -z "$TARGET" ] || [ -z "$REMOTE_APP" ]; then
         printf 'PC_SSH_TARGET과 PC_CODEX_WEB_APP을 설정하세요. --help를 참고하십시오.\n' >&2
         return 1
@@ -69,18 +62,38 @@ start_tunnel() {
     if [ -n "$KEY" ]; then
         chmod 600 "$KEY"
     fi
+}
 
+control_running() {
+    ssh "${ssh_options[@]}" -S "$CONTROL" -O check "$TARGET" >/dev/null 2>&1
+}
+
+supervisor_running() {
+    [ -r "$PID_FILE" ] || return 1
+    local pid
+    pid=$(sed -n '1p' "$PID_FILE")
+    case "$pid" in
+        *[!0-9]*|'') return 1 ;;
+    esac
+    kill -0 "$pid" >/dev/null 2>&1
+}
+
+ensure_remote_app() {
+    local remote_command
+    printf -v remote_command \
+        'tmux has-session -t codex-pocket 2>/dev/null || tmux new-session -d -s codex-pocket %q' \
+        "env CODEX_WEB_PORT=$REMOTE_PORT $REMOTE_APP/scripts/start-web-pc.sh"
+    ssh "${ssh_options[@]}" -S "$CONTROL" "$TARGET" "$remote_command"
+}
+
+connect_once() {
     if control_running; then
-        ensure_remote_app
         return
     fi
-
-    # 이전 비정상 종료로 남은 이 서비스 전용 제어 소켓만 정리합니다.
     if [ -S "$CONTROL" ]; then
         rm -f -- "$CONTROL"
     fi
     if nc -z -w 1 127.0.0.1 "$LOCAL_PORT" >/dev/null 2>&1; then
-        printf '로컬 포트 %s를 다른 프로세스가 사용 중입니다.\n' "$LOCAL_PORT" >&2
         return 1
     fi
 
@@ -88,26 +101,70 @@ start_tunnel() {
         -M -S "$CONTROL" -o ExitOnForwardFailure=yes \
         -fNT -L "$LOCAL_PORT:127.0.0.1:$REMOTE_PORT" "$TARGET"
     ensure_remote_app
+}
+
+run_supervisor() {
+    validate_configuration
+    mkdir -p "$STATE_DIR"
+    chmod 700 "$STATE_DIR"
+
+    cleanup_supervisor() {
+        if [ -r "$PID_FILE" ] && [ "$(sed -n '1p' "$PID_FILE")" = "$$" ]; then
+            rm -f -- "$PID_FILE"
+        fi
+    }
+    trap cleanup_supervisor EXIT INT TERM
+
+    local health_tick=0
+    while :; do
+        if control_running; then
+            health_tick=$((health_tick + 1))
+            if [ "$health_tick" -ge 6 ]; then
+                ensure_remote_app >/dev/null 2>&1 || true
+                health_tick=0
+            fi
+        else
+            health_tick=0
+            connect_once >/dev/null 2>&1 || true
+        fi
+        sleep 10
+    done
+}
+
+start_supervisor() {
+    validate_configuration
+    mkdir -p "$STATE_DIR"
+    chmod 700 "$STATE_DIR"
+
+    if ! supervisor_running; then
+        rm -f -- "$PID_FILE"
+        : > "$LOG_FILE"
+        nohup "$SCRIPT_PATH" supervise > "$LOG_FILE" 2>&1 < /dev/null &
+        printf '%s\n' "$!" > "$PID_FILE"
+    fi
 
     local attempt
-    for attempt in 1 2 3 4 5 6 7 8 9 10; do
-        if nc -z -w 1 127.0.0.1 "$LOCAL_PORT" >/dev/null 2>&1; then
-            printf 'Codex Pocket 백그라운드 연결됨: %s\n' "$URL"
+    for attempt in 1 2 3 4 5; do
+        if control_running && nc -z -w 1 127.0.0.1 "$LOCAL_PORT" >/dev/null 2>&1; then
+            printf 'Codex Pocket 연결됨: %s\n' "$URL"
             return
         fi
         sleep 0.2
     done
-    printf 'SSH 연결은 시작됐지만 웹 포트를 확인할 수 없습니다.\n' >&2
-    return 1
+    printf 'PC 오프라인 · 백그라운드에서 자동 재연결 중\n'
 }
 
-stop_tunnel() {
-    if control_running; then
-        ssh "${ssh_options[@]}" -S "$CONTROL" -O exit "$TARGET" >/dev/null
-        printf 'Codex Pocket 백그라운드 연결을 종료했습니다.\n'
-    else
-        printf 'Codex Pocket 백그라운드 연결이 실행 중이 아닙니다.\n'
+stop_supervisor() {
+    if supervisor_running; then
+        local pid
+        pid=$(sed -n '1p' "$PID_FILE")
+        kill "$pid" >/dev/null 2>&1 || true
+        rm -f -- "$PID_FILE"
     fi
+    if control_running; then
+        ssh "${ssh_options[@]}" -S "$CONTROL" -O exit "$TARGET" >/dev/null 2>&1 || true
+    fi
+    printf 'Codex Pocket 자동 재연결 서비스를 종료했습니다.\n'
 }
 
 show_status() {
@@ -115,24 +172,31 @@ show_status() {
         printf '연결됨: %s\n' "$URL"
         return
     fi
-    printf '연결 안 됨\n'
+    if supervisor_running; then
+        printf 'PC 오프라인 · 자동 재연결 중\n'
+        return
+    fi
+    printf '연결 안 됨 · pc-codex-web start 필요\n'
     return 1
 }
 
 command_name="${1:-open}"
 case "$command_name" in
     open)
-        start_tunnel
+        start_supervisor
         termux-open-url "$URL"
         ;;
     start)
-        start_tunnel
+        start_supervisor
         ;;
     stop)
-        stop_tunnel
+        stop_supervisor
         ;;
     status)
         show_status
+        ;;
+    supervise)
+        run_supervisor
         ;;
     help|--help|-h)
         usage

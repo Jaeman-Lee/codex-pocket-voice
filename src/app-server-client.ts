@@ -3,11 +3,14 @@ import { createInterface } from "node:readline";
 import type { InitializeResponse } from "../generated/app-server/InitializeResponse";
 import type { Thread } from "../generated/app-server/v2/Thread";
 import type { ThreadListResponse } from "../generated/app-server/v2/ThreadListResponse";
+import type { ModelListResponse } from "../generated/app-server/v2/ModelListResponse";
 import type { ThreadReadResponse } from "../generated/app-server/v2/ThreadReadResponse";
 import type { ThreadResumeResponse } from "../generated/app-server/v2/ThreadResumeResponse";
 import type { ThreadStartResponse } from "../generated/app-server/v2/ThreadStartResponse";
 import type { Turn } from "../generated/app-server/v2/Turn";
 import type { TurnStartResponse } from "../generated/app-server/v2/TurnStartResponse";
+import type { UserInput } from "../generated/app-server/v2/UserInput";
+import { APP_VERSION } from "./version.js";
 
 type RpcId = number | string;
 type JsonObject = Record<string, unknown>;
@@ -33,9 +36,10 @@ export interface RunTurnOptions {
   threadId?: string;
   cwd: string;
   prompt: string;
+  imagePaths?: string[];
   networkAccess?: boolean;
   model?: string;
-  effort?: "low" | "medium" | "high" | "xhigh";
+  effort?: string;
   timeoutMs?: number;
 }
 
@@ -95,6 +99,14 @@ export class CodexAppServerClient {
     });
   }
 
+  async listModels(): Promise<ModelListResponse> {
+    await this.start();
+    return this.request<ModelListResponse>("model/list", {
+      limit: 100,
+      includeHidden: false,
+    });
+  }
+
   async readThread(threadId: string, includeTurns = true): Promise<ThreadReadResponse> {
     await this.start();
     return this.request<ThreadReadResponse>("thread/read", { threadId, includeTurns });
@@ -117,7 +129,6 @@ export class CodexAppServerClient {
         approvalPolicy: "never",
         sandbox: "workspace-write",
         model: options.model ?? null,
-        excludeTurns: true,
       });
     } else {
       threadResponse = await this.request<ThreadStartResponse>("thread/start", {
@@ -130,9 +141,13 @@ export class CodexAppServerClient {
     }
 
     const thread = threadResponse.thread;
+    const input: UserInput[] = [
+      { type: "text", text: options.prompt, text_elements: [] },
+      ...(options.imagePaths ?? []).map((path): UserInput => ({ type: "localImage", path, detail: "auto" })),
+    ];
     const started = await this.request<TurnStartResponse>("turn/start", {
       threadId: thread.id,
-      input: [{ type: "text", text: options.prompt, text_elements: [] }],
+      input,
       cwd: options.cwd,
       approvalPolicy: "never",
       sandboxPolicy: {
@@ -201,8 +216,14 @@ export class CodexAppServerClient {
     });
 
     const initialized = await this.request<InitializeResponse>("initialize", {
-      clientInfo: { name: "codex_voice_bridge", title: "Codex Voice Bridge", version: "0.1.0" },
-      capabilities: null,
+      clientInfo: { name: "codex_pocket_voice", title: "Codex Pocket Voice", version: APP_VERSION },
+      capabilities: {
+        experimentalApi: true,
+        requestAttestation: false,
+        mcpServerOpenaiFormElicitation: false,
+        optOutNotificationMethods: [],
+        extensions: null,
+      },
     });
     this.notify("initialized", {});
     return initialized;

@@ -3,6 +3,7 @@ set -eu
 
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 projects_home=${CODEX_PROJECTS_HOME:-"$HOME/workspace"}
+mkdir -p -- "$projects_home"
 
 if [ -z "${CODEX_VOICE_ROOTS:-}" ] && [ -d "$projects_home" ]; then
   CODEX_VOICE_ROOTS=$(find "$projects_home" -maxdepth 7 -type d -name .git -printf '%h\n' 2>/dev/null | sort -u | paste -sd ':' -)
@@ -23,4 +24,8 @@ fi
 
 export CODEX_BIN=${CODEX_BIN:-"$HOME/.local/bin/codex"}
 export CODEX_WEB_PORT=${CODEX_WEB_PORT:-8787}
+export CODEX_DEVICE_ID=pc
+export CODEX_DEVICE_NAME=${CODEX_DEVICE_NAME:-"내 PC"}
+export CODEX_PROJECT_CREATION_ROOTS=${CODEX_PROJECT_CREATION_ROOTS:-"$projects_home"}
+"$repo_dir/scripts/start-video-vlm.sh"
 exec "$repo_dir/scripts/start-web.sh"

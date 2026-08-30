@@ -1,6 +1,6 @@
 {
   "name": "codex-pocket-voice",
-  "version": "0.1.0",
+  "version": "1.8.1",
   "private": true,
   "type": "module",
   "description": "A mobile-first voice interface for controlling Codex CLI safely over SSH.",
@@ -9,22 +9,46 @@
     "codex-pocket-web": "dist/src/web-index.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit",
+    "build": "npm run build:server && npm run build:client",
+    "build:server": "tsc -p tsconfig.json",
+    "build:client": "vite build",
+    "android:sync": "npm run build:client && cap sync android",
+    "android:open": "cap open android",
+    "android:debug": "npm run android:sync && cd android && ./gradlew assembleDebug",
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "check:app-server-schema": "./scripts/check-app-server-schema.sh",
+    "client:dev": "vite",
     "start": "node dist/src/index.js",
     "web": "node dist/src/web-index.js",
     "web:dev": "node --import tsx src/web-index.ts",
-    "test": "node --import tsx --test test/*.test.ts",
-    "test:integration": "node --import tsx --test test/integration/*.test.ts"
+    "test": "npm run build:client && node --import tsx --test test/*.test.ts",
+    "test:integration": "node --import tsx --test test/integration/*.test.ts",
+    "release:check": "./scripts/release-check.sh",
+    "check:brain-manifest": "repo-harness run check-brain-manifest",
+    "check:context-files": "repo-harness run check-context-files",
+    "check:deploy-sql": "repo-harness run check-deploy-sql-order",
+    "check:architecture-sync": "repo-harness run check-architecture-sync",
+    "check:task-sync": "repo-harness run check-task-sync",
+    "check:task-workflow": "repo-harness run check-task-workflow --strict",
+    "sync:brain-docs": "repo-harness run sync-brain-docs --all"
   },
   "dependencies": {
+    "@capacitor/core": "8.5.0",
     "@modelcontextprotocol/sdk": "1.30.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@capacitor/android": "8.5.0",
+    "@capacitor/cli": "8.5.0",
     "@types/node": "^24.3.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.5",
     "tsx": "^4.20.5",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vite": "8.2.1"
   },
   "engines": {
     "node": ">=20"

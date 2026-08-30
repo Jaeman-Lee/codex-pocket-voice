@@ -9,7 +9,7 @@ test("client initializes, lists threads, runs a sandboxed turn, and declines app
   const client = new CodexAppServerClient({
     command: process.execPath,
     args: [fixture],
-    env: { ...process.env, FAKE_CODEX_CWD: process.cwd() },
+    env: { ...process.env, FAKE_CODEX_CWD: process.cwd(), FAKE_EXPECT_IMAGE: "1" },
     requestTimeoutMs: 2_000,
   });
   t.after(() => client.close());
@@ -22,9 +22,23 @@ test("client initializes, lists threads, runs a sandboxed turn, and declines app
   const listed = await client.listThreads(5);
   assert.equal(listed.data[0]?.id, "thread-1");
 
-  const result = await client.runTurn({ cwd: process.cwd(), prompt: "make a safe change", timeoutMs: 2_000 });
+  const result = await client.runTurn({
+    cwd: process.cwd(),
+    prompt: "make a safe change",
+    imagePaths: [fixture],
+    timeoutMs: 2_000,
+  });
   assert.equal(result.thread.id, "thread-1");
   assert.equal(result.turn.status, "completed");
   assert.equal(result.turn.items[0]?.type, "agentMessage");
   assert.ok(notifications.includes("item/agentMessage/delta"));
+
+  const resumed = await client.runTurn({
+    threadId: result.thread.id,
+    cwd: process.cwd(),
+    prompt: "continue safely",
+    timeoutMs: 2_000,
+  });
+  assert.equal(resumed.thread.id, "thread-1");
+  assert.equal(resumed.turn.status, "completed");
 });

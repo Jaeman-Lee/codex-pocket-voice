@@ -2,56 +2,114 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-스마트폰에서 한국어로 말하고, PC의 Codex CLI가 실제 프로젝트를 수정하게 만드는 모바일 우선 인터페이스입니다. Android 브라우저의 음성 인식과 TTS를 사용하므로 별도의 Whisper·Realtime API 비용이 들지 않습니다.
+현재 정식 배포는 `v1.6.0`이며 `1.8.0`는 교차 기기 세션 인계를 검증 중인 candidate입니다. 실제 배포
+상태는 [Deployment inventory](docs/deployment-inventory.md), 변경 이력은
+[Changelog](CHANGELOG.md), 출시 절차는 [Release process](docs/release-process.md)를 참고하세요.
+
+개발 원본은 페어링된 Linux PC의 Git 작업공간입니다. Android/Termux는 APK 설치, 음성·UI
+실기기 테스트, 연결 복구와 롤백 파일 관리를 담당하는 경량 클라이언트로 유지합니다.
+
+스마트폰에서 한국어로 말하고, Linux PC의 Codex CLI가 실제 프로젝트를 수정하게 만드는 React 기반 모바일 인터페이스입니다. Android 앱과 설치형 PWA를 지원하며 별도의 Whisper·Realtime API 비용이 들지 않습니다. 스마트폰은 UI·음성 입력·암호화 연결만 담당하고 Codex 실행과 미디어 처리는 PC에서 수행합니다.
 
 > Codex 모델 사용량은 사용자의 Codex 계정과 플랜 정책을 따릅니다. 이 프로젝트는 OpenAI의 공식 제품이 아닙니다.
 
 ## 핵심 기능
 
-- `ko-KR`로 고정된 앱 내 한국어 음성 입력
-- PC의 여러 Git 프로젝트와 기존 Codex 대화 선택
+- 시스템 언어 기반 Android·웹 받아쓰기와 한국어/영어 UI, 별도 음성 언어 선택
+- 여러 Linux PC의 Git 프로젝트·기존 Codex 대화 선택
+- 실행할 PC를 골라 새 Git 프로젝트 생성
+- 각 PC가 제공하는 Codex 모델과 지원 추론 성능을 실시간 조회·선택
+- 실행 중에도 다음 프롬프트와 첨부를 대기열에 추가해 순차 실행
+- 단말·프로젝트·대화별 로컬 작업 저널과 오프라인 프롬프트 대기열
+- Codex·Claude Code 등을 독립 어댑터로 확장할 수 있는 AI 제공자 모듈
+- 설치 확인·브라우저 로그인·비용 없는 연결 테스트를 모은 AI 연결 센터
+- 이미지 첨부와 영상 업로드, 로컬 Qwen3-VL 4B 대표 장면 분석
 - 답변, 명령 실행, 파일 변경 상태를 SSE로 실시간 표시
 - 실행 중인 Codex 턴 중단과 최종 diff·명령 요약
 - Android 한국어 TTS로 답변 읽기
-- 설치 가능한 모바일 PWA
+- React + Capacitor Android 앱과 설치 가능한 PWA
+- 앱 실행 시 Termux SSH 터널 자동 시작
 - Termux 터미널을 닫아도 유지되는 백그라운드 SSH 터널
 - 선택적으로 사용할 수 있는 안전 범위 MCP 서버
+- 만료되는 코드와 Android Keystore를 사용하는 장치 페어링
+- 여러 Linux Companion 등록과 앱 내 Linux 도구 진단
 
 ## 구조
 
 ```text
-Android browser / PWA
-  ├─ Korean speech recognition (ko-KR)
+Android APK / browser PWA
+  ├─ React mobile UI
+  ├─ Android native / Web speech recognition (ko-KR)
   ├─ Android TTS
-  └─ http://127.0.0.1:8788
-             │
-             │ background SSH port forwarding
-             ▼
-PC 127.0.0.1:8787
-  └─ Codex Pocket web gateway
-       └─ codex app-server (stdio)
-            └─ selected Git workspace
+  └─ PC 선택 → http://127.0.0.1:8788
+                    │ background SSH port forwarding
+                    ▼
+                 PC 127.0.0.1:8787
+
+Linux PC의 Codex Pocket web gateway
+       ├─ ffmpeg → Qwen3-VL 4B (local Ollama, video frames)
+       └─ codex app-server (text + selected images)
+            └─ 선택하거나 새로 만든 Git workspace
 ```
 
-웹 서버와 Codex app-server는 PC의 loopback에만 노출됩니다. 스마트폰은 SSH를 통해서만 접근합니다.
+웹 서버와 Codex app-server는 PC의 loopback에만 노출되며 스마트폰에서는 SSH 터널을 통해서만 접근합니다.
 
 ## 요구 사항
 
-- PC: Node.js 20 이상, Codex CLI, Git, tmux, SSH 서버
-- Android: Termux, OpenSSH, Android Chrome 권장
+- PC: **Linux 전용**, Node.js 20 이상, Codex CLI, Git, tmux, SSH 서버, ffmpeg/ffprobe
+- Android: Termux, OpenSSH, Android Chrome 권장. Codex CLI와 로컬 AI 모델은 설치하지 않습니다.
 - 스마트폰에서 PC로 접속 가능한 SSH 경로(Tailscale 같은 사설망 권장)
 
+PC Companion의 공식 지원 대상은 Linux 데스크톱과 서버입니다. Windows와 macOS
+네이티브 지원 및 전용 설치 프로그램은 현재와 향후 계획의 범위에 포함하지 않습니다.
+WSL·가상 머신·컨테이너는 동작할 수 있지만 공식 지원 및 검증 대상은 아닙니다.
+
 ## PC 설치
+
+권장 설치는 Linux 사용자 서비스와 권한 제한 설정을 함께 만드는 설치 스크립트입니다.
 
 ```sh
 git clone https://github.com/Jaeman-Lee/codex-pocket-voice.git
 cd codex-pocket-voice
-npm ci
-npm run build
-./scripts/start-web-pc.sh
+./scripts/install-linux-companion.sh
 ```
 
-`start-web-pc.sh`는 기본적으로 `~/workspace` 아래의 Git 저장소를 찾아 허용 프로젝트로 등록하고 `127.0.0.1:8787`에서 서버를 시작합니다. 직접 지정하려면 다음처럼 실행합니다.
+systemd 사용자 서비스를 사용할 수 없는 Linux 환경에서는 스크립트 안내에 따라
+`./scripts/start-web-pc.sh`를 실행합니다. Companion 로그에 10분간 유효한 8자리
+페어링 코드가 표시되며, 앱에 한 번 입력하면 이후 토큰은 Android Keystore로 보호됩니다.
+
+### 로컬 영상 분석(선택)
+
+영상은 Codex에 원본으로 보내지 않고 PC의 `ffmpeg`로 대표 프레임 4장을 만든 뒤 로컬
+[`qwen3-vl:4b`](https://ollama.com/library/qwen3-vl)로 먼저 분석합니다. 분석 요약과 대표 프레임은
+Codex 턴에 함께 전달됩니다. RTX 2060 6GB에서는 Q4 모델이 약 5.66GB VRAM을 사용했으므로
+영상 분석은 한 번에 하나씩 실행됩니다.
+
+Ollama 0.12.7 이상을 사용자 경로에 설치한 뒤 최초 한 번 모델을 받습니다. 기본 경로가 다르면
+환경 변수로 바꿀 수 있으며 사용자 경로나 네트워크 정보는 저장소에 하드코딩하지 않습니다.
+
+```sh
+export CODEX_VIDEO_OLLAMA_BIN="$HOME/.local/opt/ollama-vl/bin/ollama"
+export CODEX_VIDEO_OLLAMA_URL=http://127.0.0.1:11435
+export CODEX_VIDEO_OLLAMA_MODELS="$HOME/.local/share/ollama-vl/models"
+export CODEX_VIDEO_MODEL=qwen3-vl:4b
+
+OLLAMA_HOST=127.0.0.1:11435 \
+OLLAMA_MODELS="$CODEX_VIDEO_OLLAMA_MODELS" \
+"$CODEX_VIDEO_OLLAMA_BIN" pull "$CODEX_VIDEO_MODEL"
+```
+
+`start-web-pc.sh`는 설정된 사용자용 Ollama 서버를 자동으로 확인하고 시작합니다. 영상 원본과
+대표 프레임은 기본적으로 `~/.local/state/codex-pocket-voice/media`에 비공개로 저장되며 오래된
+임시 항목은 정리됩니다. 다음 값도 필요에 따라 변경할 수 있습니다.
+
+```sh
+export CODEX_POCKET_MEDIA_DIR=/private/path/codex-pocket-media
+export CODEX_MEDIA_MAX_BYTES=209715200
+export CODEX_VIDEO_ENABLED=true
+```
+
+`start-web-pc.sh`는 기본적으로 `~/workspace` 아래의 Git 저장소를 찾아 허용 프로젝트로 등록하고, 같은 위치에 새 프로젝트를 만들 수 있게 한 뒤 `127.0.0.1:8787`에서 서버를 시작합니다. 직접 지정하려면 다음처럼 실행합니다.
 
 ```sh
 export CODEX_VOICE_ROOTS=/path/to/project-a:/path/to/project-b
@@ -59,7 +117,7 @@ export CODEX_BIN=/path/to/codex
 ./scripts/start-web.sh
 ```
 
-## Android 설치
+## Android PWA 설치
 
 Termux에서 저장소를 clone하거나 `scripts/pc-codex-web.sh`만 복사한 뒤 실행 경로에 연결합니다.
 
@@ -110,10 +168,53 @@ pc-codex-web stop
 
 휴대폰 재부팅 후 자동 연결은 Termux:Boot로 구성할 수 있습니다. Termux:Boot가 없다면 재부팅 후 `pc-codex-web open`을 한 번 실행하면 됩니다.
 
+## Android APK
+
+APK는 React 화면을 앱 안에 포함하고, 실행될 때 Termux에 SSH 터널 시작을 자동 요청합니다. 먼저 Termux에서 한 번 설정합니다.
+
+```sh
+./scripts/setup-android-app.sh
+```
+
+이 설정은 `pc-codex-web`만 설치합니다. 과거 버전의 `phone-codex-web`이 실행 중이면 중지하고 실행 링크를 제거해 스마트폰에서 Node.js·Codex 프로세스가 자동으로 다시 뜨지 않게 합니다.
+
+Android Studio가 설치된 PC에서 APK 프로젝트를 동기화하고 빌드합니다.
+
+```sh
+npm ci
+npm run android:sync
+# android/ 폴더를 Android Studio에서 열거나
+npm run android:debug
+```
+
+F-Droid/GitHub판 Termux는 설치 후 Android의 앱 정보 → 권한(또는 추가 권한)에서 **Termux 명령 실행**을 허용합니다. Google Play판 Termux는 이 외부 명령 서비스를 제공하지 않는 대신 Termux:Boot가 본체에 통합되어 있으므로, `setup-android-app.sh`가 `~/.termux/boot` 시작 스크립트와 15분 간격 자가복구 작업을 등록합니다. 두 방식 모두 Termux가 강제로 종료되거나 배터리 최적화로 중지되면 Android 설정에서 Termux의 배터리 제한을 해제해야 할 수 있습니다.
+
+앱의 **실행 단말**에서 연결된 Linux PC를 선택할 수 있습니다. 프로젝트 옆 `＋`는 선택한 PC의 허용된 생성 위치에 폴더를 만들고 `git init --initial-branch=main`을 수행합니다. 모델과 성능 선택지는 PC의 Codex 카탈로그에서 읽으므로, 계정이나 CLI 버전에서 실제 지원하는 항목만 표시됩니다.
+
+상단 `◎` 버튼의 **AI 연결 센터**는 선택한 단말에서 Codex·Claude Code CLI 설치와 로그인 상태를 확인하고, 공식 설치 안내·브라우저 로그인·비용 없는 연결 테스트를 한 화면에 표시합니다. 계정 별명만 선택적으로 이 스마트폰에 저장하며 비밀번호나 API 키는 앱에 입력하거나 저장하지 않습니다. 연결 테스트는 로그인 상태와 모델 카탈로그만 읽고 AI 프롬프트를 전송하지 않습니다.
+
+현재 Codex 어댑터는 실행·대화·모델 조회까지 지원합니다. Claude Code 어댑터는 CLI 설치 및 계정 연결 상태를 감지하지만 실행 어댑터가 완성되기 전에는 대화 제공자로 선택할 수 없게 표시됩니다.
+
+Codex 작업 중에도 입력·음성·첨부를 계속 사용할 수 있습니다. 이때 전송 버튼은 **대기열 +**로 바뀌며, 현재 작업이 끝나면 예약한 요청을 같은 프로젝트와 대화에서 순서대로 실행합니다. 각 예약 항목은 추가 당시의 모델·성능·네트워크 설정을 유지하며 시작 전 취소할 수 있습니다.
+
+v1.7부터 대화와 예약 프롬프트를 AES-GCM으로 암호화해 버전된 `WorkJournal` 저장소에 기록합니다. Android 암호화 키는 Keystore가 보호하며 기존 v1 평문 기록은 읽을 때 자동으로 암호화 형식으로 이전됩니다. PC가 오프라인이어도 마지막 대화를 열람하고 요청을 예약할 수 있으며, 요청은 선택한 PC가 다시 연결된 뒤 실행됩니다.
+
+GitHub Actions의 APK는 저장소 비밀값에 보관된 고정 키로 서명됩니다. 1.2 이전 임시 디버그 APK는
+실행마다 서명이 달랐고 일부 Android 사용자 영역에 이전 서명이 남을 수 있어, 1.2.1부터 충돌 없는
+영구 패키지 ID `io.github.jaemanlee.codexpocketvoice.stable`을 사용합니다. 처음 설치할 때만 별도 앱으로
+설치되며
+이후 버전은 앱 데이터와 설정을 유지한 채 덮어쓸 수 있습니다. 서명키 파일이나 암호는 저장소에
+커밋하지 않습니다.
+
+현재 APK는 SSH 키를 앱에 복제하지 않고 기존 Termux SSH 설정을 사용합니다. Termux 없이 동작하는 네이티브 SSH 단계와 보안 설계는 [Android 앱 구조](docs/android-architecture.md)에 정리했습니다.
+
+향후 사용자별 SSH·네트워크·경로 정보를 온보딩 화면에서 설정하는 작업과, Termux·Tailscale이 담당하는 보안 연결 기능을 독립 모듈로 내재화하는 최종 목표는 [로드맵](docs/roadmap.md)에 정리했습니다. 실제 프로젝트와 CLI는 Linux PC에만 두고 스마트폰은 저부하 클라이언트로 유지합니다. 실제 사용자 정보나 비밀키는 공개 저장소에 저장하지 않습니다.
+
 ## 보안 모델
 
 - 웹 서버는 `127.0.0.1` 이외의 주소에 바인딩되지 않습니다.
-- 모든 쓰기 API는 same-origin JSON 요청만 받습니다.
+- 모든 API는 페어링된 bearer token을 요구하며, 쓰기 API는 허용된 origin도 함께 검사합니다.
+- 페어링 코드는 10분 후 만료되고 잘못된 입력은 속도 제한됩니다.
 - 프로젝트 경로는 `CODEX_VOICE_ROOTS` 내부인지 실제 경로 기준으로 검사합니다.
 - Codex 턴은 `workspace-write` 샌드박스와 `approvalPolicy: never`로 실행됩니다.
 - 추가 권한·샌드박스 탈출 요청은 브리지에서 자동 거절합니다.
@@ -149,6 +250,7 @@ npm ci
 npm run check
 npm run build
 npm test
+npm run android:sync
 ```
 
 실제 로컬 Codex app-server가 설치된 환경에서는 다음 통합 테스트도 실행할 수 있습니다. 이 테스트들은 모델 턴을 시작하지 않습니다.
@@ -159,11 +261,13 @@ npm run test:integration
 
 ## 기술 스택
 
-- TypeScript / Node.js
+- React 19 / Vite / TypeScript
+- Capacitor Android와 Java 네이티브 플러그인
+- Node.js PC gateway
 - Codex app-server JSON-RPC over stdio
 - MCP SDK
 - Server-Sent Events
-- Web Speech API / Speech Synthesis API
+- Android RecognizerIntent / Web Speech API / Speech Synthesis API
 - PWA Service Worker
 - OpenSSH ControlMaster
 

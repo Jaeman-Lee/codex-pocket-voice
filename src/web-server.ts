@@ -1,9 +1,10 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { basename, extname, join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { InitializeResponse } from "../generated/app-server/InitializeResponse";
+import type { ModelListResponse } from "../generated/app-server/v2/ModelListResponse";
 import type { Thread } from "../generated/app-server/v2/Thread";
 import type { ThreadListResponse } from "../generated/app-server/v2/ThreadListResponse";
 import type { ThreadReadResponse } from "../generated/app-server/v2/ThreadReadResponse";
@@ -15,9 +16,18 @@ import type {
 } from "./app-server-client.js";
 import { PathPolicy } from "./path-policy.js";
 import { compactThread, presentThread, summarizeTurn } from "./result.js";
+import { MediaError, MediaManager } from "./media-manager.js";
+import { ProjectCreationError, ProjectManager } from "./project-manager.js";
+import { ProviderError, ProviderRegistry } from "./providers/registry.js";
+import { ProviderLoginManager } from "./provider-login-manager.js";
+import { GatewayAuth, GatewayAuthError } from "./gateway-auth.js";
+import { APP_VERSION, GATEWAY_CAPABILITIES, GATEWAY_PROTOCOL_MINIMUM, GATEWAY_PROTOCOL_VERSION } from "./version.js";
+import { collectSystemDiagnostics } from "./system-diagnostics.js";
+import { SessionHandoffStore } from "./session-handoff-store.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_EVENT_TEXT = 80_000;
+const NATIVE_APP_ORIGINS = new Set(["http://localhost", "https://localhost", "capacitor://localhost"]);
 const STATIC_FILES = new Map([
   ["/", "index.html"],
   ["/index.html", "index.html"],
@@ -30,6 +40,7 @@ const STATIC_FILES = new Map([
 
 export interface WebCodexClient {
   start(): Promise<InitializeResponse>;
+  listModels(): Promise<ModelListResponse>;
   listThreads(limit?: number, searchTerm?: string): Promise<ThreadListResponse>;
   readThread(threadId: string, includeTurns?: boolean): Promise<ThreadReadResponse>;
   beginTurn(options: RunTurnOptions): Promise<BeginTurnResult>;
@@ -43,12 +54,19 @@ export interface WebServerOptions {
   staticDir: string;
   host?: string;
   port?: number;
+  media?: MediaManager;
+  projects?: ProjectManager;
+  auth?: GatewayAuth;
+  handoffs?: SessionHandoffStore;
 }
 
 export interface RunningWebServer {
   server: Server;
   host: string;
   port: number;
+  deviceId: string;
+  pairingCode: string;
+  pairingExpiresAt: string;
   close(): Promise<void>;
 }
 
@@ -75,6 +93,14 @@ interface RunBody {
   model?: unknown;
   effort?: unknown;
   timeoutSeconds?: unknown;
+  attachments?: unknown;
+  provider?: unknown;
+  accountId?: unknown;
+}
+
+interface CreateProjectBody {
+  name?: unknown;
+  parent?: unknown;
 }
 
 export async function startWebServer(options: WebServerOptions): Promise<RunningWebServer> {
@@ -89,13 +115,24 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   const sseClients = new Set<ServerResponse>();
   const operations = new Map<string, Operation>();
   const activeThreads = new Set<string>();
+  const media = options.media ?? new MediaManager({
+    onUpdate: (item) => broadcast(sseClients, { type: "media", media: item }),
+  });
+  await media.initialize();
+  const projects = options.projects ?? await ProjectManager.fromEnvironment(options.paths);
+  const auth = options.auth ?? await GatewayAuth.create();
+  const handoffs = options.handoffs ?? await SessionHandoffStore.create(
+    process.env.CODEX_POCKET_HANDOFF_STATE ?? join(dirname(auth.stateFile), "session-handoff.json"),
+  );
+  const providers = new ProviderRegistry(options.client);
+  const providerLogins = new ProviderLoginManager(providers);
   const unsubscribe = options.client.subscribe((event) => {
     const forwarded = sanitizeNotification(event, activeThreads);
     if (forwarded) broadcast(sseClients, forwarded);
   });
 
   const server = createServer((request, response) => {
-    void handleRequest(request, response, options, operations, activeThreads, sseClients).catch(
+    void handleRequest(request, response, options, auth, handoffs, media, projects, providers, providerLogins, operations, activeThreads, sseClients).catch(
       (error) => sendError(response, error),
     );
   });
@@ -122,8 +159,12 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     server,
     host,
     port: address.port,
+    deviceId: auth.device.id,
+    pairingCode: auth.pairingCode,
+    pairingExpiresAt: auth.pairingExpiresAt,
     async close() {
       clearInterval(heartbeat);
+      providerLogins.close();
       unsubscribe();
       for (const response of sseClients) response.end();
       sseClients.clear();
@@ -138,6 +179,12 @@ async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
   options: WebServerOptions,
+  auth: GatewayAuth,
+  handoffs: SessionHandoffStore,
+  media: MediaManager,
+  projects: ProjectManager,
+  providers: ProviderRegistry,
+  providerLogins: ProviderLoginManager,
   operations: Map<string, Operation>,
   activeThreads: Set<string>,
   sseClients: Set<ServerResponse>,
@@ -149,7 +196,13 @@ async function handleRequest(
 
   if (url.pathname.startsWith("/api/")) {
     response.setHeader("Cache-Control", "no-store");
-    await handleApi(request, response, url, options, operations, activeThreads, sseClients);
+    applyApiCors(request, response);
+    if (request.method === "OPTIONS") {
+      response.statusCode = 204;
+      response.end();
+      return;
+    }
+    await handleApi(request, response, url, options, auth, handoffs, media, projects, providers, providerLogins, operations, activeThreads, sseClients);
     return;
   }
   await serveStatic(request, response, url.pathname, options.staticDir);
@@ -160,24 +213,138 @@ async function handleApi(
   response: ServerResponse,
   url: URL,
   options: WebServerOptions,
+  auth: GatewayAuth,
+  handoffs: SessionHandoffStore,
+  media: MediaManager,
+  projects: ProjectManager,
+  providers: ProviderRegistry,
+  providerLogins: ProviderLoginManager,
   operations: Map<string, Operation>,
   activeThreads: Set<string>,
   sseClients: Set<ServerResponse>,
 ): Promise<void> {
+  if (request.method === "GET" && url.pathname === "/api/status") {
+    sendJson(response, 200, {
+      ok: true,
+      appVersion: APP_VERSION,
+      protocolVersion: GATEWAY_PROTOCOL_VERSION,
+      minimumClientProtocol: GATEWAY_PROTOCOL_MINIMUM,
+      device: auth.device,
+    });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/pairing/status") {
+    sendJson(response, 200, {
+      ...auth.pairingStatus(),
+      appVersion: APP_VERSION,
+      protocolVersion: GATEWAY_PROTOCOL_VERSION,
+      minimumClientProtocol: GATEWAY_PROTOCOL_MINIMUM,
+    });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/pairing/claim") {
+    assertSameOrigin(request);
+    const body = await readJson(request) as { code?: unknown; label?: unknown };
+    sendJson(response, 201, await auth.claim(body.code, body.label));
+    return;
+  }
+
+  const authenticatedClient = auth.requireAuthorization(request.headers.authorization);
+
   if (request.method === "GET" && url.pathname === "/api/health") {
     const initialized = await options.client.start();
     sendJson(response, 200, {
       ok: true,
       ...initialized,
       allowedWorkspaceRoots: options.paths.roots,
+      media: {
+        maxBytes: media.maxBytes,
+        videoModel: media.model,
+        responseLanguage: media.analysisLanguage,
+        retentionHours: Math.round(media.retentionMs / 60 / 60_000),
+      },
+      device: auth.device,
+      client: authenticatedClient,
+      gateway: {
+        appVersion: APP_VERSION,
+        protocolVersion: GATEWAY_PROTOCOL_VERSION,
+        minimumClientProtocol: GATEWAY_PROTOCOL_MINIMUM,
+        capabilities: GATEWAY_CAPABILITIES,
+      },
     });
     return;
   }
 
   if (request.method === "GET" && url.pathname === "/api/workspaces") {
     sendJson(response, 200, {
-      workspaces: options.paths.roots.map((path) => ({ path, name: basename(path) || path })),
+      device: auth.device,
+      workspaces: projects.list(),
+      creationLocations: projects.creationLocations(),
     });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/models") {
+    const catalog = await providers.models(url.searchParams.get("provider"));
+    sendJson(response, 200, {
+      models: catalog,
+    });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/providers") {
+    sendJson(response, 200, { providers: await providers.list() });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/diagnostics") {
+    sendJson(response, 200, {
+      diagnostics: await collectSystemDiagnostics(projects.list().length, projects.creationLocations().length),
+    });
+    return;
+  }
+
+  const providerTestMatch = url.pathname.match(/^\/api\/providers\/([^/]+)\/test$/);
+  if (request.method === "POST" && providerTestMatch) {
+    assertSameOrigin(request);
+    await readJson(request, true);
+    const provider = decodeURIComponent(providerTestMatch[1]!);
+    sendJson(response, 200, { test: await providers.test(provider) });
+    return;
+  }
+
+  const providerLoginMatch = url.pathname.match(/^\/api\/providers\/([^/]+)\/login$/);
+  if (request.method === "POST" && providerLoginMatch) {
+    assertSameOrigin(request);
+    await readJson(request, true);
+    const provider = decodeURIComponent(providerLoginMatch[1]!);
+    sendJson(response, 202, { login: await providerLogins.start(provider) });
+    return;
+  }
+
+  const loginSessionMatch = url.pathname.match(/^\/api\/provider-logins\/([^/]+)$/);
+  if (request.method === "GET" && loginSessionMatch) {
+    sendJson(response, 200, { login: providerLogins.get(decodeURIComponent(loginSessionMatch[1]!)) });
+    return;
+  }
+
+  const cancelLoginMatch = url.pathname.match(/^\/api\/provider-logins\/([^/]+)\/cancel$/);
+  if (request.method === "POST" && cancelLoginMatch) {
+    assertSameOrigin(request);
+    await readJson(request, true);
+    sendJson(response, 200, { login: providerLogins.cancel(decodeURIComponent(cancelLoginMatch[1]!)) });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/projects") {
+    assertSameOrigin(request);
+    const body = (await readJson(request)) as CreateProjectBody;
+    const name = requiredString(body.name, "name", 80);
+    const parent = optionalString(body.parent, "parent", 4_096);
+    const project = await projects.create(name, parent);
+    sendJson(response, 201, { device: auth.device, project });
     return;
   }
 
@@ -191,6 +358,46 @@ async function handleApi(
       .slice(0, limit)
       .map(compactThread);
     sendJson(response, 200, { threads, nextCursor: listed.nextCursor });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/session/handoff") {
+    const handoff = handoffs.current();
+    const operation = handoff?.operationId ? operations.get(handoff.operationId) : undefined;
+    sendJson(response, 200, {
+      handoff,
+      operation: operation ? publicOperation(operation) : null,
+    });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/session/handoff") {
+    assertSameOrigin(request);
+    const body = await readJson(request) as { workspace?: unknown; threadId?: unknown; operationId?: unknown };
+    const requestedOperationId = optionalString(body.operationId, "operationId", 200);
+    const operation = requestedOperationId ? operations.get(requestedOperationId) : undefined;
+    if (requestedOperationId && !operation) throw new HttpError(404, "Operation not found");
+    const threadId = optionalString(body.threadId, "threadId", 200) ?? operation?.threadId;
+    if (!threadId) throw new HttpError(400, "threadId is required");
+    const read = await options.client.readThread(threadId, false);
+    options.paths.assertAllowed(read.thread.cwd);
+    const workspace = await options.paths.resolveWorkspace(
+      optionalString(body.workspace, "workspace", 4_096) ?? operation?.cwd ?? read.thread.cwd,
+    );
+    if (operation && (operation.threadId !== threadId || operation.cwd !== workspace)) {
+      throw new HttpError(409, "Operation does not belong to this session");
+    }
+    const handoff = await handoffs.release({
+      workspace,
+      threadId,
+      ...(operation ? { operationId: operation.id } : {}),
+      releasedBy: authenticatedClient,
+    });
+    broadcast(sseClients, { type: "session", action: "released", handoff });
+    sendJson(response, 201, {
+      handoff,
+      operation: operation ? publicOperation(operation) : null,
+    });
     return;
   }
 
@@ -216,10 +423,63 @@ async function handleApi(
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/media") {
+    assertWriteOrigin(request);
+    const contentType = request.headers["content-type"] ?? "";
+    const name = url.searchParams.get("name") ?? "attachment";
+    const item = await media.saveUpload(request, name, contentType);
+    sendJson(response, 201, { media: item });
+    return;
+  }
+
+  const mediaMatch = url.pathname.match(/^\/api\/media\/([^/]+)$/);
+  if (request.method === "GET" && mediaMatch) {
+    sendJson(response, 200, { media: media.get(decodeURIComponent(mediaMatch[1]!)) });
+    return;
+  }
+  if (request.method === "DELETE" && mediaMatch) {
+    assertWriteOrigin(request);
+    await media.delete(decodeURIComponent(mediaMatch[1]!));
+    sendJson(response, 200, { deleted: true });
+    return;
+  }
+
+  const analyzeMatch = url.pathname.match(/^\/api\/media\/([^/]+)\/analyze$/);
+  if (request.method === "POST" && analyzeMatch) {
+    assertSameOrigin(request);
+    await readJson(request, true);
+    const item = media.queueAnalysis(decodeURIComponent(analyzeMatch[1]!));
+    sendJson(response, item.status === "ready" ? 200 : 202, { media: item });
+    return;
+  }
+
+  const frameMatch = url.pathname.match(/^\/api\/media\/([^/]+)\/frames\/(\d+)$/);
+  if (request.method === "GET" && frameMatch) {
+    const path = media.getFrame(decodeURIComponent(frameMatch[1]!), Number(frameMatch[2]));
+    await serveFile(request, response, path, "image/jpeg", "private, max-age=3600");
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/runs") {
+    cleanupOperations(operations);
+    const status = url.searchParams.get("status");
+    const workspace = url.searchParams.get("workspace");
+    if (workspace) options.paths.assertAllowed(workspace);
+    const listed = [...operations.values()]
+      .filter((operation) => (!status || operation.status === status) && (!workspace || operation.cwd === workspace))
+      .sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt))
+      .map(publicOperation);
+    sendJson(response, 200, { operations: listed });
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/api/runs") {
     assertSameOrigin(request);
     const body = (await readJson(request)) as RunBody;
     const prompt = requiredString(body.prompt, "prompt", 100_000);
+    const provider = optionalString(body.provider, "provider", 40);
+    const accountId = optionalString(body.accountId, "accountId", 100);
+    providers.assertRunnable(provider, accountId);
     const threadId = optionalString(body.threadId, "threadId", 200);
     const requestedCwd = optionalString(body.cwd, "cwd", 4_096);
     let cwd: string;
@@ -231,14 +491,21 @@ async function handleApi(
       cwd = await options.paths.resolveWorkspace(requestedCwd);
     }
 
-    const effort = optionalEnum(body.effort, ["low", "medium", "high", "xhigh"] as const, "effort");
+    const effort = optionalEnum(
+      body.effort,
+      ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const,
+      "effort",
+    );
     const model = optionalString(body.model, "model", 200);
     const networkAccess = body.networkAccess === true;
     const timeoutSeconds = optionalInteger(body.timeoutSeconds, 30, 3600, 900, "timeoutSeconds");
+    const attachmentIds = optionalStringArray(body.attachments, "attachments", 4, 200);
+    const attachmentInput = media.resolveForTurn(attachmentIds);
     const begun = await options.client.beginTurn({
       threadId,
       cwd,
-      prompt,
+      prompt: `${prompt}${attachmentInput.promptContext}`,
+      imagePaths: attachmentInput.imagePaths,
       networkAccess,
       model,
       effort,
@@ -283,6 +550,14 @@ async function handleApi(
       await options.client.interrupt(operation.threadId, operation.turnId);
     }
     sendJson(response, 200, { operation: publicOperation(operation), interruptRequested: true });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/pairing/revoke") {
+    assertSameOrigin(request);
+    await readJson(request, true);
+    await auth.revoke(authenticatedClient.id);
+    sendJson(response, 200, { revoked: true });
     return;
   }
 
@@ -405,6 +680,32 @@ async function serveStatic(
   });
 }
 
+async function serveFile(
+  request: IncomingMessage,
+  response: ServerResponse,
+  filePath: string,
+  type: string,
+  cacheControl: string,
+): Promise<void> {
+  if (request.method !== "GET" && request.method !== "HEAD") throw new HttpError(405, "Method not allowed");
+  const info = await stat(filePath).catch(() => null);
+  if (!info?.isFile()) throw new HttpError(404, "File not found");
+  response.statusCode = 200;
+  response.setHeader("Content-Type", type);
+  response.setHeader("Content-Length", info.size);
+  response.setHeader("Cache-Control", cacheControl);
+  if (request.method === "HEAD") {
+    response.end();
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(filePath);
+    stream.once("error", reject);
+    response.once("finish", resolve);
+    stream.pipe(response);
+  });
+}
+
 function setSecurityHeaders(response: ServerResponse): void {
   response.setHeader(
     "Content-Security-Policy",
@@ -420,15 +721,39 @@ function assertSameOrigin(request: IncomingMessage): void {
   if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
     throw new HttpError(415, "application/json required");
   }
+  assertWriteOrigin(request);
+}
+
+function assertWriteOrigin(request: IncomingMessage): void {
   const origin = request.headers.origin;
-  if (!origin) return;
+  if (!origin) throw new HttpError(403, "Origin header required for write requests");
   const host = request.headers.host;
   try {
     const parsed = new URL(origin);
-    if (!host || parsed.host !== host || !isLoopbackName(parsed.hostname)) throw new Error("mismatch");
+    const sameLoopbackOrigin = Boolean(host && parsed.host === host && isLoopbackName(parsed.hostname));
+    if (!sameLoopbackOrigin && !NATIVE_APP_ORIGINS.has(origin) && !NATIVE_APP_ORIGINS.has(parsed.origin)) {
+      throw new Error("mismatch");
+    }
   } catch {
     throw new HttpError(403, "Cross-origin write request blocked");
   }
+}
+
+function applyApiCors(request: IncomingMessage, response: ServerResponse): void {
+  const origin = request.headers.origin;
+  if (!origin) return;
+  let allowedOrigin = NATIVE_APP_ORIGINS.has(origin) ? origin : "";
+  try {
+    const parsedOrigin = new URL(origin).origin;
+    if (!allowedOrigin && NATIVE_APP_ORIGINS.has(parsedOrigin)) allowedOrigin = parsedOrigin;
+  } catch {
+    return;
+  }
+  if (!allowedOrigin) return;
+  response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  response.setHeader("Access-Control-Allow-Methods", "DELETE, GET, POST, OPTIONS");
+  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  response.setHeader("Vary", "Origin");
 }
 
 async function readJson(request: IncomingMessage, allowEmpty = false): Promise<unknown> {
@@ -463,10 +788,17 @@ function sendError(response: ServerResponse, error: unknown): void {
     response.end();
     return;
   }
-  const status = error instanceof HttpError ? error.status : 500;
+  const status = error instanceof HttpError
+    ? error.status
+    : error instanceof MediaError || error instanceof ProjectCreationError || error instanceof ProviderError || error instanceof GatewayAuthError
+      ? error.statusCode
+      : 500;
   const message = error instanceof Error ? error.message : String(error);
   if (status >= 500) process.stderr.write(`[codex-web] ${message}\n`);
-  sendJson(response, status, { error: message });
+  sendJson(response, status, {
+    error: message,
+    ...(error instanceof GatewayAuthError ? { code: error.code } : {}),
+  });
 }
 
 function broadcast(clients: Set<ServerResponse>, event: Record<string, unknown>): void {
@@ -526,6 +858,20 @@ function optionalEnum<const T extends readonly string[]>(
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value !== "string" || !choices.includes(value)) throw new HttpError(400, `${name} is invalid`);
   return value as T[number];
+}
+
+function optionalStringArray(
+  value: unknown,
+  name: string,
+  maxItems: number,
+  maxLength: number,
+): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > maxItems) throw new HttpError(400, `${name} is invalid`);
+  return value.map((item) => {
+    if (typeof item !== "string" || !item || item.length > maxLength) throw new HttpError(400, `${name} is invalid`);
+    return item;
+  });
 }
 
 function isLoopbackHostHeader(host: string): boolean {
