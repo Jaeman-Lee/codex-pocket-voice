@@ -4,6 +4,7 @@ import {
   apiBlob,
   activeDeviceTarget,
   addLinuxDevice,
+  ApiError,
   deviceTargetLabel,
   listDeviceTargets,
   pairActiveDevice,
@@ -24,6 +25,7 @@ import {
   type NativeSpeechState,
 } from "./native";
 import { mergeSpeechSegments } from "./speech-utils";
+import { operationBelongsToSession, scopedHandoff } from "./session-scope";
 import { createWorkJournal } from "./work-journal";
 import { conversationKey, restoredMessages, serializableQueue } from "./work-journal-model";
 import { initialSpeechLanguage, initialUiLanguage, translate, type MessageKey, type UiLanguage } from "./i18n";
@@ -328,18 +330,31 @@ export function App() {
     }
   }, [showToast]);
 
+  const loadProjectHandoff = useCallback(async (selectedWorkspace: string) => {
+    const requestedDevice = deviceRef.current;
+    try {
+      const suffix = selectedWorkspace ? `?workspace=${encodeURIComponent(selectedWorkspace)}` : "";
+      const data = await api<{ handoff: SessionHandoff | null }>(`/api/session/handoff${suffix}`);
+      if (deviceRef.current !== requestedDevice || workspaceRef.current !== selectedWorkspace) return;
+      setHandoffSupported(true);
+      const dismissed = localStorage.getItem(handoffDismissedKey(requestedDevice));
+      setHandoff(scopedHandoff(data.handoff, selectedWorkspace, dismissed));
+    } catch {
+      if (deviceRef.current !== requestedDevice || workspaceRef.current !== selectedWorkspace) return;
+      setHandoffSupported(false);
+      setHandoff(null);
+    }
+  }, []);
+
   const initialize = useCallback(async () => {
     if (initializingRef.current) return;
     initializingRef.current = true;
     try {
-      const [health, workspaceData, providerData, modelData, handoffData, runData] = await Promise.all([
+      const [health, workspaceData, providerData, modelData, runData] = await Promise.all([
         api<{ userAgent: string; device: { name: string } }>("/api/health"),
         api<WorkspaceResponse>("/api/workspaces"),
         api<ProviderResponse>("/api/providers"),
         api<ModelResponse>("/api/models?provider=codex"),
-        api<{ handoff: SessionHandoff | null; operation: Operation | null }>("/api/session/handoff")
-          .then((data) => ({ ...data, supported: true }))
-          .catch(() => ({ handoff: null, operation: null, supported: false })),
         api<{ operations: Operation[] }>("/api/runs?status=running")
           .catch(() => ({ operations: [] })),
       ]);
@@ -349,7 +364,6 @@ export function App() {
       setCreationLocations(workspaceData.creationLocations);
       setModels(modelData.models);
       setProviders(providerData.providers);
-      setHandoffSupported(handoffData.supported);
       const storedProvider = localStorage.getItem(storageKey("provider", deviceRef.current));
       const selectedProvider = providerData.providers.find((item) => item.id === storedProvider && item.available)
         ?? providerData.providers.find((item) => item.id === "codex")
@@ -384,6 +398,7 @@ export function App() {
       setWorkspace(selected);
       workspaceRef.current = selected;
       await loadThreads(selected, true, localStorage.getItem(storageKey("thread", deviceRef.current)) ?? "");
+      await loadProjectHandoff(selected);
       if (threadRef.current) {
         try {
           const data = await api<{ thread: ThreadDetail }>(`/api/threads/${encodeURIComponent(threadRef.current)}`);
@@ -395,8 +410,6 @@ export function App() {
           // The local work journal effect restores the last saved copy.
         }
       }
-      const dismissedHandoff = localStorage.getItem(handoffDismissedKey(deviceRef.current));
-      setHandoff(handoffData.handoff?.id === dismissedHandoff ? null : handoffData.handoff);
       const activeOperation = runData.operations.find((item) => item.threadId === threadRef.current);
       if (activeOperation) handleOperationEvent("started", activeOperation);
       initializedRef.current = true;
@@ -422,7 +435,7 @@ export function App() {
     } finally {
       initializingRef.current = false;
     }
-  }, [loadThreads, requestPairing, showToast]);
+  }, [loadProjectHandoff, loadThreads, requestPairing, showToast]);
 
   initializeRef.current = initialize;
 
@@ -715,9 +728,14 @@ export function App() {
       return;
     }
     if (event.type === "session" && event.action === "released" && event.handoff) {
-      if (localStorage.getItem(handoffDismissedKey(deviceRef.current)) !== event.handoff.id) {
+      if (event.handoff.workspace === workspaceRef.current
+        && localStorage.getItem(handoffDismissedKey(deviceRef.current)) !== event.handoff.id) {
         setHandoff(event.handoff);
       }
+      return;
+    }
+    if (event.type === "session" && event.action === "claimed" && event.handoffId) {
+      setHandoff((current) => current?.id === event.handoffId ? null : current);
       return;
     }
     const current = operationRef.current;
@@ -996,6 +1014,10 @@ export function App() {
   async function stopOperation() {
     const current = operationRef.current;
     if (!current) return;
+    if (!operationBelongsToSession(current, workspaceRef.current, threadRef.current)) {
+      showToast("현재 프로젝트의 작업이 아니어서 중단하지 않았습니다.");
+      return;
+    }
     try {
       await api(`/api/runs/${encodeURIComponent(current.id)}/interrupt`, { method: "POST", body: {} });
       setRunning("중단을 요청했습니다…");
@@ -1010,7 +1032,12 @@ export function App() {
       showToast("이 기기에만 저장된 대기열이 있습니다. 모두 실행하거나 취소한 뒤 세션을 반납하세요.");
       return;
     }
-    const currentOperation = operationRef.current;
+    const candidateOperation = operationRef.current;
+    const currentOperation = operationBelongsToSession(
+      candidateOperation,
+      workspaceRef.current,
+      threadRef.current,
+    ) ? candidateOperation : null;
     const currentThreadId = threadRef.current || currentOperation?.threadId || "";
     if (!currentThreadId) {
       detachLocalSession();
@@ -1100,9 +1127,17 @@ export function App() {
         if (active?.operation.status === "running") handleOperationEvent("started", active.operation);
         else if (active?.operation.status === "failed") handleOperationEvent("failed", active.operation);
       }
+      let claimWarning = "";
+      try {
+        await api(`/api/session/handoffs/${encodeURIComponent(pending.id)}/claim`, { method: "POST", body: {} });
+      } catch (error) {
+        if (!(error instanceof ApiError && error.status === 404)) {
+          claimWarning = "세션은 연결했지만 다른 기기의 인계 표시를 정리하지 못했습니다.";
+        }
+      }
       localStorage.setItem(handoffDismissedKey(deviceRef.current), pending.id);
       setHandoff(null);
-      showToast(pending.operationId ? "실행 중인 세션을 이어받았습니다." : "세션을 이어받았습니다.");
+      showToast(claimWarning || (pending.operationId ? "실행 중인 세션을 이어받았습니다." : "세션을 이어받았습니다."));
     } catch (error) {
       showToast(errorMessage(error));
     } finally {
@@ -1298,6 +1333,7 @@ export function App() {
     messagesRef.current = [];
     setJournalRestored(false);
     await loadThreads(path, false);
+    await loadProjectHandoff(path);
   }
 
   async function selectThread(id: string) {
@@ -1477,7 +1513,7 @@ export function App() {
             type="button"
             aria-label="현재 세션 반납"
             title={handoffSupported ? "세션 반납 · 다른 기기에서 이어가기" : "Companion 1.8.0 이상에서 사용할 수 있습니다"}
-            disabled={!handoffSupported || handoffBusy || (!threadId && !operation)}
+            disabled={!handoffSupported || handoffBusy || (!threadId && !operationBelongsToSession(operation, workspace, threadId))}
             onClick={() => setShowHandoffDialog(true)}
           >⇥</button>
           <button
@@ -1547,7 +1583,9 @@ export function App() {
             <div className="handoff-summary">
               <span><strong>프로젝트</strong>{workspaceName(workspaceRef.current)}</span>
               <span><strong>대화</strong>{threadId ? short(threads.find((item) => item.id === threadId)?.name || threads.find((item) => item.id === threadId)?.preview || threadId, 42) : "새 대화"}</span>
-              <span><strong>PC 작업</strong>{operation?.status === "running" ? "반납 후에도 계속 실행" : "현재 실행 중인 작업 없음"}</span>
+              <span><strong>PC 작업</strong>{operationBelongsToSession(operation, workspace, threadId) && operation?.status === "running"
+                ? "반납 후에도 계속 실행"
+                : "현재 실행 중인 작업 없음"}</span>
             </div>
             {promptQueue.length > 0 && (
               <p className="project-dialog-error">대기열 {promptQueue.length}건은 이 기기에만 저장되어 있습니다. 먼저 실행하거나 취소해야 안전하게 반납할 수 있습니다.</p>

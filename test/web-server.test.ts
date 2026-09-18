@@ -177,6 +177,22 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
   const availableHandoff = await jsonFetch(`${base}/api/session/handoff`, { headers: authorized() });
   assert.equal(availableHandoff.handoff.id, released.handoff.id);
   assert.equal(availableHandoff.operation.id, operationId);
+  const unrelatedHandoff = await jsonFetch(
+    `${base}/api/session/handoff?workspace=${encodeURIComponent(created.project.path)}`,
+    { headers: authorized() },
+  );
+  assert.equal(unrelatedHandoff.handoff, null);
+  const claimed = await jsonFetch(`${base}/api/session/handoffs/${released.handoff.id}/claim`, {
+    method: "POST",
+    headers: authorized({ "Content-Type": "application/json", Origin: base }),
+    body: "{}",
+  });
+  assert.equal(claimed.claimed.id, released.handoff.id);
+  const clearedHandoff = await jsonFetch(
+    `${base}/api/session/handoff?workspace=${encodeURIComponent(cwd)}`,
+    { headers: authorized() },
+  );
+  assert.equal(clearedHandoff.handoff, null);
 
   const interrupted = await jsonFetch(`${base}/api/runs/${operationId}/interrupt`, {
     method: "POST",
