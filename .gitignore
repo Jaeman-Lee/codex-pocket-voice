@@ -8,3 +8,4 @@ client/dist/
 .gradle/
 android/.gradle/
 android/local.properties
+__pycache__/
