@@ -95,3 +95,49 @@ test('unrelated SSE runs do not lock the tab; new conversation clears prior hist
   await expect(page.locator('#threadSelect')).toHaveValue('');
   await expect(page.locator('.message')).toHaveCount(0);
 });
+
+async function speech(page: Page) {
+  await page.addInitScript(() => {
+    class Recognition {
+      onstart: any; onend: any; onresult: any;
+      constructor() { (window as any).__recognition = this; }
+      start() { this.onstart?.(); }
+      stop() { this.onend?.(); }
+    }
+    (window as any).SpeechRecognition = Recognition;
+  });
+}
+async function emitSpeech(page: Page, slots: { text: string; final: boolean }[], resultIndex = 0) {
+  await page.evaluate(({ slots, resultIndex }) => {
+    const results = slots.map(slot => Object.assign([{ transcript: slot.text }], { isFinal: slot.final }));
+    (window as any).__recognition.onresult({ results, resultIndex });
+  }, { slots, resultIndex });
+}
+
+test('dictation replay does not duplicate final text but preserves intentionally repeated phrases', async ({ page }) => {
+  await mock(page); await speech(page); await page.goto('/');
+  await expect(page.locator('#connectionText')).toHaveText('PC 연결됨');
+  await page.locator('#promptInput').fill('메모:');
+  await page.locator('#voiceButton').click();
+  await emitSpeech(page, [{ text: '확인해 주세요', final: true }]);
+  await emitSpeech(page, [{ text: '확인해 주세요', final: true }]);
+  await expect(page.locator('#promptInput')).toHaveValue('메모: 확인해 주세요');
+  await emitSpeech(page, [{ text: '확인해 주세요', final: true }, { text: '확인해 주세요', final: true }], 1);
+  await expect(page.locator('#promptInput')).toHaveValue('메모: 확인해 주세요 확인해 주세요');
+});
+
+test('dictation interim revisions, removal and a fresh session replace only recognition results', async ({ page }) => {
+  await mock(page); await speech(page); await page.goto('/');
+  await expect(page.locator('#connectionText')).toHaveText('PC 연결됨');
+  await page.locator('#voiceButton').click();
+  await emitSpeech(page, [{ text: '프로', final: false }]);
+  await emitSpeech(page, [{ text: '프로젝트 확인', final: true }, { text: '다음', final: false }]);
+  await expect(page.locator('#promptInput')).toHaveValue('프로젝트 확인 다음');
+  await emitSpeech(page, [{ text: '프로젝트 확인', final: true }], 1);
+  await expect(page.locator('#promptInput')).toHaveValue('프로젝트 확인');
+  await page.locator('#voiceButton').click();
+  await page.locator('#voiceButton').click();
+  await emitSpeech(page, [{ text: '완료', final: true }]);
+  await emitSpeech(page, [{ text: '완료', final: true }]);
+  await expect(page.locator('#promptInput')).toHaveValue('프로젝트 확인 완료');
+});

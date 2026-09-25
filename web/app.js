@@ -42,7 +42,6 @@ const state = {
   installPrompt: null,
   recognition: null,
   dictationBase: "",
-  dictationFinal: "",
 };
 
 function stored(storage, key, fallback = "") {
@@ -153,13 +152,11 @@ function initializeDictation() {
   recognition.maxAlternatives = 1;
   recognition.onstart = () => setDictating(true);
   recognition.onresult = (event) => {
-    let interim = "";
-    for (let index = event.resultIndex; index < event.results.length; index += 1) {
-      const transcript = event.results[index][0]?.transcript ?? "";
-      if (event.results[index].isFinal) state.dictationFinal += transcript;
-      else interim += transcript;
-    }
-    elements.prompt.value = joinDictation(state.dictationBase, state.dictationFinal, interim);
+    // results is the complete current-session snapshot, not an append-only delta.
+    // Rebuild by result position so replayed notifications do not duplicate text.
+    // Equal text in distinct positions is intentional speech and must be retained.
+    const parts = Array.from(event.results, result => result[0]?.transcript ?? "");
+    elements.prompt.value = joinDictation(state.dictationBase, ...parts);
     autoSizePrompt();
     saveDraft();
   };
@@ -182,7 +179,6 @@ function toggleDictation() {
     return;
   }
   state.dictationBase = elements.prompt.value.trim();
-  state.dictationFinal = "";
   try {
     recognition.lang = "ko-KR";
     recognition.start();

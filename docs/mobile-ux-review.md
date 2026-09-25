@@ -50,3 +50,11 @@ npm run test:browser
 - 실제 게이트웨이 미리보기: 화면·연결 상태·컨트롤 정상, 브라우저 오류 없음, 가로 넘침 없음.
 - 프로덕션 의존성 npm audit 0건.
 - 테스트 서버 기본 포트는 18790이며 `POCKET_TEST_PORT`로 변경 가능. 다른 작업의 8790 서비스와 충돌해 테스트 포트를 분리했으며 해당 서비스는 중단하지 않았다.
+
+## 음성 중복 입력 추가 수정 (#9)
+
+동일 확정 결과가 재통지되면 기존 `dictationFinal += transcript` 코드에서 `확인해 주세요확인해 주세요`가 만들어지는 것을 브라우저 fixture로 재현했다. 이제 현재 세션 results의 각 위치를 한 번씩 렌더링한다. 다른 위치에 실제로 반복된 말은 보존하며, 중간 결과 수정/삭제와 새 녹음 세션도 처리한다.
+
+근거: [SpeechRecognitionEvent.results](https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognitionEvent/results)는 현재 세션의 확정 결과와 갱신 가능한 중간 결과를 포함한다.
+
+수정 전 신규 회귀 2개 실패를 확인했고 수정 후 전체 브라우저 회귀 6개 통과. 실제 휴대폰 마이크 검증은 여전히 별도이며 운영 서비스 적용 전이다.
