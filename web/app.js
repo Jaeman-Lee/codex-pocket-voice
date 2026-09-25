@@ -4,6 +4,10 @@ const elements = {
   connectionText: $("#connectionText"),
   connectionDot: $("#connectionDot"),
   workspace: $("#workspaceSelect"),
+  search: $("#workspaceSearch"),
+  reconnect: $("#reconnectButton"),
+  connectionHelp: $("#connectionHelp"),
+  newThread: $("#newThreadButton"),
   thread: $("#threadSelect"),
   refresh: $("#refreshButton"),
   transcript: $("#transcript"),
@@ -23,6 +27,15 @@ const elements = {
 
 const state = {
   operation: null,
+  submitting: false,
+  connected: false,
+  workspaceList: [],
+  workspacePath: "",
+  threadsRequest: 0,
+  historyRequest: 0,
+  syncing: false,
+  initialized: false,
+  followOutput: true,
   liveBubble: null,
   liveText: "",
   latestDiff: "",
@@ -32,26 +45,74 @@ const state = {
   dictationFinal: "",
 };
 
-elements.tts.checked = localStorage.getItem("codex-pocket-tts") === "true";
-elements.tts.addEventListener("change", () => localStorage.setItem("codex-pocket-tts", String(elements.tts.checked)));
+function stored(storage, key, fallback = "") {
+  try { return storage.getItem(key) ?? fallback; } catch { return fallback; }
+}
+function remember(storage, key, value) {
+  try { if (value === null) storage.removeItem(key); else storage.setItem(key, value); } catch {}
+}
+function draftKey() { return `pocket-draft:${state.workspacePath}`; }
+function saveDraft() { if (state.workspacePath) remember(sessionStorage, draftKey(), elements.prompt.value); }
+function saveSelection() {
+  remember(localStorage, "pocket-workspace", state.workspacePath);
+  remember(localStorage, `pocket-thread:${state.workspacePath}`, elements.thread.value);
+}
+function restoreDraft() {
+  elements.prompt.value = stored(sessionStorage, draftKey());
+  autoSizePrompt();
+}
+function renderWorkspaces() {
+  const query = elements.search.value.trim().toLowerCase();
+  const matches = state.workspaceList.filter(w => w.path === state.workspacePath || w.name.toLowerCase().includes(query));
+  elements.workspace.replaceChildren(...matches.map(w => option(w.path, w.name)));
+  elements.workspace.value = state.workspacePath;
+}
+async function changeWorkspace() {
+  saveDraft();
+  state.workspacePath = elements.workspace.value;
+  state.historyRequest += 1;
+  clearTranscript();
+  restoreDraft();
+  await loadThreads(false, stored(localStorage, `pocket-thread:${state.workspacePath}`));
+  saveSelection();
+  await loadSelectedThread();
+}
+elements.tts.checked = stored(localStorage, "codex-pocket-tts") === "true";
+elements.tts.addEventListener("change", () => remember(localStorage, "codex-pocket-tts", String(elements.tts.checked)));
 elements.send.addEventListener("click", submitPrompt);
 elements.stop.addEventListener("click", stopOperation);
 elements.refresh.addEventListener("click", () => loadThreads(true));
-elements.thread.addEventListener("change", loadSelectedThread);
-elements.workspace.addEventListener("change", () => loadThreads(false));
-elements.prompt.addEventListener("input", autoSizePrompt);
+elements.thread.addEventListener("change", () => { saveSelection(); void loadSelectedThread(); });
+elements.workspace.addEventListener("change", changeWorkspace);
+elements.search.addEventListener("input", renderWorkspaces);
+elements.newThread.addEventListener("click", () => {
+  elements.thread.value = ""; saveSelection(); void loadSelectedThread(); elements.prompt.focus();
+});
+elements.reconnect.addEventListener("click", () => void initialize());
+elements.prompt.addEventListener("input", () => { autoSizePrompt(); saveDraft(); });
+elements.transcript.addEventListener("scroll", () => {
+  const box = elements.transcript;
+  state.followOutput = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+});
 elements.voice.addEventListener("click", toggleDictation);
 elements.prompt.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-    event.preventDefault();
-    void submitPrompt();
+  if (!event.isComposing && event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault(); void submitPrompt();
   }
 });
+window.addEventListener("pagehide", saveDraft);
+window.addEventListener("online", () => void initialize());
+window.addEventListener("offline", () => setConnection("pending"));
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") void syncOperation();
+});
+setInterval(() => { if (state.operation) void syncOperation(); }, 5000);
 
 for (const button of document.querySelectorAll("[data-prompt]")) {
   button.addEventListener("click", () => {
     elements.prompt.value = button.dataset.prompt ?? "";
     autoSizePrompt();
+    saveDraft();
     elements.prompt.focus();
   });
 }
@@ -81,6 +142,7 @@ function initializeDictation() {
   if (!Recognition) {
     elements.voice.disabled = true;
     elements.voice.title = "이 브라우저는 앱 내 음성 인식을 지원하지 않습니다.";
+    $("#voiceHelp").classList.remove("hidden");
     return;
   }
 
@@ -99,6 +161,7 @@ function initializeDictation() {
     }
     elements.prompt.value = joinDictation(state.dictationBase, state.dictationFinal, interim);
     autoSizePrompt();
+    saveDraft();
   };
   recognition.onerror = (event) => {
     if (event.error === "not-allowed" || event.error === "service-not-allowed") {
@@ -140,96 +203,121 @@ function joinDictation(...parts) {
 }
 
 async function initialize() {
+  elements.reconnect.disabled = true;
   try {
-    const [health, workspaceData] = await Promise.all([api("/api/health"), api("/api/workspaces")]);
-    elements.connectionText.textContent = `${health.userAgent} · 안전 연결`;
+    const [, workspaceData] = await Promise.all([api("/api/health"), api("/api/workspaces")]);
     setConnection("online");
-    elements.workspace.replaceChildren(
-      ...workspaceData.workspaces.map((workspace) => option(workspace.path, workspace.name)),
-    );
-    await loadThreads(false);
+    state.workspaceList = workspaceData.workspaces;
+    if (!state.initialized) {
+      let active;
+      try { active = JSON.parse(stored(sessionStorage, "pocket-active", "null")); } catch {}
+      const preferred = active?.cwd || stored(localStorage, "pocket-workspace");
+      state.workspacePath = state.workspaceList.find(w => w.path === preferred)?.path || state.workspaceList[0]?.path || "";
+      renderWorkspaces();
+      restoreDraft();
+      await loadThreads(false, active?.threadId || stored(localStorage, `pocket-thread:${state.workspacePath}`));
+      await loadSelectedThread();
+      if (active?.id && active.cwd === state.workspacePath) {
+        state.operation = active;
+        setRunning(true, "진행 중인 작업을 확인하고 있습니다…");
+      }
+      state.initialized = true;
+    }
+    await syncOperation();
   } catch (error) {
     setConnection("error");
-    elements.connectionText.textContent = "PC 연결 실패";
     showToast(error.message);
-  }
+  } finally { elements.reconnect.disabled = false; }
 }
 
-async function loadThreads(preserveSelection) {
-  const selected = preserveSelection ? elements.thread.value : "";
+async function loadThreads(preserveSelection, requested = "") {
+  const selected = requested || (preserveSelection ? elements.thread.value : "");
+  const workspace = state.workspacePath;
+  const request = ++state.threadsRequest;
   elements.refresh.disabled = true;
   try {
-    const data = await api("/api/threads?limit=30");
-    const workspace = elements.workspace.value;
-    const prefix = workspace.endsWith("/") ? workspace : `${workspace}/`;
-    const threads = data.threads.filter(
-      (thread) => !workspace || thread.cwd === workspace || thread.cwd.startsWith(prefix),
-    );
+    const data = await api(`/api/threads?limit=50&cwd=${encodeURIComponent(workspace)}`);
+    if (request !== state.threadsRequest || workspace !== state.workspacePath) return;
+    const prefix = `${workspace}/`;
+    const threads = data.threads.filter(t => t.cwd === workspace || t.cwd.startsWith(prefix));
     elements.thread.replaceChildren(option("", "새 대화"));
     for (const thread of threads) {
-      const title = thread.name || thread.preview || "제목 없는 대화";
-      elements.thread.append(option(thread.id, short(title, 42)));
+      elements.thread.append(option(thread.id, short(thread.name || thread.preview || "제목 없는 대화", 42)));
     }
-    if (selected && threads.some((thread) => thread.id === selected)) elements.thread.value = selected;
-  } catch (error) {
-    showToast(error.message);
-  } finally {
-    elements.refresh.disabled = false;
-  }
+    if (selected) {
+      if (!threads.some(t => t.id === selected)) elements.thread.append(option(selected, "이전 대화 이어가기"));
+      elements.thread.value = selected;
+    }
+  } catch (error) { showToast(error.message); }
+  finally { if (request === state.threadsRequest) elements.refresh.disabled = state.submitting || !!state.operation; }
 }
 
 async function loadSelectedThread() {
   const threadId = elements.thread.value;
+  const request = ++state.historyRequest;
   clearTranscript();
   if (!threadId) return;
   elements.transcript.setAttribute("aria-busy", "true");
   try {
     const data = await api(`/api/threads/${encodeURIComponent(threadId)}`);
-    for (const turn of data.thread.turns) {
-      for (const item of turn.items) renderHistoryItem(item);
-    }
-    scrollToBottom();
+    if (request !== state.historyRequest) return;
+    for (const turn of data.thread.turns) for (const item of turn.items) renderHistoryItem(item);
+    scrollToBottom(true);
   } catch (error) {
-    showToast(error.message);
-  } finally {
-    elements.transcript.removeAttribute("aria-busy");
-  }
+    if (request === state.historyRequest) showToast(error.message);
+  } finally { if (request === state.historyRequest) elements.transcript.removeAttribute("aria-busy"); }
 }
 
 async function submitPrompt() {
   const prompt = elements.prompt.value.trim();
-  if (!prompt || state.operation?.status === "running") return;
-  const workspace = elements.workspace.value;
-  if (!workspace) {
-    showToast("프로젝트를 먼저 선택하세요.");
-    return;
-  }
-
+  if (!prompt || state.submitting || state.operation || !state.connected) return;
+  const workspace = state.workspacePath;
+  if (!workspace) { showToast("프로젝트를 먼저 선택하세요."); return; }
+  if (elements.voice.getAttribute("aria-pressed") === "true") state.recognition?.stop();
+  saveDraft();
+  state.submitting = true;
+  state.followOutput = true;
   removeEmptyState();
   addMessage("user", prompt);
-  state.liveText = "";
-  state.latestDiff = "";
+  state.liveText = ""; state.latestDiff = "";
   state.liveBubble = addMessage("assistant", "", { pending: true });
-  setRunning(true, "Codex가 요청을 시작하고 있습니다…");
-  elements.prompt.value = "";
-  autoSizePrompt();
-
+  setRunning(true, "요청을 보내고 있습니다…");
   try {
-    const data = await api("/api/runs", {
-      method: "POST",
-      body: {
-        prompt,
-        cwd: workspace,
-        threadId: elements.thread.value || undefined,
-        networkAccess: elements.network.checked,
-      },
-    });
+    const data = await api("/api/runs", { method: "POST", body: {
+      prompt, cwd: workspace, threadId: elements.thread.value || undefined, networkAccess: elements.network.checked,
+    }});
     state.operation = data.operation;
-    setRunning(true, "Codex가 프로젝트를 살펴보고 있습니다…");
+    remember(sessionStorage, "pocket-active", JSON.stringify({id: data.operation.id, cwd: workspace, threadId: data.operation.threadId}));
+    selectThread(data.operation.threadId); saveSelection();
+    if (elements.prompt.value.trim() === prompt) { elements.prompt.value = ""; saveDraft(); autoSizePrompt(); }
+    setRunning(true, "Codex가 작업 중입니다…");
   } catch (error) {
-    finishLiveMessage(`실행하지 못했습니다: ${error.message}`, true);
+    finishLiveMessage(`전송 결과를 확인하지 못했습니다. 입력은 보관했습니다. 대화 기록을 확인한 뒤 다시 보내세요.\n${error.message}`, true);
     setRunning(false);
+  } finally {
+    state.submitting = false;
+    setRunning(!!state.operation);
   }
+  await syncOperation();
+}
+
+async function syncOperation() {
+  if (state.syncing || !state.operation || state.submitting) return;
+  state.syncing = true;
+  const id = state.operation.id;
+  try {
+    const { operation } = await api(`/api/runs/${encodeURIComponent(id)}`);
+    if (state.operation?.id !== id) return;
+    setConnection("online");
+    if (operation.status === "running") { state.operation = operation; setRunning(true, "Codex가 작업 중입니다…"); }
+    else handleEvent({type: "operation", action: operation.status === "failed" ? "failed" : "completed", operation});
+  } catch (error) {
+    if (state.operation?.id !== id) return;
+    if (error.status === 404) {
+      finishLiveMessage("PC 서버가 재시작되어 실행 상태를 확인할 수 없습니다. 대화 기록을 확인해 주세요.", true);
+      setRunning(false);
+    } else setConnection("pending");
+  } finally { state.syncing = false; }
 }
 
 async function stopOperation() {
@@ -250,7 +338,7 @@ async function stopOperation() {
 
 function connectEvents() {
   const stream = new EventSource("/api/events");
-  stream.onopen = () => setConnection("online");
+  stream.onopen = () => { if (state.initialized) void initialize(); };
   stream.onerror = () => {
     setConnection("pending");
     elements.connectionText.textContent = "연결을 복구하는 중…";
@@ -266,14 +354,15 @@ function handleEvent(event) {
   if (event.type === "connected") return;
   if (event.type === "operation") {
     const operation = event.operation;
-    if (event.action === "started" && !state.operation) state.operation = operation;
+    // Only track this tab's acknowledged request, never another client's operation.
     if (!state.operation || operation.id !== state.operation.id) return;
     state.operation = operation;
     if (event.action === "completed") {
       const result = operation.result ?? {};
       finishLiveMessage(result.finalResponse || statusMessage(operation.status), false, result);
       setRunning(false);
-      if (result.threadId) selectThread(result.threadId);
+      selectThread(result.threadId || operation.threadId);
+      saveSelection();
       if (elements.tts.checked && result.finalResponse) speak(result.finalResponse);
       void loadThreads(true);
     } else if (event.action === "failed") {
@@ -333,6 +422,13 @@ function addMessage(role, text, options = {}) {
   paragraph.className = "message-text";
   paragraph.textContent = text;
   bubble.append(label, paragraph);
+  const copy = document.createElement("button");
+  copy.type = "button"; copy.className = "copy-button"; copy.textContent = "복사";
+  copy.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(paragraph.textContent); showToast("복사했습니다."); }
+    catch { showToast("복사 권한이 없습니다. 답변을 길게 눌러 복사해 주세요."); }
+  });
+  bubble.append(copy);
   article.append(bubble);
   elements.transcript.append(article);
   scrollToBottom();
@@ -377,6 +473,7 @@ function finishLiveMessage(text, isError, result = {}) {
   state.liveBubble = null;
   state.liveText = "";
   state.operation = null;
+  remember(sessionStorage, "pocket-active", null);
   scrollToBottom();
 }
 
@@ -393,6 +490,7 @@ function buildResultDetails(result) {
 }
 
 function clearTranscript() {
+  state.followOutput = true;
   for (const child of [...elements.transcript.children]) {
     if (child !== elements.empty) child.remove();
   }
@@ -402,7 +500,11 @@ function clearTranscript() {
 function removeEmptyState() { elements.empty.classList.add("hidden"); }
 
 function setRunning(running, text = "", detail = "") {
-  elements.send.disabled = running;
+  elements.send.disabled = running || !state.connected;
+  elements.refresh.disabled = running;
+  elements.newThread.disabled = running;
+  elements.search.disabled = running;
+  elements.stop.disabled = running && !state.operation;
   elements.thread.disabled = running;
   elements.workspace.disabled = running;
   elements.activity.classList.toggle("hidden", !running);
@@ -411,14 +513,17 @@ function setRunning(running, text = "", detail = "") {
 }
 
 function setConnection(status) {
+  state.connected = status === "online";
   elements.connectionDot.className = `status-dot ${status}`;
-  if (status === "online" && elements.connectionText.textContent.includes("복구")) {
-    elements.connectionText.textContent = "PC와 안전하게 연결됨";
-  }
+  elements.connectionText.textContent = state.connected ? "PC 연결됨" : status === "pending" ? "연결 복구 중 · 입력은 보관됩니다" : "PC 연결 안 됨";
+  elements.connectionHelp.classList.toggle("hidden", state.connected);
+  elements.send.disabled = !state.connected || state.submitting || !!state.operation;
 }
 
 function selectThread(threadId) {
-  if ([...elements.thread.options].some((item) => item.value === threadId)) elements.thread.value = threadId;
+  if (!threadId) return;
+  if (![...elements.thread.options].some(item => item.value === threadId)) elements.thread.append(option(threadId, "현재 대화"));
+  elements.thread.value = threadId;
 }
 
 function speak(text) {
@@ -433,14 +538,14 @@ function speak(text) {
 }
 
 async function api(path, options = {}) {
-  const init = { method: options.method ?? "GET", headers: { Accept: "application/json" } };
+  const init = { method: options.method ?? "GET", headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15000) };
   if (options.body !== undefined) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(options.body);
   }
   const response = await fetch(path, init);
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+  if (!response.ok) { const error = new Error(data.error || `HTTP ${response.status}`); error.status = response.status; throw error; }
   return data;
 }
 
@@ -456,7 +561,8 @@ function autoSizePrompt() {
   elements.prompt.style.height = `${Math.min(elements.prompt.scrollHeight, 160)}px`;
 }
 
-function scrollToBottom() {
+function scrollToBottom(force = false) {
+  if (!force && !state.followOutput) return;
   requestAnimationFrame(() => elements.transcript.scrollTo({ top: elements.transcript.scrollHeight, behavior: "smooth" }));
 }
 

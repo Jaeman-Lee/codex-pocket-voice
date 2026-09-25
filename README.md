@@ -190,3 +190,14 @@ PC에 `codex-pocket.service` 사용자 서비스가 등록되어 있으면 모�
 사용자 서비스는 `systemctl --user status codex-pocket`으로 확인합니다.
 로그아웃 이후/부팅 시 실행은 사용자 linger 설정이 필요하며, 서비스 등록만으로
 재부팅 복구 검증이 완료된 것은 아닙니다.
+
+## 모바일 사용성 개선 검증
+
+프로젝트 검색·최근 선택 기억, 프로젝트별 탭 세션 초안, 재연결/새로고침 시 작업
+상태 확인, 답변 복사와 모바일 옵션 표시를 지원합니다.
+[점검 결과와 복구 범위](docs/mobile-ux-review.md)를 참고하세요.
+
+```sh
+npx playwright install chromium
+npm run test:browser
+```

@@ -30,6 +30,7 @@
       <section class="selectors" aria-label="작업 대상">
         <label>
           <span>프로젝트</span>
+          <input id="workspaceSearch" type="search" placeholder="프로젝트 검색" aria-label="프로젝트 검색" autocomplete="off">
           <select id="workspaceSelect" aria-label="프로젝트 선택"></select>
         </label>
         <label>
@@ -38,11 +39,16 @@
             <select id="threadSelect" aria-label="Codex 대화 선택">
               <option value="">새 대화</option>
             </select>
+            <button id="newThreadButton" class="icon-button" type="button" aria-label="새 대화 시작">＋</button>
             <button id="refreshButton" class="icon-button" type="button" aria-label="대화 새로고침">↻</button>
           </div>
         </label>
       </section>
 
+      <aside id="connectionHelp" class="connection-help hidden" role="status">
+        <span>PC와 Tailscale 연결을 확인한 뒤 Termux에서 pcweb을 실행하세요.</span>
+        <button id="reconnectButton" type="button">다시 연결</button>
+      </aside>
       <main id="transcript" class="transcript" aria-live="polite">
         <section id="emptyState" class="empty-state">
           <div class="empty-orbit" aria-hidden="true"><span></span></div>
@@ -86,6 +92,7 @@
             <button id="sendButton" class="send-button" type="button" aria-label="요청 전송">보내기 <span aria-hidden="true">↑</span></button>
           </div>
         </div>
+        <p id="voiceHelp" class="safety-note hidden">음성 버튼을 지원하지 않는 브라우저입니다. 키보드의 마이크로 입력할 수 있습니다.</p>
         <p class="safety-note">허용된 폴더만 수정 · 추가 권한은 자동 거절</p>
       </footer>
     </div>

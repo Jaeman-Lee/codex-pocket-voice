@@ -15,13 +15,15 @@
     "web": "node dist/src/web-index.js",
     "web:dev": "node --import tsx src/web-index.ts",
     "test": "node --import tsx --test test/*.test.ts",
-    "test:integration": "node --import tsx --test test/integration/*.test.ts"
+    "test:integration": "node --import tsx --test test/integration/*.test.ts",
+    "test:browser": "playwright test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/node": "^24.3.0",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2"
