@@ -150,3 +150,6 @@ PC와 같은 네트워크에서 개발자 옵션의 무선 디버깅을 켜고 �
 다를 수 있다. 코드는 PC 터미널에 직접 입력하며 Git/이슈에 기록하지 않는다.
 연결 후 위 검사 명령에 `--serial IP:CONNECTION_PORT`를 추가한다.
 [Android 공식 ADB 안내](https://developer.android.com/tools/adb#connect-to-a-device-over-wi-fi)를 따른다.
+
+`sh scripts/pair-phone.sh`를 PC 터미널에서 실행하면 주소 입력 → ADB 코드 입력 → 필요시
+연결 포트 입력 순으로 진행한다. 페어링 코드를 명령 인자나 파일에 저장하지 않는다.

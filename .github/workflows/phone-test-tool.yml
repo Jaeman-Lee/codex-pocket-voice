@@ -6,6 +6,7 @@ on:
       - scripts/check-phone-apk.py
       - scripts/prepare-phone-test.sh
       - scripts/setup-phone-adb.sh
+      - scripts/pair-phone.sh
       - scripts/start-phone-test-companion.sh
       - test/phone-test-tool.test.py
       - .github/workflows/phone-test-tool.yml
@@ -27,4 +28,5 @@ jobs:
           python3 -m py_compile scripts/check-phone-apk.py
           sh -n scripts/prepare-phone-test.sh
           sh -n scripts/setup-phone-adb.sh
+          sh -n scripts/pair-phone.sh
           sh -n scripts/start-phone-test-companion.sh
