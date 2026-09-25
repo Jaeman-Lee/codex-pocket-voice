@@ -80,3 +80,15 @@ gh issue create --repo Jaeman-Lee/codex-pocket-voice \
 휴대폰에는 current 후보 한 세트와 직전 검증 rollback 한 세트를 유지한다.
 APK 다운그레이드는 Android 정책에 막힐 수 있으므로 보관만으로 복구 성공을 주장하지 않는다.
 Actions APK, 실제 설치 상태, GitHub Release의 정식 버전을 각각 기록한다.
+
+## 2026-09-25 준비 결과
+
+- 구현: [커밋 8eebc4e](https://github.com/Jaeman-Lee/codex-pocket-voice/commit/8eebc4e),
+  [Draft PR #11](https://github.com/Jaeman-Lee/codex-pocket-voice/pull/11).
+- 도구 회귀 테스트 4개, YAML 파싱, Node 20/22 및 도구 CI가 통과했다.
+- [1.8.4 후보 빌드](https://github.com/Jaeman-Lee/codex-pocket-voice/actions/runs/36138962211)는
+  `433a3005166ffdd696da0c2158646dc6c8227f22`에서 성공했다. PC에서 APK 묶음을 실제 다운로드하고
+  체크섬을 대조했다. 사용 중인 APK나 Companion은 교체하지 않았다.
+- [실기기 테스트 이슈 #12](https://github.com/Jaeman-Lee/codex-pocket-voice/issues/12)에
+  후보 식별값과 체크리스트를 기록했다. 설치본 서명 호환성과 실제 스마트폰 검증은 미실시다.
+  이후 진행 상태는 이슈를 기준으로 확인한다.
