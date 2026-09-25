@@ -15,6 +15,8 @@
 
 ## Workspace topology
 
+- For PC/phone coordination, read `docs/device-coordination.md` and the latest comments in the linked GitHub issues before working. The PC owns source edits; the phone reports field-test evidence. Transfer ownership explicitly in the issue before another device edits the same repository.
+
 - The authoritative development worktree belongs on the paired Linux PC. Perform source edits, dependency installation, builds, automated tests, Git commits, and pushes there whenever the PC is reachable.
 - Keep the Termux checkout as a lightweight control and recovery mirror only. Phone-local work is limited to APK installation, Android UI/voice/device checks, tunnel recovery, checksum verification, and rollback artifact handling.
 - Do not restore phone-local `node_modules`, server build output, Gradle output, or other reproducible development caches merely to run ordinary project work. Use the Linux PC worktree instead.

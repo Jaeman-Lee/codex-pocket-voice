@@ -1,0 +1,57 @@
+name: Android 스마트폰 현장 테스트
+description: APK 후보의 설치·음성·연결 검증 기록 (자동 검사와 별도)
+title: "[Android 실기기] v버전 — 미실시"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        개인 대화·토큰·페어링 코드·기기 ID·내부 주소는 쓰지 마세요.
+        자동 빌드 성공은 실기기 테스트 통과나 배포 승인이 아닙니다.
+  - type: textarea
+    id: candidate
+    attributes:
+      label: 후보 식별
+      description: 변경 PR, 전체 소스 SHA, Actions 빌드 링크, APK SHA-256을 기록하세요.
+    validations:
+      required: true
+  - type: textarea
+    id: versions
+    attributes:
+      label: 테스트 환경
+      description: 기존 앱 → 후보 앱 버전, Companion 버전/커밋, Android OS 버전. 기기 고유 ID는 제외합니다.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 실제 스마트폰에서 확인한 항목만 체크
+      options:
+        - label: Node 20/22 및 Android CI 성공을 확인했다.
+        - label: APK 체크섬과 기존 설치본의 서명 호환성을 확인했다.
+        - label: 기존 앱 위에 업데이트되며 설정과 페어링이 유지된다.
+        - label: 앱 종료·재실행 후 연결된다.
+        - label: 한국어 짧은 음성·연속 음성·중단 후 재입력에 중복이 없다.
+        - label: 의도적으로 반복한 문장이 임의로 삭제되지 않는다.
+        - label: 한 번 전송하면 요청 하나만 생성되고 답변을 받는다.
+        - label: 화면 잠금·네트워크 끊김 뒤 대화가 복원된다.
+        - label: 키보드 표시 상태에서 입력과 스크롤이 가능하다.
+        - label: 세션 반납·재접속 중 PC 작업이 유지된다.
+        - label: 사진·영상 첨부 결과와 실패 안내를 확인했다.
+        - label: 직전 검증 APK와 체크섬을 보관했다.
+  - type: dropdown
+    id: result
+    attributes:
+      label: 실기기 판정
+      options:
+        - 미실시 또는 진행 중
+        - 실패 — 버그 이슈 연결 필요
+        - 통과 — 운영 배포 승인과 별도
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 결과와 재현 기록
+      description: 재현 순서·기대 결과·실제 결과·연결할 버그 이슈·미확인 항목을 기록하세요.
+    validations:
+      required: true

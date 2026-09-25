@@ -1,5 +1,8 @@
 # Release process
 
+스마트폰으로 검증하는 구체적인 작업 흐름과 후보 다운로드 도구는
+[스마트폰 테스트](smartphone-testing.md)를 참고한다.
+
 ## Version authority
 
 `package.json`의 SemVer가 유일한 버전 원본이다. `src/version.ts`, Android `versionName`,
