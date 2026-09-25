@@ -142,3 +142,11 @@ v1 인증서가 없는 APK는 이 도구로 판정하지 않고 Android SDK apks
 실제 후보 파일의 인증서와 CI 지문 일치, 잘못된 파일 체크섬 거부를 확인했다.
 USB 인식이 잠시 승인 대기 상태까지 진행됐으나 이후 장치 열거 오류와 연결 끊김이 관찰됐다.
 이 기록은 앱 설치·서명 호환성 확인 완료가 아니며 후속 상태는 실기기 이슈에서 갱신한다.
+
+USB 연결이 불안정하면 Android 11 이상에서 무선 디버깅을 사용할 수 있다.
+PC와 같은 네트워크에서 개발자 옵션의 무선 디버깅을 켜고 ‘페어링 코드로 기기 페어링’을 연다.
+`adb pair IP:PAIRING_PORT`에서 코드를 입력하고, 필요하면 무선 디버깅 기본 화면에 표시된
+별도의 연결 포트로 `adb connect IP:CONNECTION_PORT`를 실행한다. 페어링 포트와 연결 포트는
+다를 수 있다. 코드는 PC 터미널에 직접 입력하며 Git/이슈에 기록하지 않는다.
+연결 후 위 검사 명령에 `--serial IP:CONNECTION_PORT`를 추가한다.
+[Android 공식 ADB 안내](https://developer.android.com/tools/adb#connect-to-a-device-over-wi-fi)를 따른다.

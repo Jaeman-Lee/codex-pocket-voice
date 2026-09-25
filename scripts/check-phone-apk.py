@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read the USB phone's Pocket version and compare APK certificate fingerprints.
+"""Read the connected phone's Pocket version and compare APK certificate fingerprints.
 
 Does not install, launch, stop, pair, or change the app. Certificate extraction is
 not signature verification; the candidate must also pass CI apksigner + checksum.
@@ -36,6 +36,7 @@ def certificates(apk):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", type=Path, required=True)
+    parser.add_argument("--serial", help="ADB network target, or omit to require one USB device")
     parser.add_argument("--sha256", required=True, help="CI SHA256SUMS APK digest")
     parser.add_argument("--certificate", required=True, help="CI apksigner SHA-256 certificate digest")
     args = parser.parse_args()
@@ -50,12 +51,13 @@ def main():
         raise ValueError("Candidate certificate differs from the verified CI certificate.")
     data_home = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share")))
     adb = data_home / "codex-pocket-voice/test-tools/platform-tools/adb"
+    device_args = ["-s", args.serial] if args.serial else ["-d"]
 
     def shell(*command):
-        run = subprocess.run([str(adb), "-d", "shell", *command],
+        run = subprocess.run([str(adb), *device_args, "shell", *command],
                              capture_output=True, text=True, timeout=15)
         if run.returncode:
-            raise ValueError("USB device unavailable or unauthorized; check the cable and phone approval.")
+            raise ValueError("ADB device unavailable or unauthorized; check the connection and phone approval.")
         return run.stdout.strip()
 
     package_info = shell("dumpsys", "package", PACKAGE)
@@ -70,7 +72,7 @@ def main():
         raise ValueError("Could not identify exactly one installed base APK.")
     with tempfile.TemporaryDirectory(prefix="pocket-installed-apk-") as temp:
         installed = Path(temp) / "base.apk"
-        pulled = subprocess.run([str(adb), "-d", "pull", bases[0], str(installed)],
+        pulled = subprocess.run([str(adb), *device_args, "pull", bases[0], str(installed)],
                                 capture_output=True, timeout=60)
         if pulled.returncode:
             raise ValueError("Unable to read installed APK; phone app data was not changed.")
