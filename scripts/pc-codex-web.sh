@@ -51,7 +51,7 @@ control_running() {
 ensure_remote_app() {
     local remote_command
     printf -v remote_command \
-        'tmux has-session -t codex-pocket 2>/dev/null || tmux new-session -d -s codex-pocket %q' \
+        'if systemctl --user cat codex-pocket.service >/dev/null 2>&1; then systemctl --user start codex-pocket.service; else tmux has-session -t codex-pocket 2>/dev/null || tmux new-session -d -s codex-pocket %q; fi' \
         "env CODEX_WEB_PORT=$REMOTE_PORT $REMOTE_APP/scripts/start-web-pc.sh"
     ssh "${ssh_options[@]}" -S "$CONTROL" "$TARGET" "$remote_command"
 }
@@ -65,13 +65,21 @@ start_tunnel() {
         printf 'SSH 키가 없습니다: %s\n' "$KEY" >&2
         return 1
     fi
+    for tool in ssh nc curl; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            printf '필수 도구가 없습니다: %s. Termux에서 pkg install openssh netcat-openbsd curl 실행 후 다시 시도하세요.\n' "$tool" >&2
+            return 1
+        fi
+    done
+    mkdir -p "$HOME/.ssh"
     chmod 700 "$HOME/.ssh"
     if [ -n "$KEY" ]; then
         chmod 600 "$KEY"
     fi
 
     if control_running; then
-        ensure_remote_app
+        ensure_remote_app || { printf "PC 웹 서버를 시작하지 못했습니다. PC 서비스 상태를 확인하세요.\n" >&2; return 1; }
+        wait_for_web
         return
     fi
 
@@ -84,20 +92,27 @@ start_tunnel() {
         return 1
     fi
 
-    ssh "${ssh_options[@]}" \
+    if ! ssh "${ssh_options[@]}" \
         -M -S "$CONTROL" -o ExitOnForwardFailure=yes \
-        -fNT -L "$LOCAL_PORT:127.0.0.1:$REMOTE_PORT" "$TARGET"
-    ensure_remote_app
+        -fNT -L "$LOCAL_PORT:127.0.0.1:$REMOTE_PORT" "$TARGET"; then
+        printf 'PC 전원과 양쪽 Tailscale을 확인하세요. Permission denied이면 휴대폰 공개키 등록이 필요합니다.\n' >&2
+        printf '진단: ssh %s (최초 호스트 확인·인증을 완료한 뒤 다시 실행)\n' "$TARGET" >&2
+        return 1
+    fi
+    ensure_remote_app || { printf 'PC 서버 시작 실패. PC에서 systemctl --user status codex-pocket을 확인하세요.\n' >&2; return 1; }
+    wait_for_web
+}
 
+wait_for_web() {
     local attempt
     for attempt in 1 2 3 4 5 6 7 8 9 10; do
-        if nc -z -w 1 127.0.0.1 "$LOCAL_PORT" >/dev/null 2>&1; then
+        if curl --fail --silent --max-time 3 "$URL/api/health" >/dev/null; then
             printf 'Codex Pocket 백그라운드 연결됨: %s\n' "$URL"
             return
         fi
         sleep 0.2
     done
-    printf 'SSH 연결은 시작됐지만 웹 포트를 확인할 수 없습니다.\n' >&2
+    printf 'SSH는 연결됐지만 PC 앱이 응답하지 않습니다. PC 서비스를 확인한 뒤 다시 실행하세요.\n' >&2
     return 1
 }
 
@@ -111,7 +126,7 @@ stop_tunnel() {
 }
 
 show_status() {
-    if control_running && nc -z -w 1 127.0.0.1 "$LOCAL_PORT" >/dev/null 2>&1; then
+    if control_running && curl --fail --silent --max-time 3 "$URL/api/health" >/dev/null; then
         printf '연결됨: %s\n' "$URL"
         return
     fi

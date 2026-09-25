@@ -170,3 +170,34 @@ npm run test:integration
 ## 라이선스
 
 [MIT](LICENSE)
+
+## PC 경로 설정과 사용자 서비스
+
+`start-web-pc.sh`는 `~/.config/codex-pocket-voice/pc.env`가 있으면 읽습니다.
+설정 파일은 자신의 계정만 수정할 수 있게 보관합니다. 예:
+
+```sh
+export CODEX_PROJECTS_HOME="$HOME/Projects/github/your-account"
+export CODEX_BIN=/usr/local/bin/codex
+export CODEX_WEB_PORT=8787
+```
+
+`CODEX_BIN`을 지정하지 않으면 PATH에서 `codex`를 찾습니다.
+프로젝트 디렉터리 아래의 Git 저장소가 허용 목록에 등록됩니다.
+
+PC에 `codex-pocket.service` 사용자 서비스가 등록되어 있으면 모바일 연결
+스크립트는 해당 서비스를 시작합니다. 서비스가 없으면 기존 tmux 방식을 사용합니다.
+사용자 서비스는 `systemctl --user status codex-pocket`으로 확인합니다.
+로그아웃 이후/부팅 시 실행은 사용자 linger 설정이 필요하며, 서비스 등록만으로
+재부팅 복구 검증이 완료된 것은 아닙니다.
+
+## 모바일 사용성 개선 검증
+
+프로젝트 검색·최근 선택 기억, 프로젝트별 탭 세션 초안, 재연결/새로고침 시 작업
+상태 확인, 답변 복사와 모바일 옵션 표시를 지원합니다.
+[점검 결과와 복구 범위](docs/mobile-ux-review.md)를 참고하세요.
+
+```sh
+npx playwright install chromium
+npm run test:browser
+```

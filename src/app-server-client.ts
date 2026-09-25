@@ -85,13 +85,14 @@ export class CodexAppServerClient {
     return this.init;
   }
 
-  async listThreads(limit = 10, searchTerm?: string): Promise<ThreadListResponse> {
+  async listThreads(limit = 10, searchTerm?: string, cwd?: string): Promise<ThreadListResponse> {
     await this.start();
     return this.request<ThreadListResponse>("thread/list", {
       limit,
       sortKey: "updated_at",
       sortDirection: "desc",
       searchTerm: searchTerm ?? null,
+      cwd: cwd ?? null,
     });
   }
 

@@ -1,4 +1,4 @@
-const CACHE = "codex-pocket-v2";
+const CACHE = "codex-pocket-v4";
 const ASSETS = ["/", "/styles.css", "/app.js", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {

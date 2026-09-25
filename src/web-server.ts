@@ -30,7 +30,7 @@ const STATIC_FILES = new Map([
 
 export interface WebCodexClient {
   start(): Promise<InitializeResponse>;
-  listThreads(limit?: number, searchTerm?: string): Promise<ThreadListResponse>;
+  listThreads(limit?: number, searchTerm?: string, cwd?: string): Promise<ThreadListResponse>;
   readThread(threadId: string, includeTurns?: boolean): Promise<ThreadReadResponse>;
   beginTurn(options: RunTurnOptions): Promise<BeginTurnResult>;
   interrupt(threadId: string, turnId: string): Promise<void>;
@@ -185,9 +185,11 @@ async function handleApi(
     const requestedLimit = Number(url.searchParams.get("limit") ?? "20");
     const limit = Number.isInteger(requestedLimit) ? Math.max(1, Math.min(50, requestedLimit)) : 20;
     const search = url.searchParams.get("search")?.slice(0, 200) || undefined;
-    const listed = await options.client.listThreads(50, search);
+    const requestedCwd = url.searchParams.get("cwd");
+    const cwd = requestedCwd ? await options.paths.resolveWorkspace(requestedCwd) : undefined;
+    const listed = await options.client.listThreads(50, search, cwd);
     const threads = listed.data
-      .filter((thread) => options.paths.isAllowed(thread.cwd))
+      .filter((thread) => options.paths.isAllowed(thread.cwd) && (!cwd || thread.cwd === cwd))
       .slice(0, limit)
       .map(compactThread);
     sendJson(response, 200, { threads, nextCursor: listed.nextCursor });
