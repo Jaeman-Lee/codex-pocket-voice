@@ -3,6 +3,10 @@ on:
   pull_request:
     paths:
       - scripts/phone-test.py
+      - scripts/check-phone-apk.py
+      - scripts/prepare-phone-test.sh
+      - scripts/setup-phone-adb.sh
+      - scripts/start-phone-test-companion.sh
       - test/phone-test-tool.test.py
       - .github/workflows/phone-test-tool.yml
   workflow_dispatch:
@@ -18,3 +22,9 @@ jobs:
         with:
           python-version: '3.12'
       - run: python3 test/phone-test-tool.test.py
+      - name: Check device tooling syntax
+        run: |
+          python3 -m py_compile scripts/check-phone-apk.py
+          sh -n scripts/prepare-phone-test.sh
+          sh -n scripts/setup-phone-adb.sh
+          sh -n scripts/start-phone-test-companion.sh

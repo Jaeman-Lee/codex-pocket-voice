@@ -92,3 +92,53 @@ Actions APK, 실제 설치 상태, GitHub Release의 정식 버전을 각각 기
 - [실기기 테스트 이슈 #12](https://github.com/Jaeman-Lee/codex-pocket-voice/issues/12)에
   후보 식별값과 체크리스트를 기록했다. 설치본 서명 호환성과 실제 스마트폰 검증은 미실시다.
   이후 진행 상태는 이슈를 기준으로 확인한다.
+
+## USB로 실제 설치본 확인하기
+
+PC 도구 준비:
+
+```sh
+sh scripts/setup-phone-adb.sh
+sh scripts/prepare-phone-test.sh
+```
+
+첫 스크립트는 Google의 Linux platform-tools를 사용자 전용 도구 폴더에 받는다.
+휴대폰에서 USB 디버깅을 켜고 데이터 케이블로 연결한 뒤 PC의 디버깅 인증을 허용한다.
+디버깅 옵션만 켜고 케이블을 연결하지 않은 상태는 PC 연결 완료가 아니다.
+
+두 번째 스크립트는 1.8.4 후보에 맞는 Codex CLI 0.149.0을 별도로 설치하고 빌드·타입·단위·통합·
+스키마 검사를 실행한다. 현재 PC의 기본 Codex CLI를 교체하지 않는다.
+이번 PC의 기본 0.157.0에서는 기본/통합 검사가 통과했지만 생성 스키마 대조가 실패했으며,
+격리된 0.149.0에서는 단위 21개·통합 3개와 스키마 대조까지 통과했다.
+이것은 0.157.0 지원 완료나 정식 배포 승인을 의미하지 않는다.
+
+테스트 Companion은 별도 터미널에서 실행한다.
+
+```sh
+sh scripts/start-phone-test-companion.sh
+```
+
+이 프로세스는 loopback 8792만 사용하며 인증·세션·미디어 상태를 별도 사용자 상태 폴더에 둔다.
+운영 서비스를 재시작하거나 운영 페어링을 덮어쓰지 않는다. USB 연결 후 설치 앱의
+package/versionCode/인증서를 대조하고, 기존 터널과 충돌하지 않는 휴대폰 로컬 포트를 골라
+`adb reverse`로 테스트 Companion에 연결한다. 설치 또는 앱 화면 조작 전에 실행 중인 작업을 확인한다.
+휴대폰 고유 ID·인증 상태·APK 원본·전체 로그는 Git에 넣지 않는다.
+
+설치본을 바꾸지 않고 확인하는 명령:
+
+```sh
+python3 scripts/check-phone-apk.py --candidate /path/to/candidate.apk \
+  --sha256 APK_DIGEST_FROM_CI --certificate CERTIFICATE_DIGEST_FROM_CI_APKSIGNER
+```
+
+Ubuntu의 `python3-cryptography`가 필요하다. 이 도구는 USB 기기 한 대에서 지정된 Pocket
+패키지의 버전과 base APK를 읽는다. 후보 파일 SHA-256을 확인한 뒤 두 APK의 v1 인증서
+지문을 비교한다. 단순 인증서 추출은 서명 검증을 대체하지 않는다. 후보는 CI에서
+`apksigner verify`가 성공하고 다운로드 체크섬이 일치한 파일을 사용해야 한다.
+v1 인증서가 없는 APK는 이 도구로 판정하지 않고 Android SDK apksigner를 사용한다.
+기기 식별자나 개인 파일은 출력하지 않으며, 설치·실행·종료·데이터 초기화를 하지 않는다.
+
+추가 준비 결과: ADB 도구 준비, 테스트 Companion의 `1.8.4`/protocol `2` 응답,
+실제 후보 파일의 인증서와 CI 지문 일치, 잘못된 파일 체크섬 거부를 확인했다.
+USB 인식이 잠시 승인 대기 상태까지 진행됐으나 이후 장치 열거 오류와 연결 끊김이 관찰됐다.
+이 기록은 앱 설치·서명 호환성 확인 완료가 아니며 후속 상태는 실기기 이슈에서 갱신한다.
