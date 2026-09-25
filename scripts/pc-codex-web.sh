@@ -51,7 +51,7 @@ control_running() {
 ensure_remote_app() {
     local remote_command
     printf -v remote_command \
-        'tmux has-session -t codex-pocket 2>/dev/null || tmux new-session -d -s codex-pocket %q' \
+        'if systemctl --user cat codex-pocket.service >/dev/null 2>&1; then systemctl --user start codex-pocket.service; else tmux has-session -t codex-pocket 2>/dev/null || tmux new-session -d -s codex-pocket %q; fi' \
         "env CODEX_WEB_PORT=$REMOTE_PORT $REMOTE_APP/scripts/start-web-pc.sh"
     ssh "${ssh_options[@]}" -S "$CONTROL" "$TARGET" "$remote_command"
 }
