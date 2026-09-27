@@ -2,7 +2,11 @@ import path from "node:path";
 import { realpath, stat } from "node:fs/promises";
 
 export class PathPolicy {
-  private constructor(readonly roots: readonly string[]) {}
+  private constructor(private readonly rootValues: string[]) {}
+
+  get roots(): readonly string[] {
+    return this.rootValues;
+  }
 
   static async fromEnvironment(
     value = process.env.CODEX_VOICE_ROOTS,
@@ -26,6 +30,14 @@ export class PathPolicy {
       if (!roots.includes(canonical)) roots.push(canonical);
     }
     return new PathPolicy(roots);
+  }
+
+  async addRoot(candidate: string): Promise<string> {
+    const canonical = await realpath(path.resolve(candidate));
+    const info = await stat(canonical);
+    if (!info.isDirectory()) throw new Error(`Workspace is not a directory: ${candidate}`);
+    if (!this.rootValues.includes(canonical)) this.rootValues.push(canonical);
+    return canonical;
   }
 
   async resolveWorkspace(requested?: string): Promise<string> {

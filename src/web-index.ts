@@ -9,9 +9,13 @@ import { startWebServer } from "./web-server.js";
 const paths = await PathPolicy.fromEnvironment();
 const client = new CodexAppServerClient();
 const moduleDir = dirname(fileURLToPath(import.meta.url));
-const staticDir = [resolve(process.cwd(), "web"), resolve(moduleDir, "../../web"), resolve(moduleDir, "../web")]
+const staticDir = [
+  resolve(process.cwd(), "client/dist"),
+  resolve(moduleDir, "../../client/dist"),
+  resolve(moduleDir, "../../../client/dist"),
+]
   .find((candidate) => existsSync(resolve(candidate, "index.html")));
-if (!staticDir) throw new Error("Could not find the web/ static asset directory");
+if (!staticDir) throw new Error("Could not find client/dist; run npm run build:client first");
 
 const port = Number(process.env.CODEX_WEB_PORT ?? "8787");
 if (!Number.isInteger(port) || port < 0 || port > 65_535) throw new Error("CODEX_WEB_PORT is invalid");
@@ -25,6 +29,8 @@ const running = await startWebServer({
 
 process.stderr.write(`[codex-web] Ready on http://${running.host}:${running.port}\n`);
 process.stderr.write(`[codex-web] Allowed roots: ${paths.roots.join(", ")}\n`);
+process.stderr.write(`[codex-web] Device ID: ${running.deviceId}\n`);
+process.stderr.write(`[codex-web] Pairing code: ${running.pairingCode} (expires ${running.pairingExpiresAt})\n`);
 
 let closing = false;
 async function close(): Promise<void> {
