@@ -1,0 +1,8 @@
+[Unit]
+Description=Codex Pocket Android USB acceptance preview
+[Service]
+WorkingDirectory=%h/Projects/github/Jaeman-Lee/codex-pocket-voice
+Environment=CODEX_POCKET_RUNTIME=%h/.local/share/codex-pocket-voice/runtime/android-test
+ExecStart=/bin/sh %h/Projects/github/Jaeman-Lee/codex-pocket-voice/scripts/start-phone-test-companion.sh
+Restart=on-failure
+UMask=0077

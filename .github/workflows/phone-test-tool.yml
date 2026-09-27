@@ -1,0 +1,35 @@
+name: Phone test tooling
+on:
+  pull_request:
+    paths:
+      - scripts/phone-test.py
+      - scripts/check-phone-apk.py
+      - scripts/prepare-phone-test.sh
+      - scripts/setup-phone-adb.sh
+      - scripts/pair-phone.sh
+      - scripts/start-phone-test-companion.sh
+      - test/phone-test-tool.test.py
+      - test/phone-pairing.test.py
+      - .github/workflows/phone-test-tool.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python3 test/phone-test-tool.test.py
+      - run: python3 -m pip install pexpect==4.9.0
+      - run: python3 test/phone-pairing.test.py
+      - name: Check device tooling syntax
+        run: |
+          python3 -m py_compile scripts/check-phone-apk.py
+          sh -n scripts/prepare-phone-test.sh
+          sh -n scripts/setup-phone-adb.sh
+          sh -n scripts/pair-phone.sh
+          sh -n scripts/start-phone-test-companion.sh

@@ -11,6 +11,7 @@ const thread = {
   ephemeral: false,
   section: null,
   sectionEnteredAt: null,
+  projectId: null,
   historyMode: "full",
   modelProvider: "openai",
   createdAt: 1,
@@ -33,6 +34,7 @@ const thread = {
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 const write = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let pendingTurn = false;
+let imageChecked = false;
 
 rl.on("line", (line) => {
   const message = JSON.parse(line);
@@ -49,6 +51,10 @@ rl.on("line", (line) => {
 
   switch (message.method) {
     case "initialize":
+      if (message.params?.capabilities?.experimentalApi !== true) {
+        write({ id: message.id, error: { code: -1, message: "experimentalApi capability required" } });
+        break;
+      }
       write({ id: message.id, result: { userAgent: "fake/1", codexHome: cwd, platformFamily: "unix", platformOs: "android" } });
       break;
     case "thread/list":
@@ -65,8 +71,8 @@ rl.on("line", (line) => {
       write({ id: message.id, result: { thread, model: "test", modelProvider: "openai", serviceTier: null, cwd, runtimeWorkspaceRoots: [cwd], instructionSources: [], approvalPolicy: "never", approvalsReviewer: "user", sandbox: { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, activePermissionProfile: null, reasoningEffort: null, multiAgentMode: "explicitRequestOnly" } });
       break;
     case "thread/resume":
-      if (message.params.runtimeWorkspaceRoots !== undefined) {
-        write({ id: message.id, error: { code: -1, message: "thread/resume.runtimeWorkspaceRoots requires experimentalApi capability" } });
+      if (message.params.runtimeWorkspaceRoots !== undefined || message.params.excludeTurns !== undefined) {
+        write({ id: message.id, error: { code: -1, message: "thread/resume experimental fields require experimentalApi capability" } });
         break;
       }
       write({ id: message.id, result: { thread, model: "test", modelProvider: "openai", serviceTier: null, cwd, runtimeWorkspaceRoots: [cwd], instructionSources: [], approvalPolicy: "never", approvalsReviewer: "user", sandbox: { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, activePermissionProfile: null, reasoningEffort: null, multiAgentMode: "explicitRequestOnly", initialTurnsPage: null, turnsBackwardsCursor: null, itemsBackwardsCursor: null } });
@@ -76,6 +82,13 @@ rl.on("line", (line) => {
         write({ id: message.id, error: { code: -1, message: "unsafe turn policy" } });
         break;
       }
+      if (process.env.FAKE_EXPECT_IMAGE === "1" && !imageChecked) {
+        imageChecked = true;
+        if (!message.params.input.some((item) => item.type === "localImage" && item.detail === "auto")) {
+          write({ id: message.id, error: { code: -1, message: "missing local image input" } });
+          break;
+        }
+      }
       write({ id: message.id, result: { turn: turn("inProgress", []) } });
       pendingTurn = true;
       write({ method: "item/agentMessage/delta", params: { threadId: thread.id, turnId: "turn-1", itemId: "message-1", delta: "working" } });
@@ -83,6 +96,9 @@ rl.on("line", (line) => {
       break;
     case "turn/interrupt":
       write({ id: message.id, result: {} });
+      break;
+    case "thread/unsubscribe":
+      write({ id: message.id, result: { status: "unsubscribed" } });
       break;
     default:
       write({ id: message.id, error: { code: -32601, message: `unknown ${message.method}` } });
@@ -95,7 +111,7 @@ function completeTurn() {
     method: "turn/completed",
     params: {
       threadId: thread.id,
-      turn: turn("completed", [{ type: "agentMessage", id: "message-1", text: "done", phase: "final_answer", memoryCitation: null }]),
+      turn: turn("completed", [{ type: "agentMessage", id: "message-1", text: "done", phase: "final_answer", memoryCitation: null, delivery: null }]),
     },
   });
 }

@@ -2,7 +2,12 @@
 set -eu
 
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+config_file=${CODEX_POCKET_PC_CONFIG:-"$HOME/.config/codex-pocket-voice/pc.env"}
+if [ -r "$config_file" ]; then
+  . "$config_file"
+fi
 projects_home=${CODEX_PROJECTS_HOME:-"$HOME/workspace"}
+mkdir -p -- "$projects_home"
 
 if [ -z "${CODEX_VOICE_ROOTS:-}" ] && [ -d "$projects_home" ]; then
   CODEX_VOICE_ROOTS=$(find "$projects_home" -maxdepth 7 -type d -name .git -printf '%h\n' 2>/dev/null | sort -u | paste -sd ':' -)
@@ -21,6 +26,14 @@ if [ -d "$HOME/.nvm/versions/node" ]; then
   fi
 fi
 
-export CODEX_BIN=${CODEX_BIN:-"$HOME/.local/bin/codex"}
+export CODEX_BIN=${CODEX_BIN:-$(command -v codex || true)}
+if [ -z "$CODEX_BIN" ] || [ ! -x "$CODEX_BIN" ]; then
+  printf '%s\n' 'Codex executable not found. Set CODEX_BIN in the PC configuration.' >&2
+  exit 1
+fi
 export CODEX_WEB_PORT=${CODEX_WEB_PORT:-8787}
+export CODEX_DEVICE_ID=pc
+export CODEX_DEVICE_NAME=${CODEX_DEVICE_NAME:-"내 PC"}
+export CODEX_PROJECT_CREATION_ROOTS=${CODEX_PROJECT_CREATION_ROOTS:-"$projects_home"}
+"$repo_dir/scripts/start-video-vlm.sh"
 exec "$repo_dir/scripts/start-web.sh"
