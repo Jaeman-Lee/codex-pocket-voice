@@ -294,3 +294,7 @@ PC에 `codex-pocket.service` 사용자 서비스가 등록되어 있으면 모�
 사용자 서비스는 `systemctl --user status codex-pocket`으로 확인합니다.
 로그아웃 이후/부팅 시 실행은 사용자 linger 설정이 필요하며, 서비스 등록만으로
 재부팅 복구 검증이 완료된 것은 아닙니다.
+
+## 기존 모바일 미리보기
+
+이전 UX 개선본은 [legacy/web](legacy/web/)과 [검증 기록](docs/mobile-ux-review.md)에 보존한다. 현재 기본 UI는 React/Android 버전이다.

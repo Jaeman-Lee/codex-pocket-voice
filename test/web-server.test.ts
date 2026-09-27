@@ -100,6 +100,10 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
 
   const listed = await jsonFetch(`${base}/api/threads`, { headers: authorized() });
   assert.equal(listed.threads[0].id, "thread-web");
+  await jsonFetch(`${base}/api/threads?cwd=${encodeURIComponent(cwd)}`, { headers: authorized() });
+  assert.equal(fake.lastListCwd, cwd);
+  const forbiddenList = await fetch(`${base}/api/threads?cwd=${encodeURIComponent("/outside-roots")}`, { headers: authorized() });
+  assert.notEqual(forbiddenList.status, 200);
   const read = await jsonFetch(`${base}/api/threads/thread-web`, { headers: authorized() });
   assert.equal(read.thread.turns[0].items[0].text, "hello");
 
@@ -225,6 +229,7 @@ test("loopback web gateway serves the PWA, validates origins, and controls a tur
 
 class FakeWebClient implements WebCodexClient {
   lastRun?: RunTurnOptions;
+  lastListCwd?: string;
   interrupted?: [string, string];
   unsubscribed: string[] = [];
   private listeners = new Set<(notification: AppServerNotification) => void>();
@@ -234,7 +239,8 @@ class FakeWebClient implements WebCodexClient {
     return { userAgent: "fake-codex", codexHome: cwd, platformFamily: "unix", platformOs: "linux" };
   }
 
-  async listThreads() {
+  async listThreads(_limit?: number, _search?: string, requestedCwd?: string) {
+    this.lastListCwd = requestedCwd;
     return { data: [thread()], nextCursor: null, backwardsCursor: null };
   }
 

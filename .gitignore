@@ -9,3 +9,6 @@ client/dist/
 android/.gradle/
 android/local.properties
 __pycache__/
+
+/playwright-report/
+/test-results/
