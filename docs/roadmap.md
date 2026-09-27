@@ -1,5 +1,8 @@
 # Roadmap
 
+2026-09-27 [폐기 검토](retirement-review.md)가 추가되었다. 아래 계획은 기존 기록이며,
+신규 기능 확장에 앞서 [이슈 #17](https://github.com/Jaeman-Lee/codex-pocket-voice/issues/17)의 유지/종료 판단을 확인한다.
+
 v1.8.1 이후의 다중 프로젝트 운영판, Provider 공통 실행 계층, OpenAI API와 OpenRouter 연동,
 승인·비용·개인정보 보호 및 단계별 출시 기준은 [v2 실행 계획](v2-plan.md)에 정리한다.
 

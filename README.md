@@ -1,5 +1,8 @@
 # Codex Pocket Voice
 
+2026-09-27: 원격 웹 데스크톱과의 기능 중복을 바탕으로 [폐기 검토](docs/retirement-review.md)를 기록했다.
+진행 상태는 [이슈 #17](https://github.com/Jaeman-Lee/codex-pocket-voice/issues/17)에서 관리하며, 종료 결정은 아직 내려지지 않았다.
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 현재 정식 배포는 `v1.6.0`이며 `1.8.0`는 교차 기기 세션 인계를 검증 중인 candidate입니다. 실제 배포
