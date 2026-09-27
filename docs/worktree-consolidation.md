@@ -39,3 +39,8 @@ Git에서 제외된 생성 파일은 HDD의 `~/.local/state/worktree-consolidati
 phone-test launcher는 `CODEX_POCKET_RUNTIME`을 지원하고 인증/인계 상태 파일 위치는 유지한다.
 배포 분류: 내부 경로 호환 정리(patch 성격). 사용자에게 배포하는 APK나 정식 릴리스 변경은 없고 SemVer/versionCode를 올리거나 새 APK를 전달하지 않았다.
 
+
+## 검토 링크
+
+- Draft PR: https://github.com/Jaeman-Lee/codex-pocket-voice/pull/16
+- 기록 커밋: https://github.com/Jaeman-Lee/codex-pocket-voice/commit/08113845353e5775e4bfb9335b5bd08aa22b57ab
