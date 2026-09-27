@@ -1,0 +1,10 @@
+[Unit]
+Description=Codex Pocket legacy UX preview
+[Service]
+WorkingDirectory=%h/.local/share/codex-pocket-voice/runtime/ux-preview
+Environment=CODEX_BIN=/usr/local/bin/codex
+Environment=CODEX_VOICE_ROOTS=%h/Projects/github/Jaeman-Lee/codex-pocket-voice
+Environment=CODEX_WEB_PORT=8791
+ExecStart=/usr/bin/node %h/.local/share/codex-pocket-voice/runtime/ux-preview/dist/src/web-index.js
+Restart=on-failure
+UMask=0077
